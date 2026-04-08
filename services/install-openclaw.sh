@@ -33,7 +33,6 @@ with open(os.path.join(script_dir, "openclaw", "config-template.json")) as f:
 
 config["tools"]["web"]["search"]["apiKey"] = secrets["brave_search_api_key"]
 config["channels"]["telegram"]["botToken"] = secrets["telegram_bot_token"]
-config["gateway"]["auth"]["token"] = secrets["gateway_auth_token"]
 config["agents"]["defaults"]["workspace"] = os.path.join(oc_home, "workspace")
 
 # Resolve external origin for Control UI (Caddy reverse proxy)
