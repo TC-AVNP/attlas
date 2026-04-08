@@ -10,10 +10,13 @@ import json
 import subprocess
 import os
 import mimetypes
+import pty
+import select
+import signal
 
 PORT = 3000
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
-LOGIN_STATE = {"process": None, "url": None}
+LOGIN_STATE = {"pid": None, "master_fd": None, "url": None}
 
 KNOWN_SERVICES = [
     {"id": "terminal", "name": "Cloud Terminal", "service": "ttyd", "command": "ttyd",
@@ -143,79 +146,126 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         try:
             # Kill any existing login process
-            if LOGIN_STATE.get("process"):
+            if LOGIN_STATE.get("pid"):
                 try:
-                    LOGIN_STATE["process"].terminate()
+                    os.kill(LOGIN_STATE["pid"], signal.SIGTERM)
                 except Exception:
                     pass
+                if LOGIN_STATE.get("master_fd"):
+                    try:
+                        os.close(LOGIN_STATE["master_fd"])
+                    except Exception:
+                        pass
 
-            proc = subprocess.Popen(
-                ["claude", "auth", "login"],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True,
-                env={**os.environ, "BROWSER": "echo"},  # prevent browser launch
-            )
-            LOGIN_STATE["process"] = proc
+            # Use PTY so claude auth login can read input
+            master_fd, slave_fd = pty.openpty()
+            env = os.environ.copy()
+            env["BROWSER"] = "echo"
 
-            url = None
-            lines = []
-            for line in iter(proc.stdout.readline, ""):
-                lines.append(line.strip())
-                # Look for the auth URL in "If the browser didn't open, visit: URL"
-                for word in line.split():
-                    if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
-                        url = word.strip()
-                        break
-                if url or len(lines) > 20:
-                    break
-
-            if url:
-                LOGIN_STATE["url"] = url
-                self.send_json({"url": url})
+            pid = os.fork()
+            if pid == 0:
+                # Child process
+                os.close(master_fd)
+                os.setsid()
+                os.dup2(slave_fd, 0)
+                os.dup2(slave_fd, 1)
+                os.dup2(slave_fd, 2)
+                os.close(slave_fd)
+                os.execvpe("claude", ["claude", "auth", "login"], env)
             else:
-                proc.terminate()
-                LOGIN_STATE["process"] = None
-                self.send_json({"error": "Could not find auth URL", "output": lines})
+                # Parent process
+                os.close(slave_fd)
+                LOGIN_STATE["pid"] = pid
+                LOGIN_STATE["master_fd"] = master_fd
+
+                # Read output until we find the URL
+                output = b""
+                url = None
+                for _ in range(30):
+                    r, _, _ = select.select([master_fd], [], [], 1)
+                    if r:
+                        data = os.read(master_fd, 4096)
+                        output += data
+                        text = output.decode(errors="replace")
+                        for word in text.split():
+                            if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
+                                url = word.strip()
+                                break
+                        if url:
+                            break
+
+                if url:
+                    LOGIN_STATE["url"] = url
+                    self.send_json({"url": url})
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                    os.close(master_fd)
+                    LOGIN_STATE["pid"] = None
+                    LOGIN_STATE["master_fd"] = None
+                    self.send_json({"error": "Could not find auth URL", "output": output.decode(errors="replace")[:1000]})
+
         except FileNotFoundError:
             self.send_json({"error": "claude not found — run base-setup first"})
         except Exception as e:
             self.send_json({"error": str(e)})
 
     def handle_submit_code(self):
-        """Pipe the auth code from the browser to claude auth login's stdin."""
+        """Write the auth code to the claude auth login PTY."""
         data = self.read_json()
         code = data.get("code", "")
-        proc = LOGIN_STATE.get("process")
-        if not proc:
+        master_fd = LOGIN_STATE.get("master_fd")
+        pid = LOGIN_STATE.get("pid")
+        if not pid or not master_fd:
             self.send_json({"error": "No login in progress. Click 'Login' first."})
             return
         if not code:
             self.send_json({"error": "No code provided."})
             return
         try:
-            # Write code to stdin and close it
-            proc.stdin.write(code + "\n")
-            proc.stdin.flush()
-            proc.stdin.close()
+            # Write code to PTY
+            os.write(master_fd, (code + "\n").encode())
 
-            # Wait for process to finish
-            proc.wait(timeout=30)
+            # Read response
+            import time
+            time.sleep(5)
+            output = b""
+            for _ in range(10):
+                r, _, _ = select.select([master_fd], [], [], 1)
+                if r:
+                    try:
+                        data_bytes = os.read(master_fd, 4096)
+                        output += data_bytes
+                    except OSError:
+                        break
+                else:
+                    break
 
-            LOGIN_STATE["process"] = None
+            # Clean up
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except Exception:
+                pass
+
+            LOGIN_STATE["pid"] = None
+            LOGIN_STATE["master_fd"] = None
             LOGIN_STATE["url"] = None
 
             if is_claude_logged_in():
                 self.send_json({"success": True})
             else:
-                # Read any remaining output for debugging
-                remaining = proc.stdout.read() if proc.stdout else ""
-                self.send_json({"error": f"Code submitted but auth not detected. Output: {remaining[:500]}"})
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            LOGIN_STATE["process"] = None
-            self.send_json({"error": "Login timed out after 30s."})
+                self.send_json({"error": f"Code submitted. Output: {output.decode(errors='replace')[:500]}"}
+                )
         except Exception as e:
-            LOGIN_STATE["process"] = None
+            LOGIN_STATE["pid"] = None
+            LOGIN_STATE["master_fd"] = None
             self.send_json({"error": str(e)})
 
     def handle_install_service(self):
