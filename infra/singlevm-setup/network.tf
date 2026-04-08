@@ -15,14 +15,14 @@ resource "google_compute_firewall" "allow_ssh_iap" {
   priority      = 1000
 }
 
-# HTTPS only for Caddy
+# HTTP + HTTPS for Caddy (port 80 needed for ACME TLS cert challenge)
 resource "google_compute_firewall" "allow_https" {
   name    = "allow-https"
   network = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["443"]
+    ports    = ["80", "443"]
   }
 
   source_ranges = ["0.0.0.0/0"]

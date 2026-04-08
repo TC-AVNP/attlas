@@ -19,7 +19,7 @@ After=network.target
 [Service]
 Type=simple
 User=$(whoami)
-ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --base-path /code --auth none --disable-telemetry
+ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --auth none --disable-telemetry
 Restart=always
 RestartSec=5
 
