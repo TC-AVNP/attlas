@@ -32,7 +32,7 @@ KNOWN_SERVICES = [
     {"id": "code-server", "name": "Cloud VS Code", "service": "code-server", "command": "code-server",
      "path": "/code/", "script": "install-code-server.sh"},
     {"id": "openclaw", "name": "OpenClaw", "service": "openclaw-gateway", "command": "openclaw",
-     "path": "/openclaw", "script": "install-openclaw.sh", "check_process": "openclaw-gateway"},
+     "path": None, "script": "install-openclaw.sh", "check_process": "openclaw-gateway"},
 ]
 
 
