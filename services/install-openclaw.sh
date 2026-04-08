@@ -117,7 +117,10 @@ chmod 700 "$OPENCLAW_HOME"
 chmod -R 600 "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents"
 chmod -R u+X "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents"
 
-# 5. Install daemon
-openclaw onboard --install-daemon
+# 5. Install and start daemon (non-interactive)
+# Uses the config we just wrote — no wizard needed
+openclaw daemon install
+openclaw daemon start
 
 echo "openclaw installed and configured"
+echo "Check status: openclaw daemon status"
