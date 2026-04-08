@@ -135,15 +135,8 @@ find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agen
 openclaw daemon install
 openclaw daemon start
 
-# 6. Generate Caddy snippet with token injected
-GW_TOKEN=$(python3 -c "import json; print(json.load(open('$OPENCLAW_HOME/openclaw.json'))['gateway']['auth']['token'])")
-sudo tee /etc/caddy/conf.d/openclaw.caddy > /dev/null <<CEOF
-handle /openclaw* {
-	reverse_proxy localhost:18789 {
-		header_up Authorization "Bearer $GW_TOKEN"
-	}
-}
-CEOF
+# 6. Expose dashboard via Caddy
+sudo cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/
 
 echo "openclaw installed and configured"
 echo "Check status: openclaw daemon status"
