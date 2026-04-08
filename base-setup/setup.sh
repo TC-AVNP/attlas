@@ -80,7 +80,9 @@ fi
 echo ""
 echo "=== Base setup complete ==="
 echo ""
-read -p "Install services (ttyd, code-server)? (y/n) " -n 1 -r
+echo "NOTE: Run 'claude' to log in to Claude Code (requires interactive auth)."
+echo ""
+read -p "Install services now? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
   bash "$SCRIPT_DIR/../services/install.sh"

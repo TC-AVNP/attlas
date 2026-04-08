@@ -1,72 +1,76 @@
 #!/usr/bin/env bash
-# Installs services (ttyd, code-server) and registers their Caddy route snippets.
-# Run after base-setup/setup.sh has completed.
+# Interactive service installer — presents a menu of available services.
+# Each service has its own install script in this directory.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Installing services ==="
+# Discover available services (any file matching install-*.sh)
+SERVICES=()
+DESCRIPTIONS=()
+for f in "$SCRIPT_DIR"/install-*.sh; do
+  [ -f "$f" ] || continue
+  name=$(basename "$f" | sed 's/install-//;s/\.sh//')
+  desc=$(head -2 "$f" | grep '^#' | tail -1 | sed 's/^# *//')
+  SERVICES+=("$name")
+  DESCRIPTIONS+=("$desc")
+done
 
-# 1. Install ttyd
-if ! command -v ttyd &>/dev/null; then
-  echo "Installing ttyd..."
-  TTYD_VERSION="1.7.7"
-  sudo curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
-    -o /usr/local/bin/ttyd
-  sudo chmod +x /usr/local/bin/ttyd
+if [ ${#SERVICES[@]} -eq 0 ]; then
+  echo "No services found (no install-*.sh files in $SCRIPT_DIR)"
+  exit 0
 fi
-echo "ttyd: $(ttyd --version 2>&1 | head -1)"
 
-# 2. Install code-server
-if ! command -v code-server &>/dev/null; then
-  echo "Installing code-server..."
-  curl -fsSL https://code-server.dev/install.sh | sh
+echo "=== Available services ==="
+echo ""
+for i in "${!SERVICES[@]}"; do
+  echo "  $((i+1)). ${SERVICES[$i]} — ${DESCRIPTIONS[$i]}"
+done
+echo ""
+echo "  a. Install ALL"
+echo "  q. Quit"
+echo ""
+read -p "Select services to install (e.g. 1 3, or 'a' for all): " -r SELECTION
+
+if [[ "$SELECTION" == "q" ]]; then
+  echo "No services installed."
+  exit 0
 fi
-echo "code-server: $(code-server --version 2>&1 | head -1)"
 
-# 3. Create systemd units
-sudo tee /etc/systemd/system/ttyd.service > /dev/null <<EOF
-[Unit]
-Description=ttyd - Web terminal
-After=network.target
+SELECTED=()
+if [[ "$SELECTION" == "a" ]]; then
+  SELECTED=("${SERVICES[@]}")
+else
+  for num in $SELECTION; do
+    idx=$((num - 1))
+    if [ $idx -ge 0 ] && [ $idx -lt ${#SERVICES[@]} ]; then
+      SELECTED+=("${SERVICES[$idx]}")
+    else
+      echo "Invalid selection: $num"
+    fi
+  done
+fi
 
-[Service]
-Type=simple
-User=$(whoami)
-ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable /usr/bin/zsh
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo tee /etc/systemd/system/code-server.service > /dev/null <<EOF
-[Unit]
-Description=code-server - VS Code in browser
-After=network.target
-
-[Service]
-Type=simple
-User=$(whoami)
-ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --base-path /code --auth none --disable-telemetry
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 4. Deploy Caddy route snippets
-sudo cp "$SCRIPT_DIR/terminal.caddy" /etc/caddy/conf.d/
-sudo cp "$SCRIPT_DIR/code.caddy" /etc/caddy/conf.d/
-
-# 5. Start everything
-sudo systemctl daemon-reload
-sudo systemctl enable --now ttyd code-server
-sudo systemctl reload caddy
+if [ ${#SELECTED[@]} -eq 0 ]; then
+  echo "No valid services selected."
+  exit 0
+fi
 
 echo ""
-echo "=== Services installed ==="
-echo "  /terminal  -> ttyd (port 7681)"
-echo "  /code      -> code-server (port 8080)"
+echo "Installing: ${SELECTED[*]}"
+echo ""
+
+for svc in "${SELECTED[@]}"; do
+  echo "--- Installing $svc ---"
+  bash "$SCRIPT_DIR/install-$svc.sh"
+  echo ""
+done
+
+# Reload Caddy to pick up any new route snippets
+if command -v caddy &>/dev/null; then
+  sudo systemctl reload caddy
+  echo "Caddy reloaded."
+fi
+
+echo ""
+echo "=== Done ==="
