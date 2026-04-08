@@ -1,6 +1,18 @@
-handle_path /code/* {
+handle /code/* {
+	uri strip_prefix /code
 	reverse_proxy localhost:8080
 }
 handle /code {
 	redir /code/ permanent
+}
+
+# code-server loads assets from absolute paths — proxy them too
+handle /static/* {
+	reverse_proxy localhost:8080
+}
+handle /vscode-remote-resource {
+	reverse_proxy localhost:8080
+}
+handle /_static/* {
+	reverse_proxy localhost:8080
 }
