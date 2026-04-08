@@ -111,7 +111,8 @@ def main():
                     time.sleep(3)
                     new_data = read_all(master_fd, 5)
                     buf = new_data  # fresh buffer from here
-                    log(f"  fresh buffer: {len(buf)} bytes")
+                    fresh_text = clean(buf)
+                    log(f"  fresh buffer: {len(buf)} bytes, text: {fresh_text[:200]}")
                     break  # re-check from outer loop
         else:
             log(f"  no data, waiting...")
