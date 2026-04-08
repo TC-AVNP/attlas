@@ -61,7 +61,7 @@ if pid == 0:
     os.dup2(slave_fd, 2)
     if slave_fd > 2:
         os.close(slave_fd)
-    os.execvpe("claude", ["claude", "auth", "login"], env)
+    os.execvpe("claude", ["claude", "login"], env)
 
 # Parent: manage the PTY
 os.close(slave_fd)
@@ -178,35 +178,50 @@ time.sleep(0.5)
 os.write(master_fd, b"\n")
 log("Sent newline (\\n)")
 
-# Step 4: Read response
-log("Reading response...")
-time.sleep(3)
-response = b""
-for i in range(60):
-    r, _, _ = select.select([master_fd], [], [], 1)
-    if r:
-        try:
-            data = os.read(master_fd, 4096)
-            log(f"  response read {len(data)} bytes: {repr(data[:300])}")
-            response += data
-        except OSError as e:
-            log(f"  response read error: {e}")
-            break
-    else:
-        if response:
-            log(f"  no more data after {len(response)} total bytes")
-            break
-        if i % 10 == 0:
-            log(f"  waiting for response... ({i}s)")
-    # Check if process exited
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        log(f"  process exited")
-        break
+# Step 4: Wait for response and handle follow-up prompts
+log("Reading response after code submission...")
 
-log(f"FULL RESPONSE ({len(response)} bytes): {repr(response)}")
-log(f"RESPONSE decoded: {response.decode(errors='replace')}")
+def read_pty(timeout_secs=10):
+    """Read all available PTY output."""
+    buf = b""
+    for _ in range(timeout_secs * 2):
+        r, _, _ = select.select([master_fd], [], [], 0.5)
+        if r:
+            try:
+                buf += os.read(master_fd, 4096)
+            except OSError:
+                break
+        else:
+            if buf:
+                break
+    return buf
+
+# Wait for "Press Enter to continue" or similar
+time.sleep(5)
+resp1 = read_pty(15)
+log(f"Response after code ({len(resp1)} bytes): {repr(resp1[:500])}")
+
+# Press Enter for security notice
+log("Pressing Enter for security notice...")
+os.write(master_fd, b"\r")
+time.sleep(3)
+resp2 = read_pty(10)
+log(f"Response after Enter ({len(resp2)} bytes): {repr(resp2[:500])}")
+
+# Select "Yes, I trust this folder" (it should be pre-selected, just press Enter)
+log("Pressing Enter for trust prompt...")
+os.write(master_fd, b"\r")
+time.sleep(3)
+resp3 = read_pty(10)
+log(f"Response after trust ({len(resp3)} bytes): {repr(resp3[:500])}")
+
+# Press q or Ctrl-C to exit claude TUI
+log("Sending Ctrl-C to exit...")
+os.write(master_fd, b"\x03")
+time.sleep(2)
+
+response = resp1 + resp2 + resp3
+log(f"TOTAL RESPONSE: {len(response)} bytes")
 
 # Clean up
 try:
