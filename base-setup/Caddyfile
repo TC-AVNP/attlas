@@ -3,5 +3,9 @@
 		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
 	}
 
-	respond "Hello, world!"
+	handle / {
+		respond "I am alive!"
+	}
+
+	import /etc/caddy/conf.d/*.caddy
 }

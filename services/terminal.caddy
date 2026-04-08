@@ -1,0 +1,3 @@
+handle /terminal* {
+	reverse_proxy localhost:7681
+}

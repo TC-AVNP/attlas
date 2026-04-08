@@ -13,6 +13,11 @@ resource "google_compute_instance" "vm" {
 
   tags = ["http-server", "https-server"]
 
+  metadata_startup_script = templatefile("${path.module}/startup.sh", {
+    vm_user     = var.vm_user
+    attlas_repo = var.attlas_repo
+  })
+
   boot_disk {
     auto_delete = true
     initialize_params {
@@ -55,7 +60,6 @@ resource "google_compute_instance" "vm" {
   lifecycle {
     ignore_changes = [
       boot_disk[0].initialize_params[0].image,
-      metadata,
     ]
   }
 }
