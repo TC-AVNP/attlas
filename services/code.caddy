@@ -1,6 +1,6 @@
-handle_path /code/* {
-	reverse_proxy localhost:8080
-}
 handle /code {
 	redir /code/ permanent
+}
+handle_path /code/* {
+	reverse_proxy localhost:8080
 }
