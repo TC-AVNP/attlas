@@ -107,7 +107,11 @@ log(f"Initial text: {initial_text[:500]}")
 # Step 1: Theme picker — just accept whatever is selected
 if "theme" in initial_text.lower() or "text style" in initial_text.lower():
     log("Theme picker detected — pressing Enter to accept default")
-    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=1, wait_after=8)
+    os.write(master_fd, b"\r")
+    log("  Enter sent, waiting 5s for transition...")
+    time.sleep(5)
+    resp = read_pty(master_fd, 10)
+    log(f"  after theme: {len(resp)} bytes")
 else:
     log("No theme picker detected, continuing...")
     resp = initial
@@ -115,21 +119,25 @@ else:
 # Step 2: Login method — keep reading until we find it, then press Enter
 log("Looking for login method screen...")
 all_resp = resp
-for attempt in range(5):
-    resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", all_resp).decode(errors="replace")
-    if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
-        log("Login method picker detected — selecting option 1 (Claude subscription)")
-        all_resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
+for attempt in range(8):
+    all_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", all_resp).decode(errors="replace")
+    if "login method" in all_text.lower() or "select login" in all_text.lower() or "Claude account" in all_text or "subscription" in all_text.lower():
+        log("Login method picker detected — pressing Enter for option 1")
+        os.write(master_fd, b"\r")
+        log("  Enter sent, waiting 5s for transition...")
+        time.sleep(5)
+        all_resp = read_pty(master_fd, 10)
+        log(f"  after login method: {len(all_resp)} bytes")
         break
     else:
         log(f"  attempt {attempt}: no login method yet, reading more...")
-        time.sleep(5)
-        more = read_pty(master_fd, 10)
+        time.sleep(3)
+        more = read_pty(master_fd, 5)
         all_resp += more
         if not more:
             log(f"  no more output")
 else:
-    log(f"Login method not found after retries. Text so far: {resp_text[:300]}")
+    log(f"Login method not found after retries.")
 
 # Step 3: URL screen — read the URL
 log("Looking for auth URL...")
