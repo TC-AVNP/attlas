@@ -51,22 +51,24 @@ fi
 
 # 8. Start alive-server (VM dashboard)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-sudo tee /etc/systemd/system/alive-server.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/alive-server.service > /dev/null <<'UNIT_EOF'
 [Unit]
 Description=Attlas VM Dashboard
 After=network.target
 
 [Service]
 Type=simple
-User=$(whoami)
-WorkingDirectory=$SCRIPT_DIR/alive-server
-ExecStart=/usr/bin/python3 $SCRIPT_DIR/alive-server/server.py
+User=PLACEHOLDER_USER
+WorkingDirectory=PLACEHOLDER_WORKDIR
+ExecStart=/usr/bin/python3 PLACEHOLDER_WORKDIR/server.py
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+UNIT_EOF
+sudo sed -i "s|PLACEHOLDER_USER|$(whoami)|g" /etc/systemd/system/alive-server.service
+sudo sed -i "s|PLACEHOLDER_WORKDIR|$SCRIPT_DIR/alive-server|g" /etc/systemd/system/alive-server.service
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now alive-server
@@ -78,10 +80,8 @@ CADDY_DOMAIN="${EXTERNAL_IP}.sslip.io"
 sudo cp "$SCRIPT_DIR/Caddyfile" /etc/caddy/Caddyfile
 sudo mkdir -p /etc/caddy/conf.d
 sudo mkdir -p /etc/systemd/system/caddy.service.d
-sudo tee /etc/systemd/system/caddy.service.d/override.conf > /dev/null <<EOF
-[Service]
-Environment=CADDY_DOMAIN=${CADDY_DOMAIN}
-EOF
+echo "[Service]
+Environment=CADDY_DOMAIN=${CADDY_DOMAIN}" | sudo tee /etc/systemd/system/caddy.service.d/override.conf > /dev/null
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now caddy
@@ -104,8 +104,13 @@ echo "=== Base setup complete ==="
 echo ""
 echo "NOTE: Run 'claude' to log in to Claude Code (requires interactive auth)."
 echo ""
-read -p "Install services now? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  bash "$SCRIPT_DIR/../services/install.sh"
+if [ -t 0 ]; then
+  read -p "Install services now? (y/n) " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    bash "$SCRIPT_DIR/../services/install.sh"
+  fi
+else
+  echo "Non-interactive mode — skipping services prompt."
+  echo "Run ~/attlas/services/install.sh to install services."
 fi
