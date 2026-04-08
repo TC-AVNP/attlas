@@ -65,7 +65,7 @@
     "bind": "loopback",
     "trustedProxies": ["127.0.0.1"],
     "auth": {
-      "mode": "trusted-proxy"
+      "mode": "none"
     },
     "controlUi": {
       "basePath": "/openclaw",
