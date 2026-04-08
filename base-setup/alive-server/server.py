@@ -182,26 +182,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": str(e)})
 
     def handle_submit_code(self):
-        data = self.read_json()
-        code = data.get("code", "")
-        proc = LOGIN_STATE.get("process")
-        if not proc:
-            self.send_json({"error": "No login in progress. Click 'Login' first."})
-            return
-        try:
-            proc.stdin.write(code + "\n")
-            proc.stdin.flush()
-            proc.stdin.close()
-            proc.wait(timeout=30)
+        """Check if Claude auth completed (polling-based, no code needed)."""
+        if is_claude_logged_in():
+            # Clean up the login process if it's still running
+            proc = LOGIN_STATE.get("process")
+            if proc:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
             LOGIN_STATE["process"] = None
             LOGIN_STATE["url"] = None
-            if is_claude_logged_in():
-                self.send_json({"success": True})
+            self.send_json({"success": True})
+        else:
+            # Process still running and polling — auth not yet completed
+            proc = LOGIN_STATE.get("process")
+            if proc and proc.poll() is not None:
+                # Process exited without auth completing
+                LOGIN_STATE["process"] = None
+                LOGIN_STATE["url"] = None
+                self.send_json({"error": "Login process exited. Try again."})
             else:
-                self.send_json({"error": "Code submitted but login may have failed."})
-        except Exception as e:
-            LOGIN_STATE["process"] = None
-            self.send_json({"error": str(e)})
+                self.send_json({"error": "Not yet authenticated. Complete the login in your browser, then check again."})
 
     def handle_install_service(self):
         data = self.read_json()

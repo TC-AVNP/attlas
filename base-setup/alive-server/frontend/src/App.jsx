@@ -7,7 +7,7 @@ function App() {
   const [toast, setToast] = useState(null)
   const [loginState, setLoginState] = useState('idle')
   const [authUrl, setAuthUrl] = useState('')
-  const [code, setCode] = useState('')
+  const [checking, setChecking] = useState(false)
   const [loginMsg, setLoginMsg] = useState(null)
   const [installing, setInstalling] = useState(null)
   const [uninstalling, setUninstalling] = useState(null)
@@ -50,25 +50,26 @@ function App() {
     }
   }
 
-  const submitCode = async () => {
-    if (!code.trim()) return
+  const checkAuth = async () => {
+    setChecking(true)
     try {
       const res = await fetch('/api/claude-login/code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code.trim() })
+        body: JSON.stringify({})
       })
       const data = await res.json()
       if (data.success) {
         setLoginMsg({ text: 'Logged in!', error: false })
         setLoginState('idle')
-        setCode('')
         setTimeout(fetchStatus, 1000)
       } else {
-        setLoginMsg({ text: data.error || 'Login failed', error: true })
+        setLoginMsg({ text: data.error || 'Not yet authenticated', error: true })
       }
     } catch (e) {
       setLoginMsg({ text: e.message, error: true })
+    } finally {
+      setChecking(false)
     }
   }
 
@@ -162,18 +163,15 @@ function App() {
                 {authUrl}
               </a>
               <div style={{ marginTop: '1rem' }}>
-                <p>2. Paste the code:</p>
-                <div className="row" style={{ marginTop: '0.5rem' }}>
-                  <input
-                    className="input"
-                    type="text"
-                    placeholder="Paste code..."
-                    value={code}
-                    onChange={e => setCode(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && submitCode()}
-                  />
-                  <button className="btn btn-success" onClick={submitCode}>Submit</button>
-                </div>
+                <p>2. Complete login in the browser, then:</p>
+                <button
+                  className="btn btn-success"
+                  onClick={checkAuth}
+                  disabled={checking}
+                  style={{ marginTop: '0.5rem' }}
+                >
+                  {checking ? 'Checking...' : 'I\'ve logged in — check status'}
+                </button>
               </div>
             </div>
           )}
