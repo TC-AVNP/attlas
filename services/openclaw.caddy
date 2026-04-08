@@ -1,4 +1,4 @@
-handle_path /openclaw/* {
+handle /openclaw/* {
 	reverse_proxy localhost:18789 {
 		header_up X-Forwarded-User {http.auth.user.id}
 	}
