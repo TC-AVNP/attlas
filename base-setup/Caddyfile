@@ -1,6 +1,10 @@
 {$CADDY_DOMAIN} {
-	basic_auth * {
-		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
+	@notlogin not path /login /logout
+	forward_auth @notlogin localhost:3000 {
+		uri /api/auth/verify
+		copy_headers {
+			401 Location
+		}
 	}
 
 	import /etc/caddy/conf.d/*.caddy
