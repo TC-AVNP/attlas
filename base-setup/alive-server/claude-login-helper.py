@@ -122,19 +122,27 @@ def main():
             time.sleep(2)
 
     # Extract URL from accumulated output
-    text = buf.decode(errors="replace")
-    for word in text.split():
-        w = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", word)
-        if w.startswith("https://claude.com/") or w.startswith("https://console.anthropic.com/"):
-            url = w.strip()
-            break
+    # The URL may be wrapped across lines in the terminal output
+    # Strip all ANSI codes and whitespace, then find the URL
+    raw = buf.decode(errors="replace")
+    # Remove ANSI escape sequences
+    stripped = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][AB012]|\x1b[=>]|\x1b\][^\x07]*\x07", "", raw)
+    # Remove carriage returns and join lines (URL may wrap)
+    stripped = stripped.replace("\r", "")
+
+    # Find URL start, then grab everything until whitespace/newline that isn't part of URL
+    url_match = re.search(r"(https://claude\.com/\S+|https://console\.anthropic\.com/\S+)", stripped)
+    if url_match:
+        url = url_match.group(1)
+        # Clean any trailing non-URL chars
+        url = url.rstrip(".,;:\"')")
 
     if not url:
-        cleaned = clean(buf)
-        for word in cleaned.split():
-            if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
-                url = word.strip()
-                break
+        # Try joining all lines and searching again
+        no_newlines = stripped.replace("\n", "")
+        url_match = re.search(r"(https://claude\.com/[^\s]{50,}|https://console\.anthropic\.com/[^\s]{50,})", no_newlines)
+        if url_match:
+            url = url_match.group(1)
 
     if not url:
         log(f"ERROR: No URL found. Clean text: {clean(buf)[-500:]}")
