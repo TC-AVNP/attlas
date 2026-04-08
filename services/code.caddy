@@ -1,6 +1,3 @@
-@code path /code /code/*
-handle @code {
-	redir /code /code/ permanent
-	uri strip_prefix /code
+handle_path /code/* {
 	reverse_proxy localhost:8080
 }
