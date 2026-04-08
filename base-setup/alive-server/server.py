@@ -142,10 +142,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": "Already logged in"})
             return
         try:
+            # Kill any existing login process
+            if LOGIN_STATE.get("process"):
+                try:
+                    LOGIN_STATE["process"].terminate()
+                except Exception:
+                    pass
+
             proc = subprocess.Popen(
-                ["claude", "login", "--no-browser"],
+                ["claude", "auth", "login"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True,
+                env={**os.environ, "BROWSER": "echo"},  # prevent browser launch
             )
             LOGIN_STATE["process"] = proc
 
@@ -153,11 +161,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             lines = []
             for line in iter(proc.stdout.readline, ""):
                 lines.append(line.strip())
+                # Look for the auth URL in "If the browser didn't open, visit: URL"
                 for word in line.split():
-                    if word.startswith("http://") or word.startswith("https://"):
+                    if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
                         url = word.strip()
                         break
-                if url or len(lines) > 50:
+                if url or len(lines) > 20:
                     break
 
             if url:
