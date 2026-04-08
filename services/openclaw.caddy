@@ -1,7 +1,5 @@
 handle /openclaw/* {
-	reverse_proxy localhost:18789 {
-		header_up X-Forwarded-User {http.auth.user.id}
-	}
+	reverse_proxy localhost:18789
 }
 handle /openclaw {
 	redir /openclaw/ permanent

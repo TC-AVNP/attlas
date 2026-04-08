@@ -65,10 +65,8 @@
     "bind": "loopback",
     "trustedProxies": ["127.0.0.1"],
     "auth": {
-      "mode": "trusted-proxy",
-      "trustedProxy": {
-        "userHeader": "X-Forwarded-User"
-      }
+      "mode": "token",
+      "token": "GATEWAY_AUTH_TOKEN"
     },
     "controlUi": {
       "basePath": "/openclaw",
