@@ -1,4 +1,10 @@
 handle /openclaw/* {
+	@not_websocket {
+		not header Connection *Upgrade*
+	}
+	basicauth @not_websocket {
+		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
+	}
 	reverse_proxy localhost:18789
 }
 handle /openclaw {
