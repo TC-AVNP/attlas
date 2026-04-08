@@ -104,31 +104,32 @@ clean_initial = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", i
 initial_text = clean_initial.decode(errors="replace")
 log(f"Initial text: {initial_text[:500]}")
 
-# Step 1: Theme picker — select option 3 (down, down, Enter)
+# Step 1: Theme picker — option 3 is already selected (❯), just press Enter
 if "theme" in initial_text.lower() or "text style" in initial_text.lower():
-    log("Theme picker detected — selecting option 3 (dark mode colorblind)")
-    send_and_read(master_fd, b"\x1b[B", "down arrow 1", wait_before=1, wait_after=0.5)  # down
-    send_and_read(master_fd, b"\x1b[B", "down arrow 2", wait_before=0.3, wait_after=0.5)  # down
-    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=0.3, wait_after=3)
+    log("Theme picker detected — option 3 already selected, pressing Enter")
+    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=1, wait_after=5)
 else:
     log("No theme picker detected, continuing...")
     resp = initial
 
-# Step 2: Login method — select option 1 (Enter, it's default)
-resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
-if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
-    log("Login method picker detected — selecting option 1 (Claude subscription)")
-    resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
-else:
-    # Maybe the login method screen is in the next read
-    time.sleep(3)
-    resp = read_pty(master_fd, 10)
-    resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
+# Step 2: Login method — keep reading until we find it, then press Enter
+log("Looking for login method screen...")
+all_resp = resp
+for attempt in range(5):
+    resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", all_resp).decode(errors="replace")
     if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
-        log("Login method detected on second read")
-        resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
+        log("Login method picker detected — selecting option 1 (Claude subscription)")
+        all_resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
+        break
     else:
-        log(f"No login method detected. Current text: {resp_text[:300]}")
+        log(f"  attempt {attempt}: no login method yet, reading more...")
+        time.sleep(3)
+        more = read_pty(master_fd, 5)
+        all_resp += more
+        if not more:
+            log(f"  no more output")
+else:
+    log(f"Login method not found after retries. Text so far: {resp_text[:300]}")
 
 # Step 3: URL screen — read the URL
 log("Looking for auth URL...")
