@@ -9,3 +9,11 @@
 
 	import /etc/caddy/conf.d/*.caddy
 }
+
+{$CADDY_DOMAIN}:8443 {
+	basicauth * {
+		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
+	}
+
+	reverse_proxy localhost:8080
+}

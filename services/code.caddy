@@ -1,18 +1,2 @@
-handle /code/* {
-	uri strip_prefix /code
-	reverse_proxy localhost:8080
-}
-handle /code {
-	redir /code/ permanent
-}
-
-# code-server loads assets from absolute paths — proxy them too
-handle /static/* {
-	reverse_proxy localhost:8080
-}
-handle /vscode-remote-resource {
-	reverse_proxy localhost:8080
-}
-handle /_static/* {
-	reverse_proxy localhost:8080
-}
+# code-server runs on port 8443 (separate Caddy site block in base Caddyfile)
+# No snippet needed here — this file is kept for documentation only
