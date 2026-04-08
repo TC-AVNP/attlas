@@ -3,8 +3,8 @@
 		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
 	}
 
-	handle / {
-		respond "I am alive!"
+	handle /* {
+		reverse_proxy localhost:3000
 	}
 
 	import /etc/caddy/conf.d/*.caddy

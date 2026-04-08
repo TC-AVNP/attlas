@@ -49,8 +49,29 @@ if ! command -v caddy &>/dev/null; then
   sudo apt-get install -y -qq caddy
 fi
 
-# 8. Deploy base Caddyfile
+# 8. Start alive-server (VM dashboard)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+sudo tee /etc/systemd/system/alive-server.service > /dev/null <<EOF
+[Unit]
+Description=Attlas VM Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=$(whoami)
+WorkingDirectory=$SCRIPT_DIR/alive-server
+ExecStart=/usr/bin/python3 $SCRIPT_DIR/alive-server/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now alive-server
+
+# 9. Deploy base Caddyfile
 EXTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
 CADDY_DOMAIN="${EXTERNAL_IP}.sslip.io"
 
@@ -66,15 +87,16 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now caddy
 sudo systemctl restart caddy
 
-# 9. Verify "I am alive" is reachable
+# 10. Verify dashboard is reachable
 echo ""
-echo "Verifying Caddy is reachable..."
+echo "Verifying dashboard is reachable..."
 sleep 5  # give Caddy time to obtain TLS cert
 if curl -sf -u Testuser:password123 "https://${CADDY_DOMAIN}/" -o /dev/null; then
   echo "OK: https://${CADDY_DOMAIN}/ is live"
 else
   echo "FAILED: Could not reach https://${CADDY_DOMAIN}/"
   echo "Check logs: sudo journalctl -u caddy --no-pager -n 30"
+  echo "Also check: sudo journalctl -u alive-server --no-pager -n 30"
 fi
 
 echo ""

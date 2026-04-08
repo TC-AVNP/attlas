@@ -1,0 +1,91 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #1a1a2e;
+  color: #eee;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+#root { max-width: 580px; width: 100%; }
+
+h1 { color: #68d391; font-size: 2rem; margin-bottom: 0.3rem; }
+.subtitle { color: #666; margin-bottom: 2rem; }
+
+h2 {
+  color: #aaa;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2rem;
+  margin-bottom: 0.8rem;
+  border-bottom: 1px solid #333;
+  padding-bottom: 0.4rem;
+}
+
+table { width: 100%; border-collapse: collapse; }
+td { padding: 0.45rem 0.6rem; border-bottom: 1px solid #2a2a3e; }
+td.label { color: #888; }
+.table-header { color: #666; font-size: 0.8rem; text-transform: uppercase; }
+
+a { color: #63b3ed; text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.dot-green::before { content: "\1F7E2"; margin-right: 0.4rem; }
+.dot-red::before { content: "\1F534"; margin-right: 0.4rem; }
+.dot-grey::before { content: "\26AA"; margin-right: 0.4rem; }
+
+.btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: none;
+  border-radius: 4px;
+  color: white;
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: #5a67d8; }
+.btn-primary:hover:not(:disabled) { background: #4c51bf; }
+.btn-success { background: #48bb78; }
+.btn-sm { padding: 0.3rem 0.8rem; font-size: 0.8rem; background: #4a5568; }
+.btn-sm:hover { background: #5a67d8; }
+.btn-uninstall { padding: 0.2rem 0.5rem; font-size: 0.75rem; background: transparent; color: #666; border: 1px solid #444; margin-left: 0.5rem; }
+.btn-uninstall:hover:not(:disabled) { background: #e53e3e; color: white; border-color: #e53e3e; }
+
+.input {
+  padding: 0.5rem;
+  font-size: 0.9rem;
+  font-family: monospace;
+  background: #2d2d44;
+  color: #eee;
+  border: 1px solid #555;
+  border-radius: 4px;
+  flex: 1;
+}
+
+.login-box {
+  margin-top: 0.8rem;
+  padding: 1rem;
+  border: 1px solid #444;
+  border-radius: 8px;
+}
+
+.toast {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.8rem 1.5rem;
+  border-radius: 6px;
+  color: white;
+  font-size: 0.9rem;
+  z-index: 100;
+}
+
+.msg-error { color: #fc8181; }
+.msg-success { color: #68d391; }
+.muted { color: #666; }
+.row { display: flex; gap: 0.5rem; align-items: center; }
