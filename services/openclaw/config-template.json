@@ -63,9 +63,13 @@
     "port": 18789,
     "mode": "local",
     "bind": "loopback",
+    "trustedProxies": ["127.0.0.1"],
     "auth": {
       "mode": "token",
       "token": "GATEWAY_AUTH_TOKEN"
+    },
+    "controlUi": {
+      "allowedOrigins": ["EXTERNAL_ORIGIN"]
     },
     "tailscale": {
       "mode": "off",
