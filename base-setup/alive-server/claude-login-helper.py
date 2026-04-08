@@ -108,36 +108,37 @@ log(f"Initial text: {initial_text[:500]}")
 if "theme" in initial_text.lower() or "text style" in initial_text.lower():
     log("Theme picker detected — pressing Enter to accept default")
     os.write(master_fd, b"\r")
-    log("  Enter sent, waiting 5s for transition...")
-    time.sleep(5)
-    resp = read_pty(master_fd, 10)
-    log(f"  after theme: {len(resp)} bytes")
+    log("  Enter sent, waiting 8s for next screen...")
+    time.sleep(8)
+    # Drain everything from the transition
+    while True:
+        buf = read_pty(master_fd, 3)
+        if not buf:
+            break
+        log(f"  drained {len(buf)} bytes")
+    log("  transition complete")
 else:
     log("No theme picker detected, continuing...")
-    resp = initial
 
-# Step 2: Login method — keep reading until we find it, then press Enter
-log("Looking for login method screen...")
-all_resp = resp
-for attempt in range(8):
-    all_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", all_resp).decode(errors="replace")
-    if "login method" in all_text.lower() or "select login" in all_text.lower() or "Claude account" in all_text or "subscription" in all_text.lower():
-        log("Login method picker detected — pressing Enter for option 1")
-        os.write(master_fd, b"\r")
-        log("  Enter sent, waiting 5s for transition...")
-        time.sleep(5)
-        all_resp = read_pty(master_fd, 10)
-        log(f"  after login method: {len(all_resp)} bytes")
-        break
-    else:
-        log(f"  attempt {attempt}: no login method yet, reading more...")
-        time.sleep(3)
-        more = read_pty(master_fd, 5)
-        all_resp += more
-        if not more:
-            log(f"  no more output")
+# Step 2: Login method — wait for it, then press Enter
+log("Waiting for login method screen...")
+time.sleep(3)
+resp = read_pty(master_fd, 15)
+resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
+log(f"  screen text: {resp_text[:200]}")
+
+if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
+    log("Login method picker detected — pressing Enter for option 1")
+    os.write(master_fd, b"\r")
+    log("  Enter sent, waiting 8s for URL screen...")
+    time.sleep(8)
+    while True:
+        buf = read_pty(master_fd, 3)
+        if not buf:
+            break
+        log(f"  drained {len(buf)} bytes")
 else:
-    log(f"Login method not found after retries.")
+    log(f"No login method detected — maybe already past it")
 
 # Step 3: URL screen — read the URL
 log("Looking for auth URL...")
