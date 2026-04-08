@@ -104,31 +104,10 @@ clean_initial = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", i
 initial_text = clean_initial.decode(errors="replace")
 log(f"Initial text: {initial_text[:500]}")
 
-# Step 1: Theme picker — go to top first, then down to option 3
+# Step 1: Theme picker — just accept whatever is selected
 if "theme" in initial_text.lower() or "text style" in initial_text.lower():
-    log("Theme picker detected — navigating to option 3")
-    # Press up 6 times to guarantee we're at option 1 (list has 6 items)
-    for i in range(6):
-        os.write(master_fd, b"\x1b[A")
-        time.sleep(0.15)
-    time.sleep(0.5)
-    read_pty(master_fd, 2)  # drain
-    log("  at top of list")
-    # Press down 2 times to reach option 3
-    for i in range(2):
-        os.write(master_fd, b"\x1b[B")
-        time.sleep(0.15)
-    time.sleep(0.5)
-    read_pty(master_fd, 2)  # drain
-    log("  at option 3, pressing Enter")
-    # Wait a moment, then press Enter, then wait longer for next screen
+    log("Theme picker detected — pressing Enter to accept default")
     resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=1, wait_after=8)
-    # The TUI may re-render — read more output
-    time.sleep(3)
-    extra = read_pty(master_fd, 10)
-    if extra:
-        log(f"  extra output after theme: {len(extra)} bytes")
-        resp += extra
 else:
     log("No theme picker detected, continuing...")
     resp = initial
