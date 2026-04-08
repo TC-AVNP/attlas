@@ -1,18 +1,6 @@
-@openclaw_ws {
-	path /openclaw/*
-	header Connection *Upgrade*
-}
-handle @openclaw_ws {
-	reverse_proxy localhost:18789
-}
-
 handle /openclaw/* {
-	basicauth {
-		Testuser $2b$12$a..Pmn7SfaC90hvBEuG.red4Ue0fvF55V/yQjzMrj5dPq3Khf.dDC
-	}
 	reverse_proxy localhost:18789
 }
-
 handle /openclaw {
 	redir /openclaw/ permanent
 }
