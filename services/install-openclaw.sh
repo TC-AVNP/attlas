@@ -116,8 +116,8 @@ rm -f "$SECRETS_FILE"
 
 # 4. Set permissions
 chmod 700 "$OPENCLAW_HOME"
-chmod -R 600 "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents"
-chmod -R u+X "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents"
+find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type d -exec chmod 700 {} \;
+find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type f -exec chmod 600 {} \;
 
 # 5. Install and start daemon (non-interactive)
 # Uses the config we just wrote — no wizard needed
