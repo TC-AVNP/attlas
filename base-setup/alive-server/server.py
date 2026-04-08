@@ -78,7 +78,7 @@ def get_services_status():
         running = False
         if installed:
             if svc.get("check_process"):
-                _, running = run_cmd(["pgrep", "-x", svc["check_process"]])
+                _, running = run_cmd(["pgrep", "-f", svc["check_process"]])
             else:
                 out, _ = run_cmd(["systemctl", "is-active", svc["service"]])
                 running = out == "active"
