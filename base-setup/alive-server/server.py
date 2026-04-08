@@ -28,9 +28,9 @@ COOKIE_MAX_AGE = 86400 * 7  # 7 days
 
 KNOWN_SERVICES = [
     {"id": "terminal", "name": "Cloud Terminal", "service": "ttyd", "command": "ttyd",
-     "path": "/terminal", "script": "install-terminal.sh"},
+     "path": "/terminal/", "script": "install-terminal.sh"},
     {"id": "code-server", "name": "Cloud VS Code", "service": "code-server", "command": "code-server",
-     "path": "/code", "script": "install-code-server.sh"},
+     "path": "/code/", "script": "install-code-server.sh"},
     {"id": "openclaw", "name": "OpenClaw", "service": "openclaw-gateway", "command": "openclaw",
      "path": "/openclaw", "script": "install-openclaw.sh", "check_process": "openclaw-gateway"},
 ]
