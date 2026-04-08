@@ -199,7 +199,7 @@ function App() {
                   <td className={svc.running ? 'dot-green' : 'dot-red'}>{svc.name}</td>
                   <td>{svc.running ? 'running' : 'stopped'}</td>
                   <td>
-                    {svc.path ? <a href={svc.path}>{svc.path}</a> : '\u2014'}
+                    {svc.path ? <a href={svc.path} target="_blank" rel="noopener noreferrer">{svc.path}</a> : '\u2014'}
                     {' '}
                     <button
                       className="btn btn-uninstall"
