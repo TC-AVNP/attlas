@@ -13,20 +13,20 @@ echo "openclaw: $(openclaw --version 2>&1 | head -1 || echo 'installed')"
 
 # 2. Fetch secrets from GCP Secret Manager
 echo "Fetching OpenClaw secrets from Secret Manager..."
-SECRETS=$(gcloud secrets versions access latest --secret=openclaw-config --quiet)
+SECRETS_FILE=$(mktemp)
+gcloud secrets versions access latest --secret=openclaw-config --quiet > "$SECRETS_FILE"
 
 # 3. Build config from template + secrets
 echo "Building OpenClaw config..."
 mkdir -p "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents/main/agent" "$OPENCLAW_HOME/devices" "$OPENCLAW_HOME/workspace"
 
-python3 <<PYEOF
-import json, os
+python3 - "$SECRETS_FILE" "$SCRIPT_DIR" "$OPENCLAW_HOME" <<'PYEOF'
+import json, os, sys
 
-secrets = json.loads('''$SECRETS''')
-home = os.path.expanduser("~")
-oc_home = os.path.join(home, ".openclaw")
-script_dir = "$SCRIPT_DIR"
-
+with open(sys.argv[1]) as f:
+    secrets = json.load(f)
+script_dir = sys.argv[2]
+oc_home = sys.argv[3]
 # Read template and substitute secrets
 with open(os.path.join(script_dir, "openclaw", "config-template.json")) as f:
     config = json.load(f)
@@ -111,6 +111,8 @@ with open(os.path.join(oc_home, "devices", "paired.json"), "w") as f:
 
 print("Config files written to " + oc_home)
 PYEOF
+
+rm -f "$SECRETS_FILE"
 
 # 4. Set permissions
 chmod 700 "$OPENCLAW_HOME"
