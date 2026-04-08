@@ -121,7 +121,14 @@ if "theme" in initial_text.lower() or "text style" in initial_text.lower():
     time.sleep(0.5)
     read_pty(master_fd, 2)  # drain
     log("  at option 3, pressing Enter")
-    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=0.5, wait_after=5)
+    # Wait a moment, then press Enter, then wait longer for next screen
+    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=1, wait_after=8)
+    # The TUI may re-render — read more output
+    time.sleep(3)
+    extra = read_pty(master_fd, 10)
+    if extra:
+        log(f"  extra output after theme: {len(extra)} bytes")
+        resp += extra
 else:
     log("No theme picker detected, continuing...")
     resp = initial
@@ -137,8 +144,8 @@ for attempt in range(5):
         break
     else:
         log(f"  attempt {attempt}: no login method yet, reading more...")
-        time.sleep(3)
-        more = read_pty(master_fd, 5)
+        time.sleep(5)
+        more = read_pty(master_fd, 10)
         all_resp += more
         if not more:
             log(f"  no more output")
