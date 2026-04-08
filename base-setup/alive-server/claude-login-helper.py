@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Helper that runs claude auth login with a PTY.
-Communicates with the dashboard via files.
-Heavy debug logging to /tmp/claude-login-helper.log
+Helper that runs 'claude login' with a PTY and navigates the setup wizard.
+Steps: theme picker → login method → URL + code → security notice → trust folder
+Communicates with the dashboard via files in /tmp/.
 """
 
 import pty
@@ -10,8 +10,8 @@ import os
 import select
 import time
 import sys
-import fcntl
 import struct
+import fcntl
 import termios
 
 URL_FILE = "/tmp/claude-login-url"
@@ -28,163 +28,11 @@ def log(msg):
     log_f.write(line + "\n")
     log_f.flush()
 
-# Clean up old files
-for f in [URL_FILE, CODE_FILE, RESULT_FILE]:
-    try:
-        os.remove(f)
-    except FileNotFoundError:
-        pass
-
-# Create PTY
-master_fd, slave_fd = pty.openpty()
-
-# Set terminal size (some programs need this)
-winsize = struct.pack("HHHH", 24, 80, 0, 0)
-fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
-log(f"PTY created: master_fd={master_fd}, slave_fd={slave_fd}")
-
-env = os.environ.copy()
-env["BROWSER"] = "echo"
-env["TERM"] = "xterm-256color"
-env["COLUMNS"] = "80"
-env["LINES"] = "24"
-
-pid = os.fork()
-if pid == 0:
-    # Child: run claude auth login
-    os.close(master_fd)
-    os.setsid()
-    # Set controlling terminal
-    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
-    os.dup2(slave_fd, 0)
-    os.dup2(slave_fd, 1)
-    os.dup2(slave_fd, 2)
-    if slave_fd > 2:
-        os.close(slave_fd)
-    os.execvpe("claude", ["claude", "login"], env)
-
-# Parent: manage the PTY
-os.close(slave_fd)
-log(f"Forked child PID: {pid}")
-
-# Step 1: Read output until we find the URL
-log("Reading PTY output for URL...")
-output = b""
-url = None
-for i in range(60):
-    r, _, _ = select.select([master_fd], [], [], 1)
-    if r:
-        try:
-            data = os.read(master_fd, 4096)
-            log(f"  read {len(data)} bytes: {repr(data[:200])}")
-            output += data
-        except OSError as e:
-            log(f"  read error: {e}")
-            break
-        text = output.decode(errors="replace")
-        for word in text.split():
-            if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
-                url = word.strip()
-                break
-        if url:
-            break
-    else:
-        if i % 10 == 0:
-            log(f"  waiting... ({i}s)")
-
-if not url:
-    log(f"ERROR: No URL found. Full output: {repr(output[:1000])}")
-    with open(RESULT_FILE, "w") as f:
-        f.write("ERROR: Could not find auth URL")
-    os.kill(pid, 9)
-    os.close(master_fd)
-    sys.exit(1)
-
-log(f"URL found: {url[:80]}...")
-with open(URL_FILE, "w") as f:
-    f.write(url)
-
-# Drain any remaining output after URL
-time.sleep(2)
-for _ in range(10):
-    r, _, _ = select.select([master_fd], [], [], 0.5)
-    if r:
-        try:
-            extra = os.read(master_fd, 4096)
-            log(f"  drained {len(extra)} bytes: {repr(extra[:200])}")
-        except OSError:
-            break
-
-# Check if process is still alive
-try:
-    os.kill(pid, 0)
-    log("Process is still alive, waiting for code...")
-except ProcessLookupError:
-    log("ERROR: Process died before code could be entered!")
-    with open(RESULT_FILE, "w") as f:
-        f.write("ERROR: claude auth login exited prematurely")
-    sys.exit(1)
-
-# Step 2: Wait for code file
-code = None
-for i in range(300):
-    if os.path.exists(CODE_FILE):
-        with open(CODE_FILE) as f:
-            code = f.read().strip()
-        if code:
-            os.remove(CODE_FILE)
-            break
-    if i % 30 == 0:
-        log(f"  waiting for code file... ({i}s)")
-        # Check process is alive
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            log("ERROR: Process died while waiting for code!")
-            with open(RESULT_FILE, "w") as f:
-                f.write("ERROR: claude auth login exited while waiting")
-            sys.exit(1)
-    time.sleep(1)
-
-if not code:
-    log("ERROR: Timed out waiting for code (5 min)")
-    with open(RESULT_FILE, "w") as f:
-        f.write("ERROR: Timed out")
-    os.kill(pid, 9)
-    os.close(master_fd)
-    sys.exit(1)
-
-# Step 3: Send code to PTY
-log(f"CODE RECEIVED: {repr(code)}")
-log(f"Code length: {len(code)}")
-log(f"Writing code to PTY...")
-
-# Write code character by character with small delays (simulate typing)
-code_bytes = code.encode()
-for i, byte in enumerate(code_bytes):
-    os.write(master_fd, bytes([byte]))
-    if i % 20 == 0:
-        time.sleep(0.05)  # small delay every 20 chars
-
-log(f"Wrote {len(code_bytes)} bytes to PTY")
-
-# Send Enter
-time.sleep(0.5)
-os.write(master_fd, b"\r")
-log("Sent Enter (\\r)")
-
-# Also try \n
-time.sleep(0.5)
-os.write(master_fd, b"\n")
-log("Sent newline (\\n)")
-
-# Step 4: Wait for response and handle follow-up prompts
-log("Reading response after code submission...")
-
-def read_pty(timeout_secs=10):
+def read_pty(master_fd, timeout_secs=10):
     """Read all available PTY output."""
     buf = b""
-    for _ in range(timeout_secs * 2):
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
         r, _, _ = select.select([master_fd], [], [], 0.5)
         if r:
             try:
@@ -196,32 +44,179 @@ def read_pty(timeout_secs=10):
                 break
     return buf
 
-# Wait for "Press Enter to continue" or similar
+def send_and_read(master_fd, keys, label, wait_before=1, wait_after=3, read_timeout=10):
+    """Send keys to PTY, wait, read response."""
+    time.sleep(wait_before)
+    log(f"Sending: {repr(keys)} ({label})")
+    os.write(master_fd, keys)
+    time.sleep(wait_after)
+    resp = read_pty(master_fd, read_timeout)
+    log(f"Response ({label}): {len(resp)} bytes")
+    if resp:
+        # Strip most ANSI for readability in log
+        import re
+        clean = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp)
+        log(f"  cleaned: {clean.decode(errors='replace')[:300]}")
+    return resp
+
+# Clean up old files
+for f in [URL_FILE, CODE_FILE, RESULT_FILE]:
+    try:
+        os.remove(f)
+    except FileNotFoundError:
+        pass
+
+# Create PTY
+master_fd, slave_fd = pty.openpty()
+winsize = struct.pack("HHHH", 30, 120, 0, 0)
+fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+log(f"PTY created")
+
+env = os.environ.copy()
+env["BROWSER"] = "echo"
+env["TERM"] = "xterm-256color"
+env["COLUMNS"] = "120"
+env["LINES"] = "30"
+
+pid = os.fork()
+if pid == 0:
+    os.close(master_fd)
+    os.setsid()
+    fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+    os.dup2(slave_fd, 0)
+    os.dup2(slave_fd, 1)
+    os.dup2(slave_fd, 2)
+    if slave_fd > 2:
+        os.close(slave_fd)
+    os.execvpe("claude", ["claude", "login"], env)
+
+os.close(slave_fd)
+log(f"Started claude login (PID {pid})")
+
+# Read initial output (welcome screen + theme picker)
+log("Waiting for initial output...")
 time.sleep(5)
-resp1 = read_pty(15)
-log(f"Response after code ({len(resp1)} bytes): {repr(resp1[:500])}")
+initial = read_pty(master_fd, 10)
+log(f"Initial output: {len(initial)} bytes")
 
-# Press Enter for security notice
-log("Pressing Enter for security notice...")
-os.write(master_fd, b"\r")
+import re
+clean_initial = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", initial)
+initial_text = clean_initial.decode(errors="replace")
+log(f"Initial text: {initial_text[:500]}")
+
+# Step 1: Theme picker — select option 3 (down, down, Enter)
+if "theme" in initial_text.lower() or "text style" in initial_text.lower():
+    log("Theme picker detected — selecting option 3 (dark mode colorblind)")
+    send_and_read(master_fd, b"\x1b[B", "down arrow 1", wait_before=1, wait_after=0.5)  # down
+    send_and_read(master_fd, b"\x1b[B", "down arrow 2", wait_before=0.3, wait_after=0.5)  # down
+    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=0.3, wait_after=3)
+else:
+    log("No theme picker detected, continuing...")
+    resp = initial
+
+# Step 2: Login method — select option 1 (Enter, it's default)
+resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
+if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
+    log("Login method picker detected — selecting option 1 (Claude subscription)")
+    resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
+else:
+    # Maybe the login method screen is in the next read
+    time.sleep(3)
+    resp = read_pty(master_fd, 10)
+    resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
+    if "login method" in resp_text.lower() or "select login" in resp_text.lower() or "Claude account" in resp_text:
+        log("Login method detected on second read")
+        resp = send_and_read(master_fd, b"\r", "Enter for login method", wait_before=1, wait_after=5)
+    else:
+        log(f"No login method detected. Current text: {resp_text[:300]}")
+
+# Step 3: URL screen — read the URL
+log("Looking for auth URL...")
 time.sleep(3)
-resp2 = read_pty(10)
-log(f"Response after Enter ({len(resp2)} bytes): {repr(resp2[:500])}")
+all_output = read_pty(master_fd, 15)
+combined = resp + all_output
+combined_text = combined.decode(errors="replace")
 
-# Select "Yes, I trust this folder" (it should be pre-selected, just press Enter)
-log("Pressing Enter for trust prompt...")
+url = None
+for word in combined_text.split():
+    if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
+        url = word.strip()
+        break
+
+if not url:
+    log(f"ERROR: No URL found. Output: {combined_text[:1000]}")
+    with open(RESULT_FILE, "w") as f:
+        f.write("ERROR: Could not find auth URL after wizard steps")
+    os.kill(pid, 9)
+    os.close(master_fd)
+    sys.exit(1)
+
+log(f"URL found: {url[:80]}...")
+with open(URL_FILE, "w") as f:
+    f.write(url)
+
+# Step 4: Wait for code from dashboard
+log("Waiting for code file...")
+code = None
+for i in range(300):  # 5 minutes
+    if os.path.exists(CODE_FILE):
+        with open(CODE_FILE) as f:
+            code = f.read().strip()
+        if code:
+            os.remove(CODE_FILE)
+            break
+    if i % 30 == 0:
+        log(f"  waiting for code... ({i}s)")
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            log("ERROR: Process died while waiting")
+            with open(RESULT_FILE, "w") as f:
+                f.write("ERROR: claude login exited")
+            sys.exit(1)
+    time.sleep(1)
+
+if not code:
+    log("ERROR: Timed out waiting for code")
+    with open(RESULT_FILE, "w") as f:
+        f.write("ERROR: Timed out")
+    os.kill(pid, 9)
+    os.close(master_fd)
+    sys.exit(1)
+
+# Step 5: Type the code character by character
+log(f"Typing code ({len(code)} chars)...")
+for ch in code:
+    os.write(master_fd, ch.encode())
+    time.sleep(0.01)
+log("Code typed, pressing Enter...")
+time.sleep(0.5)
 os.write(master_fd, b"\r")
-time.sleep(3)
-resp3 = read_pty(10)
-log(f"Response after trust ({len(resp3)} bytes): {repr(resp3[:500])}")
 
-# Press q or Ctrl-C to exit claude TUI
+# Step 6: Security notice — "Press Enter to continue"
+resp = read_pty(master_fd, 15)
+log(f"After code Enter: {len(resp)} bytes")
+resp_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", resp).decode(errors="replace")
+log(f"  text: {resp_text[:300]}")
+
+if "enter" in resp_text.lower() or "continue" in resp_text.lower() or "security" in resp_text.lower():
+    log("Security notice detected, pressing Enter...")
+    send_and_read(master_fd, b"\r", "Enter for security", wait_before=2, wait_after=3)
+
+# Step 7: Trust folder — "Yes, I trust this folder"
+time.sleep(2)
+trust_resp = read_pty(master_fd, 10)
+trust_text = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", trust_resp).decode(errors="replace")
+log(f"Trust screen: {trust_text[:300]}")
+
+if "trust" in trust_text.lower() or "folder" in trust_text.lower():
+    log("Trust prompt detected, pressing Enter (option 1)...")
+    send_and_read(master_fd, b"\r", "Enter for trust", wait_before=1, wait_after=3)
+
+# Exit the TUI
 log("Sending Ctrl-C to exit...")
 os.write(master_fd, b"\x03")
 time.sleep(2)
-
-response = resp1 + resp2 + resp3
-log(f"TOTAL RESPONSE: {len(response)} bytes")
 
 # Clean up
 try:
@@ -249,7 +244,7 @@ if '"loggedIn": true' in result.stdout:
     log("AUTH SUCCEEDED!")
 else:
     with open(RESULT_FILE, "w") as f:
-        f.write(f"FAILED: {response.decode(errors='replace')[:200]}")
+        f.write(f"FAILED: check /tmp/claude-login-helper.log")
     log("AUTH FAILED")
 
 log_f.close()
