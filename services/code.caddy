@@ -1,5 +1,4 @@
 handle_path /code/* {
-	import basicauth
 	reverse_proxy localhost:8080
 }
 handle /code {
