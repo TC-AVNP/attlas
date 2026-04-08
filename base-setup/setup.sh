@@ -29,9 +29,10 @@ fi
 echo "Running dotfiles installer..."
 cd ~/dotfiles && bash install.sh
 
-# 5. Set zsh as default shell
+# 5. Set zsh as default shell + enable lingering for user services
 sudo chsh -s /usr/bin/zsh "$(whoami)"
-echo "Default shell set to zsh (takes effect on next login)"
+sudo loginctl enable-linger "$(whoami)"
+echo "Default shell set to zsh, user linger enabled"
 
 # 6. Install Claude Code
 if ! command -v claude &>/dev/null; then
