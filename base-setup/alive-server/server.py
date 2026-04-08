@@ -19,8 +19,8 @@ KNOWN_SERVICES = [
      "path": "/terminal", "script": "install-terminal.sh"},
     {"id": "code-server", "name": "Cloud VS Code", "service": "code-server", "command": "code-server",
      "path": "/code", "script": "install-code-server.sh"},
-    {"id": "openclaw", "name": "OpenClaw", "service": "openclaw", "command": "openclaw",
-     "path": None, "script": "install-openclaw.sh"},
+    {"id": "openclaw", "name": "OpenClaw", "service": "openclaw-gateway", "command": "openclaw",
+     "path": None, "script": "install-openclaw.sh", "user_service": True},
 ]
 
 
@@ -77,7 +77,10 @@ def get_services_status():
         _, installed = run_cmd(["which", svc["command"]])
         running = False
         if installed:
-            out, _ = run_cmd(["systemctl", "is-active", svc["service"]])
+            if svc.get("user_service"):
+                out, _ = run_cmd(["systemctl", "--user", "is-active", svc["service"]])
+            else:
+                out, _ = run_cmd(["systemctl", "is-active", svc["service"]])
             running = out == "active"
         results.append({**svc, "installed": installed, "running": running})
     return results

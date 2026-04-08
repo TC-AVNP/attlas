@@ -130,13 +130,16 @@ def main():
     # Remove carriage returns AND newlines (URL wraps across lines at terminal width)
     stripped = stripped.replace("\r", "").replace("\n", "")
 
-    # Find URL — the state param is always last, so cut after its value
-    # State value is base64url: [A-Za-z0-9_-]
-    url_match = re.search(r"(https://claude\.com/\S*state=[A-Za-z0-9_-]+)", stripped)
-    if not url_match:
-        url_match = re.search(r"(https://console\.anthropic\.com/\S*state=[A-Za-z0-9_-]+)", stripped)
+    # Find URL and clean trailing text that got concatenated
+    url_match = re.search(r"(https://claude\.com/\S+|https://console\.anthropic\.com/\S+)", stripped)
     if url_match:
         url = url_match.group(1)
+        # The URL always ends with state=<base64url value>
+        # Cut off anything after the state value (like "Pastecodehereifprompted")
+        state_match = re.search(r"(.*state=[A-Za-z0-9_-]{40,50})", url)
+        if state_match:
+            url = state_match.group(1)
+    log(f"Extracted URL ({len(url) if url else 0} chars)")
 
     if not url:
         log(f"ERROR: No URL found. Clean text: {clean(buf)[-500:]}")
