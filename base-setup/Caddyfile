@@ -2,9 +2,7 @@
 	@notlogin not path /login /logout
 	forward_auth @notlogin localhost:3000 {
 		uri /api/auth/verify
-		copy_headers {
-			401 Location
-		}
+		copy_headers Location
 	}
 
 	import /etc/caddy/conf.d/*.caddy

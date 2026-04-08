@@ -187,7 +187,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
             else:
-                self.send_response(401)
+                # Return 302 so Caddy copies the redirect to the client
+                self.send_response(302)
                 self.send_header("Location", "/login")
                 self.end_headers()
             return
