@@ -1,6 +1,6 @@
-# Custom SSH rule (priority 1000)
-resource "google_compute_firewall" "allow_ssh" {
-  name    = "allow-ssh"
+# SSH via IAP only (gcloud compute ssh uses Identity-Aware Proxy)
+resource "google_compute_firewall" "allow_ssh_iap" {
+  name    = "allow-ssh-iap"
   network = "default"
 
   allow {
@@ -8,23 +8,25 @@ resource "google_compute_firewall" "allow_ssh" {
     ports    = ["22"]
   }
 
-  source_ranges = ["0.0.0.0/0"]
+  # Google's IAP IP range — only gcloud compute ssh can reach port 22
+  source_ranges = ["35.235.240.0/20"]
+  target_tags   = ["ssh-iap"]
   direction     = "INGRESS"
   priority      = 1000
 }
 
-# Allow HTTP + HTTPS for Caddy
-resource "google_compute_firewall" "allow_http_https" {
-  name    = "allow-http-https"
+# HTTPS only for Caddy
+resource "google_compute_firewall" "allow_https" {
+  name    = "allow-https"
   network = "default"
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443"]
+    ports    = ["443"]
   }
 
   source_ranges = ["0.0.0.0/0"]
-  target_tags   = ["http-server", "https-server"]
+  target_tags   = ["https-server"]
   direction     = "INGRESS"
   priority      = 1000
 }

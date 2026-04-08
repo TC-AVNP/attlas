@@ -11,7 +11,7 @@ resource "google_compute_instance" "vm" {
   machine_type = var.machine_type
   zone         = var.zone
 
-  tags = ["http-server", "https-server"]
+  tags = ["https-server", "ssh-iap"]
 
   metadata_startup_script = templatefile("${path.module}/startup.sh", {
     vm_user     = var.vm_user
@@ -45,15 +45,7 @@ resource "google_compute_instance" "vm" {
 
   service_account {
     email  = "710670943493-compute@developer.gserviceaccount.com"
-    scopes = [
-      "https://www.googleapis.com/auth/devstorage.read_only",
-      "https://www.googleapis.com/auth/logging.write",
-      "https://www.googleapis.com/auth/monitoring.write",
-      "https://www.googleapis.com/auth/pubsub",
-      "https://www.googleapis.com/auth/service.management.readonly",
-      "https://www.googleapis.com/auth/servicecontrol",
-      "https://www.googleapis.com/auth/trace.append",
-    ]
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
   }
 
   # Prevent terraform from recreating the VM due to image drift or metadata changes
