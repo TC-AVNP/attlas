@@ -7,8 +7,7 @@
 
 	import /etc/caddy/conf.d/*.caddy
 
-	# Catch-all: lowest priority — only matches if nothing else did
-	handle {
-		reverse_proxy localhost:3000
-	}
+	# Default backend — must use reverse_proxy directly, not inside handle
+	# so imported handle/handle_path blocks take priority
+	reverse_proxy localhost:3000
 }
