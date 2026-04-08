@@ -130,16 +130,19 @@ def main():
     # Remove carriage returns AND newlines (URL wraps across lines at terminal width)
     stripped = stripped.replace("\r", "").replace("\n", "")
 
-    # Find URL and clean trailing text that got concatenated
-    url_match = re.search(r"(https://claude\.com/\S+|https://console\.anthropic\.com/\S+)", stripped)
+    # Find URL. After stripping ANSI + newlines, the URL runs into the next text.
+    # Known trailing text is "Pastecodehereifprompted>" or "Browserdidn'topen..."
+    # Simply cut at "Paste" or at the first uppercase letter after "state="
+    url_match = re.search(r"(https://claude\.com/[^\s]*|https://console\.anthropic\.com/[^\s]*)", stripped)
     if url_match:
         url = url_match.group(1)
-        # The URL always ends with state=<base64url value>
-        # Cut off anything after the state value (like "Pastecodehereifprompted")
-        state_match = re.search(r"(.*state=[A-Za-z0-9_-]{40,50})", url)
-        if state_match:
-            url = state_match.group(1)
-    log(f"Extracted URL ({len(url) if url else 0} chars)")
+        # Cut at "Paste" if it got concatenated
+        for cut_word in ["Paste", "Browser", "Press", "Sign"]:
+            idx = url.find(cut_word)
+            if idx > 0:
+                url = url[:idx]
+                break
+    log(f"Extracted URL ({len(url) if url else 0} chars): ends with ...{url[-30:] if url else ''}")
 
     if not url:
         log(f"ERROR: No URL found. Clean text: {clean(buf)[-500:]}")
