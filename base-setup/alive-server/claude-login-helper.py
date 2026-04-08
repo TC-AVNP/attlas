@@ -104,10 +104,36 @@ clean_initial = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9;]*[a-zA-Z]", b"", i
 initial_text = clean_initial.decode(errors="replace")
 log(f"Initial text: {initial_text[:500]}")
 
-# Step 1: Theme picker — option 3 is already selected (❯), just press Enter
+# Step 1: Theme picker — find where cursor is, navigate to option 3, press Enter
 if "theme" in initial_text.lower() or "text style" in initial_text.lower():
-    log("Theme picker detected — option 3 already selected, pressing Enter")
-    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=1, wait_after=5)
+    log("Theme picker detected")
+    # Find which option has the ❯ cursor
+    # Options: 1=Dark, 2=Light, 3=Dark(cb), 4=Light(cb), 5=Dark(ANSI), 6=Light(ANSI)
+    current = 1
+    for line in initial_text.split("\n"):
+        if "❯" in line or ">" in line:
+            if "colorblind" in line.lower() and "dark" in line.lower():
+                current = 3
+            elif "colorblind" in line.lower() and "light" in line.lower():
+                current = 4
+            elif "ansi" in line.lower() and "dark" in line.lower():
+                current = 5
+            elif "ansi" in line.lower() and "light" in line.lower():
+                current = 6
+            elif "light" in line.lower():
+                current = 2
+            elif "dark" in line.lower():
+                current = 1
+            break
+    log(f"  cursor at option {current}, need option 3")
+    target = 3
+    if current < target:
+        for i in range(target - current):
+            send_and_read(master_fd, b"\x1b[B", f"down {i+1}", wait_before=0.2, wait_after=0.3)
+    elif current > target:
+        for i in range(current - target):
+            send_and_read(master_fd, b"\x1b[A", f"up {i+1}", wait_before=0.2, wait_after=0.3)
+    resp = send_and_read(master_fd, b"\r", "Enter for theme", wait_before=0.5, wait_after=5)
 else:
     log("No theme picker detected, continuing...")
     resp = initial
