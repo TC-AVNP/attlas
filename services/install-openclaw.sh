@@ -124,5 +124,8 @@ find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agen
 openclaw daemon install
 openclaw daemon start
 
+# 6. Expose dashboard via Caddy
+sudo cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/
+
 echo "openclaw installed and configured"
 echo "Check status: openclaw daemon status"
