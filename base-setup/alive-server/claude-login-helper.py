@@ -130,11 +130,13 @@ def main():
     # Remove carriage returns AND newlines (URL wraps across lines at terminal width)
     stripped = stripped.replace("\r", "").replace("\n", "")
 
-    # Find URL
-    url_match = re.search(r"(https://claude\.com/\S+|https://console\.anthropic\.com/\S+)", stripped)
+    # Find URL — the state param is always last, so cut after its value
+    # State value is base64url: [A-Za-z0-9_-]
+    url_match = re.search(r"(https://claude\.com/\S*state=[A-Za-z0-9_-]+)", stripped)
+    if not url_match:
+        url_match = re.search(r"(https://console\.anthropic\.com/\S*state=[A-Za-z0-9_-]+)", stripped)
     if url_match:
         url = url_match.group(1)
-        url = url.rstrip(".,;:\"')")
 
     if not url:
         log(f"ERROR: No URL found. Clean text: {clean(buf)[-500:]}")
