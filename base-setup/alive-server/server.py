@@ -164,6 +164,17 @@ def is_claude_logged_in():
         return False
 
 
+def get_openclaw_token():
+    """Read the gateway auth token from OpenClaw config."""
+    try:
+        home = os.path.expanduser("~")
+        with open(os.path.join(home, ".openclaw", "openclaw.json")) as f:
+            config = json.load(f)
+        return config.get("gateway", {}).get("auth", {}).get("token", "")
+    except Exception:
+        return ""
+
+
 def get_services_status():
     results = []
     for svc in KNOWN_SERVICES:
@@ -175,7 +186,13 @@ def get_services_status():
             else:
                 out, _ = run_cmd(["systemctl", "is-active", svc["service"]])
                 running = out == "active"
-        results.append({**svc, "installed": installed, "running": running})
+        entry = {**svc, "installed": installed, "running": running}
+        # Add token to OpenClaw path for auto-login
+        if svc["id"] == "openclaw" and installed:
+            token = get_openclaw_token()
+            if token:
+                entry["path"] = f"/openclaw/#token={token}"
+        results.append(entry)
     return results
 
 

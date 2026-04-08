@@ -1,6 +1,3 @@
-handle /openclaw/* {
+handle /openclaw* {
 	reverse_proxy localhost:18789
-}
-handle /openclaw {
-	redir /openclaw/ permanent
 }
