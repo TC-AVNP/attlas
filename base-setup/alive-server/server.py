@@ -182,28 +182,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json({"error": str(e)})
 
     def handle_submit_code(self):
-        """Check if Claude auth completed (polling-based, no code needed)."""
-        if is_claude_logged_in():
-            # Clean up the login process if it's still running
-            proc = LOGIN_STATE.get("process")
-            if proc:
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
+        """Pipe the auth code from the browser to claude auth login's stdin."""
+        data = self.read_json()
+        code = data.get("code", "")
+        proc = LOGIN_STATE.get("process")
+        if not proc:
+            self.send_json({"error": "No login in progress. Click 'Login' first."})
+            return
+        if not code:
+            self.send_json({"error": "No code provided."})
+            return
+        try:
+            # Write code to stdin and close it
+            proc.stdin.write(code + "\n")
+            proc.stdin.flush()
+            proc.stdin.close()
+
+            # Wait for process to finish
+            proc.wait(timeout=30)
+
             LOGIN_STATE["process"] = None
             LOGIN_STATE["url"] = None
-            self.send_json({"success": True})
-        else:
-            # Process still running and polling — auth not yet completed
-            proc = LOGIN_STATE.get("process")
-            if proc and proc.poll() is not None:
-                # Process exited without auth completing
-                LOGIN_STATE["process"] = None
-                LOGIN_STATE["url"] = None
-                self.send_json({"error": "Login process exited. Try again."})
+
+            if is_claude_logged_in():
+                self.send_json({"success": True})
             else:
-                self.send_json({"error": "Not yet authenticated. Complete the login in your browser, then check again."})
+                # Read any remaining output for debugging
+                remaining = proc.stdout.read() if proc.stdout else ""
+                self.send_json({"error": f"Code submitted but auth not detected. Output: {remaining[:500]}"})
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            LOGIN_STATE["process"] = None
+            self.send_json({"error": "Login timed out after 30s."})
+        except Exception as e:
+            LOGIN_STATE["process"] = None
+            self.send_json({"error": str(e)})
 
     def handle_install_service(self):
         data = self.read_json()
