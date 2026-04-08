@@ -124,13 +124,96 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
 
     def do_POST(self):
-        if self.path == "/api/install-service":
+        if self.path == "/api/claude-login":
+            self.handle_claude_login()
+        elif self.path == "/api/claude-login/code":
+            self.handle_claude_code()
+        elif self.path == "/api/install-service":
             self.handle_install_service()
         elif self.path == "/api/uninstall-service":
             self.handle_uninstall_service()
         else:
             self.send_response(404)
             self.end_headers()
+
+    def handle_claude_login(self):
+        """Start the login helper as a background process, wait for URL."""
+        if is_claude_logged_in():
+            self.send_json({"error": "Already logged in"})
+            return
+
+        # Kill any previous helper
+        subprocess.run(["pkill", "-f", "claude-login-helper"], capture_output=True)
+        import time
+        time.sleep(1)
+
+        # Clean old files
+        for f in ["/tmp/claude-login-url", "/tmp/claude-login-code", "/tmp/claude-login-result"]:
+            try:
+                os.remove(f)
+            except FileNotFoundError:
+                pass
+
+        # Start helper in background
+        helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude-login-helper.py")
+        subprocess.Popen(
+            ["python3", helper],
+            stdout=open("/tmp/claude-login-helper.log", "w"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+        # Wait for URL file (up to 30 seconds)
+        url = None
+        for _ in range(30):
+            if os.path.exists("/tmp/claude-login-url"):
+                with open("/tmp/claude-login-url") as f:
+                    url = f.read().strip()
+                if url:
+                    break
+            time.sleep(1)
+
+        if url:
+            self.send_json({"url": url})
+        else:
+            # Read helper log for debug info
+            log = ""
+            try:
+                with open("/tmp/claude-login-helper.log") as f:
+                    log = f.read()[:500]
+            except Exception:
+                pass
+            self.send_json({"error": f"Timed out waiting for URL. Log: {log}"})
+
+    def handle_claude_code(self):
+        """Write the auth code to the file for the helper to pick up."""
+        data = self.read_json()
+        code = data.get("code", "")
+        if not code:
+            self.send_json({"error": "No code provided."})
+            return
+
+        # Write code for the helper
+        with open("/tmp/claude-login-code", "w") as f:
+            f.write(code)
+
+        # Wait for result (up to 30 seconds)
+        import time
+        result = None
+        for _ in range(30):
+            if os.path.exists("/tmp/claude-login-result"):
+                with open("/tmp/claude-login-result") as f:
+                    result = f.read().strip()
+                if result:
+                    break
+            time.sleep(1)
+
+        if result and result == "SUCCESS":
+            self.send_json({"success": True})
+        elif result:
+            self.send_json({"error": result})
+        else:
+            self.send_json({"error": "Timed out waiting for login result."})
 
     def handle_install_service(self):
         data = self.read_json()

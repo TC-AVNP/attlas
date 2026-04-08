@@ -5,6 +5,10 @@ function App() {
   const [claude, setClaude] = useState(null)
   const [services, setServices] = useState([])
   const [toast, setToast] = useState(null)
+  const [loginState, setLoginState] = useState('idle')
+  const [authUrl, setAuthUrl] = useState('')
+  const [code, setCode] = useState('')
+  const [loginMsg, setLoginMsg] = useState(null)
   const [installing, setInstalling] = useState(null)
   const [uninstalling, setUninstalling] = useState(null)
 
@@ -26,6 +30,48 @@ function App() {
   }
 
   useEffect(() => { fetchStatus() }, [])
+
+  const startLogin = async () => {
+    setLoginState('waiting_url')
+    setLoginMsg(null)
+    try {
+      const res = await fetch('/api/claude-login', { method: 'POST' })
+      const data = await res.json()
+      if (data.url) {
+        setAuthUrl(data.url)
+        setLoginState('waiting_code')
+      } else {
+        setLoginMsg({ text: data.error || 'Failed to start login', error: true })
+        setLoginState('idle')
+      }
+    } catch (e) {
+      setLoginMsg({ text: e.message, error: true })
+      setLoginState('idle')
+    }
+  }
+
+  const submitCode = async () => {
+    if (!code.trim()) return
+    setLoginMsg({ text: 'Submitting code...', error: false })
+    try {
+      const res = await fetch('/api/claude-login/code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim() })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setLoginMsg({ text: 'Logged in!', error: false })
+        setLoginState('idle')
+        setCode('')
+        setTimeout(fetchStatus, 1500)
+      } else {
+        setLoginMsg({ text: data.error || 'Login failed', error: true })
+      }
+    } catch (e) {
+      setLoginMsg({ text: e.message, error: true })
+    }
+  }
 
   const installService = async (id) => {
     if (!confirm(`Install ${id}?`)) return
@@ -100,14 +146,43 @@ function App() {
       ) : (
         <>
           <div className="dot-red">Not authenticated</div>
-          <div style={{ marginTop: '0.8rem' }}>
-            <a href="/terminal" className="btn btn-primary" style={{ textDecoration: 'none', display: 'inline-block' }}>
-              Open Terminal to login
-            </a>
-            <p className="muted" style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-              Run <code style={{ background: '#2d2d44', padding: '2px 6px', borderRadius: '3px' }}>claude</code> in the terminal to authenticate, then refresh this page.
-            </p>
-          </div>
+          {loginState === 'idle' && (
+            <div style={{ marginTop: '0.8rem' }}>
+              <button className="btn btn-primary" onClick={startLogin}>
+                Login to Claude Code
+              </button>
+            </div>
+          )}
+          {loginState === 'waiting_url' && (
+            <div style={{ marginTop: '0.8rem', color: '#888' }}>Starting login...</div>
+          )}
+          {loginState === 'waiting_code' && (
+            <div className="login-box">
+              <p>1. Click to authenticate:</p>
+              <a href={authUrl} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>
+                {authUrl}
+              </a>
+              <div style={{ marginTop: '1rem' }}>
+                <p>2. Paste the authentication code:</p>
+                <div className="row" style={{ marginTop: '0.5rem' }}>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="Paste code from browser..."
+                    value={code}
+                    onChange={e => setCode(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && submitCode()}
+                  />
+                  <button className="btn btn-success" onClick={submitCode}>Submit</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {loginMsg && (
+            <div className={loginMsg.error ? 'msg-error' : 'msg-success'} style={{ marginTop: '0.5rem' }}>
+              {loginMsg.text}
+            </div>
+          )}
         </>
       )}
 
