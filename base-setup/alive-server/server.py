@@ -81,24 +81,24 @@ def is_authenticated(handler):
     return token and verify_session_token(token)
 
 
-LOGIN_PAGE = """<!DOCTYPE html>
+LOGIN_PAGE_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
     <title>Attlas Login</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee;
-               display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .box { max-width: 350px; width: 100%; padding: 2rem; }
-        h1 { color: #68d391; font-size: 1.5rem; margin-bottom: 1.5rem; }
-        label { display: block; margin-bottom: 0.3rem; color: #888; font-size: 0.85rem; }
-        input { width: 100%; padding: 0.6rem; margin-bottom: 1rem; font-size: 1rem;
+        body {{ font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee;
+               display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
+        .box {{ max-width: 350px; width: 100%; padding: 2rem; }}
+        h1 {{ color: #68d391; font-size: 1.5rem; margin-bottom: 1.5rem; }}
+        label {{ display: block; margin-bottom: 0.3rem; color: #888; font-size: 0.85rem; }}
+        input {{ width: 100%; padding: 0.6rem; margin-bottom: 1rem; font-size: 1rem;
                 background: #2d2d44; color: #eee; border: 1px solid #555; border-radius: 4px;
-                box-sizing: border-box; }
-        button { width: 100%; padding: 0.7rem; font-size: 1rem; cursor: pointer;
-                 background: #5a67d8; color: white; border: none; border-radius: 4px; }
-        button:hover { background: #4c51bf; }
-        .error { color: #fc8181; margin-bottom: 1rem; font-size: 0.9rem; }
+                box-sizing: border-box; }}
+        button {{ width: 100%; padding: 0.7rem; font-size: 1rem; cursor: pointer;
+                 background: #5a67d8; color: white; border: none; border-radius: 4px; }}
+        button:hover {{ background: #4c51bf; }}
+        .error {{ color: #fc8181; margin-bottom: 1rem; font-size: 0.9rem; }}
     </style>
 </head>
 <body>
@@ -198,7 +198,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(LOGIN_PAGE.format(error="").encode())
+            self.wfile.write(LOGIN_PAGE_TEMPLATE.format(error="").encode())
             return
 
         # Logout
@@ -290,7 +290,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html")
             self.end_headers()
-            self.wfile.write(LOGIN_PAGE.format(
+            self.wfile.write(LOGIN_PAGE_TEMPLATE.format(
                 error='<div class="error">Invalid username or password</div>'
             ).encode())
 
