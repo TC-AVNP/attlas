@@ -10,13 +10,9 @@ import json
 import subprocess
 import os
 import mimetypes
-import pty
-import select
-import signal
 
 PORT = 3000
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
-LOGIN_STATE = {"pid": None, "master_fd": None, "url": None}
 
 KNOWN_SERVICES = [
     {"id": "terminal", "name": "Cloud Terminal", "service": "ttyd", "command": "ttyd",
@@ -128,145 +124,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
 
     def do_POST(self):
-        if self.path == "/api/claude-login":
-            self.handle_start_login()
-        elif self.path == "/api/claude-login/code":
-            self.handle_submit_code()
-        elif self.path == "/api/install-service":
+        if self.path == "/api/install-service":
             self.handle_install_service()
         elif self.path == "/api/uninstall-service":
             self.handle_uninstall_service()
         else:
             self.send_response(404)
             self.end_headers()
-
-    def handle_start_login(self):
-        if is_claude_logged_in():
-            self.send_json({"error": "Already logged in"})
-            return
-        try:
-            # Kill any existing login process
-            if LOGIN_STATE.get("pid"):
-                try:
-                    os.kill(LOGIN_STATE["pid"], signal.SIGTERM)
-                except Exception:
-                    pass
-                if LOGIN_STATE.get("master_fd"):
-                    try:
-                        os.close(LOGIN_STATE["master_fd"])
-                    except Exception:
-                        pass
-
-            # Use PTY so claude auth login can read input
-            master_fd, slave_fd = pty.openpty()
-            env = os.environ.copy()
-            env["BROWSER"] = "echo"
-
-            pid = os.fork()
-            if pid == 0:
-                # Child process
-                os.close(master_fd)
-                os.setsid()
-                os.dup2(slave_fd, 0)
-                os.dup2(slave_fd, 1)
-                os.dup2(slave_fd, 2)
-                os.close(slave_fd)
-                os.execvpe("claude", ["claude", "auth", "login"], env)
-            else:
-                # Parent process
-                os.close(slave_fd)
-                LOGIN_STATE["pid"] = pid
-                LOGIN_STATE["master_fd"] = master_fd
-
-                # Read output until we find the URL
-                output = b""
-                url = None
-                for _ in range(30):
-                    r, _, _ = select.select([master_fd], [], [], 1)
-                    if r:
-                        data = os.read(master_fd, 4096)
-                        output += data
-                        text = output.decode(errors="replace")
-                        for word in text.split():
-                            if word.startswith("https://claude.com/") or word.startswith("https://console.anthropic.com/"):
-                                url = word.strip()
-                                break
-                        if url:
-                            break
-
-                if url:
-                    LOGIN_STATE["url"] = url
-                    self.send_json({"url": url})
-                else:
-                    os.kill(pid, signal.SIGTERM)
-                    os.close(master_fd)
-                    LOGIN_STATE["pid"] = None
-                    LOGIN_STATE["master_fd"] = None
-                    self.send_json({"error": "Could not find auth URL", "output": output.decode(errors="replace")[:1000]})
-
-        except FileNotFoundError:
-            self.send_json({"error": "claude not found — run base-setup first"})
-        except Exception as e:
-            self.send_json({"error": str(e)})
-
-    def handle_submit_code(self):
-        """Write the auth code to the claude auth login PTY."""
-        data = self.read_json()
-        code = data.get("code", "")
-        master_fd = LOGIN_STATE.get("master_fd")
-        pid = LOGIN_STATE.get("pid")
-        if not pid or not master_fd:
-            self.send_json({"error": "No login in progress. Click 'Login' first."})
-            return
-        if not code:
-            self.send_json({"error": "No code provided."})
-            return
-        try:
-            # Write code to PTY
-            os.write(master_fd, (code + "\n").encode())
-
-            # Read response
-            import time
-            time.sleep(5)
-            output = b""
-            for _ in range(10):
-                r, _, _ = select.select([master_fd], [], [], 1)
-                if r:
-                    try:
-                        data_bytes = os.read(master_fd, 4096)
-                        output += data_bytes
-                    except OSError:
-                        break
-                else:
-                    break
-
-            # Clean up
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except Exception:
-                pass
-            try:
-                os.close(master_fd)
-            except Exception:
-                pass
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except Exception:
-                pass
-
-            LOGIN_STATE["pid"] = None
-            LOGIN_STATE["master_fd"] = None
-            LOGIN_STATE["url"] = None
-
-            if is_claude_logged_in():
-                self.send_json({"success": True})
-            else:
-                self.send_json({"error": f"Code submitted. Output: {output.decode(errors='replace')[:500]}"}
-                )
-        except Exception as e:
-            LOGIN_STATE["pid"] = None
-            LOGIN_STATE["master_fd"] = None
-            self.send_json({"error": str(e)})
 
     def handle_install_service(self):
         data = self.read_json()
