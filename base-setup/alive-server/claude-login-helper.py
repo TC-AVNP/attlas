@@ -86,35 +86,38 @@ def main():
 
     log("Navigating wizard to 'paste code' screen...")
 
-    deadline = time.time() + 90  # 90 second total timeout
+    deadline = time.time() + 90
     while time.time() < deadline:
         data = read_all(master_fd, 3)
         if data:
             buf += data
-            text = clean(buf).lower()
             log(f"  [{len(buf)} bytes total] last read: {len(data)} bytes")
 
-            # Check if we reached the code input screen
-            if "paste code" in text or "paste" in text and "code" in text:
-                log("  REACHED 'paste code' screen!")
+        text = clean(buf).lower()
+
+        # Check if we reached the code input screen
+        if "paste code" in text or ("paste" in text and "code" in text):
+            log("  REACHED 'paste code' screen!")
+            break
+
+        # Press Enter on any wizard screen we recognize
+        matched = False
+        for trigger in triggers:
+            if trigger in text and trigger not in entered:
+                log(f"  found '{trigger}' — waiting 2s then pressing Enter")
+                time.sleep(2)
+                os.write(master_fd, b"\r")
+                entered.add(trigger)
+                log(f"  Enter pressed for '{trigger}'")
+                time.sleep(3)
+                # Read new data and APPEND (don't reset)
+                new_data = read_all(master_fd, 5)
+                buf += new_data
+                log(f"  after Enter: +{len(new_data)} bytes, total {len(buf)}")
+                matched = True
                 break
 
-            # Press Enter on any wizard screen we recognize
-            for trigger in triggers:
-                if trigger in text and trigger not in entered:
-                    log(f"  found '{trigger}' — waiting 2s then pressing Enter")
-                    time.sleep(2)
-                    os.write(master_fd, b"\r")
-                    entered.add(trigger)
-                    log(f"  Enter pressed for '{trigger}'")
-                    # Reset buf to avoid re-matching old text
-                    time.sleep(3)
-                    new_data = read_all(master_fd, 5)
-                    buf = new_data  # fresh buffer from here
-                    fresh_text = clean(buf)
-                    log(f"  fresh buffer: {len(buf)} bytes, text: {fresh_text[:200]}")
-                    break  # re-check from outer loop
-        else:
+        if not matched and not data:
             log(f"  no data, waiting...")
             time.sleep(2)
 
