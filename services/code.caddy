@@ -1,2 +1,7 @@
-# code-server runs on port 8443 (separate Caddy site block in base Caddyfile)
-# No snippet needed here — this file is kept for documentation only
+handle_path /code/* {
+	import basicauth
+	reverse_proxy localhost:8080
+}
+handle /code {
+	redir /code/ permanent
+}

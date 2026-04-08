@@ -12,8 +12,3 @@
 		reverse_proxy localhost:3000
 	}
 }
-
-{$CADDY_DOMAIN}:8443 {
-	import basicauth
-	reverse_proxy localhost:8080
-}
