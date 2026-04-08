@@ -1,3 +1,5 @@
 handle /openclaw* {
-	reverse_proxy localhost:18789
+	reverse_proxy localhost:18789 {
+		header_up Authorization "Bearer 34ed335c4247f619de1b8616222641b99994498f175e69e6"
+	}
 }
