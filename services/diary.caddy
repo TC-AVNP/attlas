@@ -1,7 +1,6 @@
-handle_path /diary/* {
-	root * /home/condecopedro/attlas/diary/public
-	file_server
-}
 handle /diary {
 	redir /diary/ permanent
+}
+handle /diary/* {
+	reverse_proxy localhost:3000
 }

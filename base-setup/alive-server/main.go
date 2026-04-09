@@ -748,6 +748,10 @@ func main() {
 	mux.HandleFunc("POST /api/install-service", handleInstallService)
 	mux.HandleFunc("POST /api/uninstall-service", handleUninstallService)
 
+	// Diary (Hugo static site)
+	diaryDir := filepath.Join(attlasDir, "diary", "public")
+	mux.Handle("/diary/", http.StripPrefix("/diary/", http.FileServer(http.Dir(diaryDir))))
+
 	// Static files (catch-all)
 	mux.HandleFunc("/", serveStatic)
 
