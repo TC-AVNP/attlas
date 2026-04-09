@@ -63,6 +63,7 @@
     }
   },
   "gateway": {
+    "channelHealthCheckMinutes": 60,
     "port": 18789,
     "mode": "local",
     "bind": "loopback",
