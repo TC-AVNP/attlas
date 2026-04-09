@@ -122,10 +122,36 @@ chmod 700 "$OPENCLAW_HOME"
 find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type d -exec chmod 700 {} \;
 find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type f -exec chmod 600 {} \;
 
-# 5. Install and start daemon (non-interactive)
-# Uses the config we just wrote — no wizard needed
-openclaw daemon install
-openclaw daemon start
+# 5. Install and start daemon as system-level service
+# Stop user-level service if it exists (migration from old setup)
+systemctl --user stop openclaw-gateway 2>/dev/null || true
+systemctl --user disable openclaw-gateway 2>/dev/null || true
+
+OPENCLAW_VERSION=$(openclaw --version 2>&1 | grep -oP '[\d.]+' | head -1)
+NODE_BIN=$(which node)
+OPENCLAW_JS=$(dirname "$(dirname "$(readlink -f "$(which openclaw)")")")/dist/index.js
+
+sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null <<UNIT_EOF
+[Unit]
+Description=OpenClaw Gateway (v${OPENCLAW_VERSION})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$(whoami)
+ExecStart=${NODE_BIN} ${OPENCLAW_JS} gateway --port 18789
+Restart=always
+RestartSec=5
+Environment=HOME=/home/$(whoami)
+Environment=OPENCLAW_GATEWAY_PORT=18789
+
+[Install]
+WantedBy=multi-user.target
+UNIT_EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now openclaw-gateway
 
 # 6. Expose dashboard via Caddy
 sudo cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/
