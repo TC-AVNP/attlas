@@ -8,7 +8,7 @@ Browser-accessible services running behind the Caddy gateway.
 |---------|--------|------|----------|-------------|
 | terminal | `install-terminal.sh` | 7681 | /terminal | Web terminal (ttyd, zsh with dotfiles) |
 | code-server | `install-code-server.sh` | 8080 | /code | VS Code in the browser |
-| openclaw | `install-openclaw.sh` | — | — | AI agent daemon (no web UI) |
+| openclaw | `install-openclaw.sh` | 18789 | /openclaw | AI agent daemon (Telegram, Brave, Anthropic) |
 
 ## How install.sh Works
 

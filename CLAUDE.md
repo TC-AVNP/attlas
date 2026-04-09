@@ -14,9 +14,9 @@ attlas/
 
 ## How It Works
 
-1. **`infra/`** provisions a bare Ubuntu VM with `terraform apply`. A minimal startup script clones this repo onto the VM.
-2. **`base-setup/`** is run manually after first SSH. It installs packages, dotfiles, Node.js, Claude Code, and the Caddy gateway. After completion, `https://attlas.uk/` serves the dashboard behind cookie auth.
-3. **`services/`** installs browser-accessible services (cloud terminal, cloud VS Code) and registers them with the Caddy gateway.
+1. **`infra/`** provisions a bare Ubuntu VM with `terraform apply`. Startup script clones this repo. Terraform also manages Secret Manager IAM bindings for all secrets.
+2. **`base-setup/`** is run manually after first SSH. It installs packages, dotfiles, Node.js, Go, Claude Code, builds the Go dashboard server, installs Caddy, and auto-updates Cloudflare DNS. After completion, `https://attlas.uk/` serves the dashboard behind Google OAuth2.
+3. **`services/`** installs browser-accessible services (cloud terminal, cloud VS Code, OpenClaw) and registers them with the Caddy gateway.
 
 ## IMPORTANT: Exposing Services to the Internet
 
@@ -32,9 +32,20 @@ Caddy is the single entry point for all HTTPS traffic. The base Caddyfile lives 
 ## Current Infrastructure
 
 - **GCP project**: petprojects-488115
-- **VM**: openclaw-vm, e2-standard-4, Ubuntu 24.04, europe-west1-b
-- **Gateway**: Caddy with auto-HTTPS, cookie auth (Testuser/password123)
-- **Domain**: attlas.uk (Cloudflare DNS → static IP)
+- **VM**: simple-zombie, e2-standard-4, Ubuntu 24.04, europe-west1-b
+- **Gateway**: Caddy with auto-HTTPS
+- **Auth**: Google OAuth2 (allowed emails configured in `attlas-server-config` secret)
+- **Domain**: attlas.uk (Cloudflare DNS, auto-updated on provision)
+- **Dashboard**: Go binary (`base-setup/alive-server/main.go`)
+
+## GCP Secret Manager secrets
+
+| Secret | Purpose |
+|--------|---------|
+| `github-pat` | GitHub PAT for cloning repos |
+| `cloudflare-dns-token` | Cloudflare API token for DNS updates |
+| `attlas-server-config` | OAuth2 client ID/secret + allowed emails |
+| `openclaw-config` | OpenClaw channel tokens and API keys |
 
 ## Git Identity
 

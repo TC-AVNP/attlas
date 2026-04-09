@@ -15,43 +15,53 @@
 - **OpenClaw** (`/openclaw/`) — AI agent dashboard (Telegram, Brave search, Anthropic)
 - **Claude Code** — authenticated (max subscription)
 
-### Auth
-- Cookie-based login via alive-server (`/login` page)
-- Caddy `forward_auth` checks session cookie on every request
-- All services protected behind single login
-
 ### Claude Code login via dashboard
 - PTY helper navigates the full claude login wizard (theme → login method → URL → code → security → trust)
 - Code input from browser, auto-submitted to PTY
 
-## What is NOT done
+## What was done (2026-04-09)
 
-### Phase C: Reproducibility proof
-- [ ] `terraform destroy` the current VM
-- [ ] `terraform apply` fresh — verify everything works from scratch
-- [ ] All services come up, dashboard accessible, Claude login works
+### Custom domain
+- [x] Bought `attlas.uk` on Cloudflare
+- [x] Replaced all sslip.io references with attlas.uk
+- [x] Caddy auto-obtains TLS cert via HTTP-01 ACME
 
-### Reliability fixes
-- [ ] **Replace alive-server with Flask+Gunicorn** — current `http.server.HTTPServer` is single-threaded. One slow request blocks ALL services (forward_auth depends on it). Use Flask + Gunicorn with 2+ workers.
-- [ ] **Revert to standard Caddy** — custom build with `replace-response` plugin is installed but not used. Reinstall from apt.
-- [ ] **Test loginctl linger on fresh provision** — needed for OpenClaw user-level systemd to survive SSH disconnect. Added to setup.sh but untested.
+### Go server rewrite
+- [x] Replaced single-threaded Python `http.server` with concurrent Go binary
+- [x] Auto-generated session secret (`~/.attlas-session-secret`)
+- [x] CSRF tokens on login form (removed with OAuth2)
+- [x] Rate limiting on login (removed with OAuth2)
 
-### Security fixes
-- [ ] **Random session secret** — currently hardcoded as `"attlas-session-secret-change-me"` in server.py. Anyone with repo access can forge session cookies. Generate random secret at install time, store in `~/.attlas-session-secret`.
-- [ ] **Rate limiting on login** — no brute-force protection. Add failed-attempt tracking (5 failures in 5 min → 15 min block).
-- [ ] **CSRF token on login form** — login form has no CSRF protection. Add per-render random token in hidden field.
-- [ ] **Stronger credentials** — `Testuser/password123` hardcoded in git. Move to GCP Secret Manager or generate at install time.
+### Google OAuth2
+- [x] Replaced username/password auth with Google OAuth2
+- [x] Only allowed emails can access (configured in `attlas-server-config` secret)
+- [x] Scary "KEEP AWAY" page for unauthorized users
+- [x] Profile banner shows logged-in email + logout link
+- [x] Allowed emails list shown in dashboard
 
-### Future improvements
-- [ ] **Google OAuth2** — replace cookie auth with Google federation. Single sign-on, no passwords. Use caddy-security or external auth provider.
-- [ ] **Tailscale** — private networking, no public ports needed, identity-based auth, encrypted by default.
-- [x] **Custom domain** — attlas.uk on Cloudflare, Caddy HTTP-01 ACME. Can upgrade to DNS-01 later to drop port 80.
-- [ ] **Move Terraform state to GCS bucket** — local state is fragile, can't collaborate.
+### Reliability
+- [x] OpenClaw moved to system-level systemd (no more `loginctl enable-linger` hack)
+- [x] Standard Caddy from apt (no custom builds)
+
+### Code-server config
+- [x] Dark theme (`Default Dark Modern`)
+- [x] Welcome page disabled
+- [x] Go and Flutter extensions pre-installed
+
+### Infrastructure automation
+- [x] Cloudflare DNS auto-updates on provision (setup.sh calls Cloudflare API)
+- [x] Terraform manages Secret Manager IAM bindings for all secrets (`secrets.tf`)
+- [x] Terraform state committed to git (not gitignored)
+- [x] OpenClaw heartbeat set to 24h, health check to 60min
+
+### Phase C — Reproducibility proof
+- [x] `terraform destroy` → `terraform apply` → zero manual interventions
+- [x] All services come up, dashboard accessible, OAuth2 works
 
 ## Current VM
 - **Name**: simple-zombie
-- **IP**: 35.195.105.231
+- **IP**: 34.62.185.156
 - **Domain**: attlas.uk
 - **Zone**: europe-west1-b
 - **Project**: petprojects-488115
-- **Login**: Testuser / password123
+- **Auth**: Google OAuth2 (condecopedro@gmail.com)
