@@ -37,15 +37,7 @@ config["gateway"]["auth"]["token"] = secrets["gateway_auth_token"]
 config["agents"]["defaults"]["workspace"] = os.path.join(oc_home, "workspace")
 
 # Resolve external origin for Control UI (Caddy reverse proxy)
-import subprocess as _sp
-try:
-    _ip = _sp.run(["curl", "-sf", "-H", "Metadata-Flavor: Google",
-        "http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip"],
-        capture_output=True, text=True, timeout=5).stdout.strip()
-    if _ip:
-        config["gateway"]["controlUi"]["allowedOrigins"] = [f"https://{_ip}.sslip.io"]
-except Exception:
-    pass  # keep placeholder if metadata unavailable
+config["gateway"]["controlUi"]["allowedOrigins"] = ["https://attlas.uk"]
 
 with open(os.path.join(oc_home, "openclaw.json"), "w") as f:
     json.dump(config, f, indent=2)

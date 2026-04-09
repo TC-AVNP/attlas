@@ -45,13 +45,13 @@
 ### Future improvements
 - [ ] **Google OAuth2** — replace cookie auth with Google federation. Single sign-on, no passwords. Use caddy-security or external auth provider.
 - [ ] **Tailscale** — private networking, no public ports needed, identity-based auth, encrypted by default.
-- [ ] **Custom domain + DNS-01 certs** — drop port 80 (ACME HTTP challenge), use proper domain with DNS-01 via Cloudflare.
+- [x] **Custom domain** — attlas.uk on Cloudflare, Caddy HTTP-01 ACME. Can upgrade to DNS-01 later to drop port 80.
 - [ ] **Move Terraform state to GCS bucket** — local state is fragile, can't collaborate.
 
 ## Current VM
 - **Name**: simple-zombie
 - **IP**: 35.195.105.231
-- **Domain**: 35-195-105-231.sslip.io
+- **Domain**: attlas.uk
 - **Zone**: europe-west1-b
 - **Project**: petprojects-488115
 - **Login**: Testuser / password123

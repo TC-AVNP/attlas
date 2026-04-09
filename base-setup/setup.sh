@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Base setup — run once after first SSH into a fresh VM.
-# Installs packages, dotfiles, Node.js, Claude Code, and Caddy gateway.
+# Installs packages, dotfiles, Node.js, Claude Code, Go, alive-server, and Caddy gateway.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=== Base setup starting ==="
 
@@ -29,10 +31,9 @@ fi
 echo "Running dotfiles installer..."
 cd ~/dotfiles && bash install.sh
 
-# 5. Set zsh as default shell + enable lingering for user services
+# 5. Set zsh as default shell
 sudo chsh -s /usr/bin/zsh "$(whoami)"
-sudo loginctl enable-linger "$(whoami)"
-echo "Default shell set to zsh, user linger enabled"
+echo "Default shell set to zsh"
 
 # 6. Install Claude Code
 if ! command -v claude &>/dev/null; then
@@ -40,7 +41,22 @@ if ! command -v claude &>/dev/null; then
   sudo npm install -g @anthropic-ai/claude-code
 fi
 
-# 7. Install Caddy
+# 7. Install Go
+if ! command -v go &>/dev/null; then
+  echo "Installing Go..."
+  curl -fsSL "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz" | sudo tar -C /usr/local -xzf -
+  echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee /etc/profile.d/go.sh > /dev/null
+  export PATH=$PATH:/usr/local/go/bin
+fi
+echo "Go: $(go version)"
+
+# 8. Build alive-server (Go binary)
+echo "Building alive-server..."
+cd "$SCRIPT_DIR/alive-server"
+go build -o attlas-server .
+echo "alive-server built"
+
+# 9. Install Caddy
 if ! command -v caddy &>/dev/null; then
   echo "Installing Caddy..."
   sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https
@@ -50,33 +66,30 @@ if ! command -v caddy &>/dev/null; then
   sudo apt-get install -y -qq caddy
 fi
 
-# 8. Start alive-server (VM dashboard)
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-sudo tee /etc/systemd/system/alive-server.service > /dev/null <<'UNIT_EOF'
+# 10. Start alive-server (VM dashboard)
+ALIVE_DIR="$SCRIPT_DIR/alive-server"
+sudo tee /etc/systemd/system/alive-server.service > /dev/null <<UNIT_EOF
 [Unit]
 Description=Attlas VM Dashboard
 After=network.target
 
 [Service]
 Type=simple
-User=PLACEHOLDER_USER
-WorkingDirectory=PLACEHOLDER_WORKDIR
-ExecStart=/usr/bin/python3 PLACEHOLDER_WORKDIR/server.py
+User=$(whoami)
+WorkingDirectory=${ALIVE_DIR}
+ExecStart=${ALIVE_DIR}/attlas-server
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 UNIT_EOF
-sudo sed -i "s|PLACEHOLDER_USER|$(whoami)|g" /etc/systemd/system/alive-server.service
-sudo sed -i "s|PLACEHOLDER_WORKDIR|$SCRIPT_DIR/alive-server|g" /etc/systemd/system/alive-server.service
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now alive-server
 
-# 9. Deploy base Caddyfile
-EXTERNAL_IP=$(curl -s -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
-CADDY_DOMAIN="${EXTERNAL_IP}.sslip.io"
+# 11. Deploy base Caddyfile
+CADDY_DOMAIN="attlas.uk"
 
 sudo cp "$SCRIPT_DIR/Caddyfile" /etc/caddy/Caddyfile
 sudo mkdir -p /etc/caddy/conf.d
@@ -88,16 +101,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now caddy
 sudo systemctl restart caddy
 
-# 10. Verify dashboard is reachable
+# 12. Verify dashboard is reachable
 echo ""
 echo "Verifying dashboard is reachable..."
 sleep 5  # give Caddy time to obtain TLS cert
-if curl -sf -u Testuser:password123 "https://${CADDY_DOMAIN}/" -o /dev/null; then
-  echo "OK: https://${CADDY_DOMAIN}/ is live"
+if curl -sf "http://localhost:3000/api/status" -o /dev/null; then
+  echo "OK: alive-server responding on localhost:3000"
 else
-  echo "FAILED: Could not reach https://${CADDY_DOMAIN}/"
-  echo "Check logs: sudo journalctl -u caddy --no-pager -n 30"
-  echo "Also check: sudo journalctl -u alive-server --no-pager -n 30"
+  echo "FAILED: alive-server not responding"
+  echo "Check logs: sudo journalctl -u alive-server --no-pager -n 30"
 fi
 
 echo ""

@@ -10,7 +10,7 @@ Run once after first SSH into a fresh VM. Installs everything needed for a worki
 - Sets zsh as default shell
 - Installs Claude Code
 - Installs Caddy and deploys the base gateway config
-- Verifies "I am alive!" is reachable at `https://{ip}.sslip.io/`
+- Verifies the dashboard is reachable at `https://attlas.uk/`
 - Prompts to install services (ttyd, code-server)
 
 ## Usage
@@ -22,9 +22,9 @@ Run once after first SSH into a fresh VM. Installs everything needed for a worki
 ## Caddy Gateway
 
 The `Caddyfile` in this directory is the base gateway config. It handles:
-- TLS via Let's Encrypt (automatic with sslip.io)
-- Basic auth (Testuser / password123)
-- "I am alive!" response at `/`
+- TLS via Let's Encrypt (automatic with attlas.uk)
+- Cookie auth (Testuser / password123)
+- Dashboard at `/`
 - Importing service route snippets from `/etc/caddy/conf.d/*.caddy`
 
 **To expose a new service, add a `.caddy` snippet to `/etc/caddy/conf.d/` — do NOT edit this Caddyfile.**

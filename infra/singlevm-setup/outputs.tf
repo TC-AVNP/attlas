@@ -3,9 +3,9 @@ output "vm_external_ip" {
   value       = google_compute_address.vm_static_ip.address
 }
 
-output "sslip_domain" {
-  description = "sslip.io domain for HTTPS access"
-  value       = "${replace(google_compute_address.vm_static_ip.address, ".", "-")}.sslip.io"
+output "domain" {
+  description = "Domain for HTTPS access"
+  value       = "attlas.uk"
 }
 
 output "ssh_command" {

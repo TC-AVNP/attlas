@@ -15,7 +15,7 @@ attlas/
 ## How It Works
 
 1. **`infra/`** provisions a bare Ubuntu VM with `terraform apply`. A minimal startup script clones this repo onto the VM.
-2. **`base-setup/`** is run manually after first SSH. It installs packages, dotfiles, Node.js, Claude Code, and the Caddy gateway. After completion, `https://{ip}.sslip.io/` serves "I am alive!" behind basic auth.
+2. **`base-setup/`** is run manually after first SSH. It installs packages, dotfiles, Node.js, Claude Code, and the Caddy gateway. After completion, `https://attlas.uk/` serves the dashboard behind cookie auth.
 3. **`services/`** installs browser-accessible services (cloud terminal, cloud VS Code) and registers them with the Caddy gateway.
 
 ## IMPORTANT: Exposing Services to the Internet
@@ -33,8 +33,8 @@ Caddy is the single entry point for all HTTPS traffic. The base Caddyfile lives 
 
 - **GCP project**: petprojects-488115
 - **VM**: openclaw-vm, e2-standard-4, Ubuntu 24.04, europe-west1-b
-- **Gateway**: Caddy with auto-HTTPS via sslip.io, basic auth (Testuser/password123)
-- **Domain**: {static-ip}.sslip.io
+- **Gateway**: Caddy with auto-HTTPS, cookie auth (Testuser/password123)
+- **Domain**: attlas.uk (Cloudflare DNS → static IP)
 
 ## Git Identity
 
