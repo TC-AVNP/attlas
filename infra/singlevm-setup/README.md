@@ -33,3 +33,18 @@ terraform apply
 ```
 
 After apply, SSH into the VM and run `~/attlas/base-setup/setup.sh`.
+
+## Terraform state
+
+The state file (`terraform.tfstate`) is committed to git. To use on a new machine:
+
+```bash
+git clone <repo-url>
+cd attlas/infra/singlevm-setup
+gcloud auth login && gcloud auth application-default login
+gcloud config set project petprojects-488115
+terraform init    # downloads providers, uses committed state
+terraform plan    # should show "No changes" if in sync
+```
+
+If the state is missing or corrupted, `terraform destroy && terraform apply` from scratch — setup scripts handle full provisioning.

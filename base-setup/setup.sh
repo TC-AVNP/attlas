@@ -88,7 +88,26 @@ UNIT_EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now alive-server
 
-# 11. Deploy base Caddyfile
+# 11. Update Cloudflare DNS to point attlas.uk to this VM's IP
+EXTERNAL_IP=$(curl -sf -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)
+echo "External IP: ${EXTERNAL_IP}"
+CF_TOKEN=$(gcloud secrets versions access latest --secret=cloudflare-dns-token --quiet 2>/dev/null || true)
+if [ -n "$CF_TOKEN" ]; then
+  CF_ZONE="813c7bfa1c9f2b1a02a60c97f3171fa6"
+  # Get the A record ID
+  RECORD_ID=$(curl -sf "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records?type=A&name=attlas.uk" \
+    -H "Authorization: Bearer ${CF_TOKEN}" | python3 -c "import sys,json; print(json.load(sys.stdin)['result'][0]['id'])")
+  # Update the A record
+  curl -sf -X PUT "https://api.cloudflare.com/client/v4/zones/${CF_ZONE}/dns_records/${RECORD_ID}" \
+    -H "Authorization: Bearer ${CF_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"type\":\"A\",\"name\":\"attlas.uk\",\"content\":\"${EXTERNAL_IP}\",\"proxied\":false}" > /dev/null
+  echo "Cloudflare DNS updated: attlas.uk -> ${EXTERNAL_IP}"
+else
+  echo "WARNING: cloudflare-dns-token not found in Secret Manager, skipping DNS update"
+fi
+
+# 12. Deploy base Caddyfile
 CADDY_DOMAIN="attlas.uk"
 
 sudo cp "$SCRIPT_DIR/Caddyfile" /etc/caddy/Caddyfile

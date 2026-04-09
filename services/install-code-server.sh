@@ -27,6 +27,20 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# Ship default settings (dark theme, disable welcome)
+CS_USER_DIR="$HOME/.local/share/code-server/User"
+mkdir -p "$CS_USER_DIR"
+cat > "$CS_USER_DIR/settings.json" <<'SETTINGS'
+{
+  "workbench.colorTheme": "Default Dark Modern",
+  "workbench.startupEditor": "none"
+}
+SETTINGS
+
+# Pre-install extensions
+code-server --install-extension golang.go 2>/dev/null || true
+code-server --install-extension dart-code.flutter 2>/dev/null || true
+
 # Deploy Caddy route snippet
 sudo cp "$SCRIPT_DIR/code.caddy" /etc/caddy/conf.d/
 
