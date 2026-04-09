@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 function App() {
   const [vm, setVm] = useState(null)
+  const [user, setUser] = useState(null)
   const [claude, setClaude] = useState(null)
   const [services, setServices] = useState([])
   const [toast, setToast] = useState(null)
@@ -22,6 +23,7 @@ function App() {
       const res = await fetch('/api/status')
       const data = await res.json()
       setVm(data.vm)
+      setUser(data.user)
       setClaude(data.claude)
       setServices(data.services)
     } catch (e) {
@@ -125,8 +127,18 @@ function App() {
 
   return (
     <>
-      <h1>I am alive!</h1>
-      <div className="subtitle">Attlas VM Dashboard</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h1 style={{ margin: 0 }}>I am alive!</h1>
+          <div className="subtitle">Attlas VM Dashboard</div>
+        </div>
+        {user?.email && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#888', fontSize: '0.85rem' }}>
+            <span>{user.email}</span>
+            <a href="/logout" style={{ color: '#fc8181', textDecoration: 'none', fontSize: '0.8rem' }}>logout</a>
+          </div>
+        )}
+      </div>
 
       <h2>VM Info</h2>
       <table>

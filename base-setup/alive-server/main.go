@@ -446,9 +446,29 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/oauth2/login", http.StatusFound)
 }
 
+func getSessionEmail(r *http.Request) string {
+	token := getSessionCookie(r)
+	if token == "" {
+		return ""
+	}
+	lastColon := strings.LastIndex(token, ":")
+	if lastColon < 0 {
+		return ""
+	}
+	payload := token[:lastColon]
+	parts := strings.SplitN(payload, ":", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, map[string]interface{}{
 		"vm": getVMInfo(),
+		"user": map[string]string{
+			"email": getSessionEmail(r),
+		},
 		"claude": map[string]bool{
 			"installed":     isClaudeInstalled(),
 			"authenticated": isClaudeLoggedIn(),
