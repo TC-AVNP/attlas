@@ -129,7 +129,8 @@ systemctl --user disable openclaw-gateway 2>/dev/null || true
 
 OPENCLAW_VERSION=$(openclaw --version 2>&1 | grep -oP '[\d.]+' | head -1)
 NODE_BIN=$(which node)
-OPENCLAW_JS=$(dirname "$(dirname "$(readlink -f "$(which openclaw)")")")/dist/index.js
+OPENCLAW_PKG=$(dirname "$(readlink -f "$(which openclaw)")")
+OPENCLAW_JS="${OPENCLAW_PKG}/dist/index.js"
 
 sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null <<UNIT_EOF
 [Unit]
