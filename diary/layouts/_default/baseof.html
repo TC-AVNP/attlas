@@ -39,12 +39,10 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="header-line">
-                <span class="prompt">windows98</span>
-                <span class="gray">in</span>
-                <a href="{{ .Site.BaseURL }}" class="path">~/attlas/diary</a>
+            <a href="{{ .Site.BaseURL }}" style="text-decoration: none; color: inherit;">
+                <span class="prompt">Attlas diary</span>
                 <span>🚀</span>
-            </div>
+            </a>
         </div>
         {{ block "main" . }}{{ end }}
     </div>
