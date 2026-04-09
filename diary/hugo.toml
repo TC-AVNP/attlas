@@ -1,6 +1,6 @@
 baseURL = '/diary/'
 languageCode = 'en'
-title = 'Attlas Diary'
+title = 'Attlas diary 🚀'
 
 [params]
   description = 'Daily log of work on the Attlas project'
