@@ -1,0 +1,6 @@
+{{ define "main" }}
+<a href="{{ .Site.BaseURL }}" class="back">&larr; All entries</a>
+<h1>{{ .Title }}</h1>
+<div style="color: #666; margin-bottom: 2rem;">{{ .Date.Format "2006-01-02" }}</div>
+{{ .Content }}
+{{ end }}

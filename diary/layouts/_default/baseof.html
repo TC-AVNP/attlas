@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ if .IsHome }}{{ .Site.Title }}{{ else }}{{ .Title }} — {{ .Site.Title }}{{ end }}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+               background: #0f0f1a; color: #d4d4d4; line-height: 1.7; }
+        .container { max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem; }
+        a { color: #7c8aff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        h1 { color: #68d391; font-size: 1.8rem; margin-bottom: 0.5rem; }
+        h2 { color: #e2e8f0; font-size: 1.3rem; margin: 2rem 0 0.8rem; border-bottom: 1px solid #2d2d44; padding-bottom: 0.3rem; }
+        h3 { color: #a0aec0; font-size: 1.1rem; margin: 1.5rem 0 0.5rem; }
+        p { margin-bottom: 1rem; }
+        ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+        li { margin-bottom: 0.3rem; }
+        code { background: #1e1e2e; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.9em; color: #f0a6ff; }
+        strong { color: #e2e8f0; }
+        .header { border-bottom: 1px solid #2d2d44; padding-bottom: 1rem; margin-bottom: 2rem; }
+        .header a { color: #68d391; font-size: 1.4rem; font-weight: 700; }
+        .subtitle { color: #666; font-size: 0.9rem; }
+        .back { display: inline-block; margin-bottom: 1.5rem; color: #666; font-size: 0.85rem; }
+        .back:hover { color: #7c8aff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <a href="{{ .Site.BaseURL }}">{{ .Site.Title }}</a>
+            <div class="subtitle">{{ .Site.Params.description }}</div>
+        </div>
+        {{ block "main" . }}{{ end }}
+    </div>
+</body>
+</html>

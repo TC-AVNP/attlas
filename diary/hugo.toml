@@ -1,0 +1,9 @@
+baseURL = '/diary/'
+languageCode = 'en'
+title = 'Attlas Diary'
+
+[params]
+  description = 'Daily log of work on the Attlas project'
+
+[markup.goldmark.renderer]
+  unsafe = true
