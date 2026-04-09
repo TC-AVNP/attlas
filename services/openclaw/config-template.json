@@ -18,7 +18,10 @@
       "models": {
         "anthropic/claude-haiku-4-5-20251001": {}
       },
-      "workspace": "OPENCLAW_HOME/workspace"
+      "workspace": "OPENCLAW_HOME/workspace",
+      "heartbeat": {
+        "every": "24h"
+      }
     }
   },
   "tools": {
