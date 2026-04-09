@@ -493,10 +493,15 @@ func getSessionEmail(r *http.Request) string {
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
+	var allowedEmails []string
+	if oauthConfig != nil {
+		allowedEmails = oauthConfig.AllowedEmails
+	}
 	sendJSON(w, map[string]interface{}{
 		"vm": getVMInfo(),
-		"user": map[string]string{
-			"email": getSessionEmail(r),
+		"user": map[string]interface{}{
+			"email":          getSessionEmail(r),
+			"allowed_emails": allowedEmails,
 		},
 		"claude": map[string]bool{
 			"installed":     isClaudeInstalled(),

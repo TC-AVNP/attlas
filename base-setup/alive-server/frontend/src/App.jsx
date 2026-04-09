@@ -147,6 +147,7 @@ function App() {
           <tr><td className="label">Zone</td><td>{vm.zone}</td></tr>
           <tr><td className="label">External IP</td><td>{vm.external_ip}</td></tr>
           <tr><td className="label">Domain</td><td><a href={`https://${vm.domain}/`}>{vm.domain}</a></td></tr>
+          <tr><td className="label">Allowed users</td><td>{user?.allowed_emails?.join(', ') || 'N/A'}</td></tr>
         </tbody>
       </table>
 
