@@ -303,6 +303,36 @@ const errorPageTemplate = `<!DOCTYPE html>
 </body>
 </html>`
 
+const accessDeniedPage = `<!DOCTYPE html>
+<html>
+<head>
+    <title>KEEP AWAY</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #ff0000;
+               display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0;
+               overflow: hidden; }
+        .container { text-align: center; animation: pulse 1.5s ease-in-out infinite; }
+        .icon { font-size: 8rem; margin-bottom: 1rem; filter: drop-shadow(0 0 30px #ff0000); }
+        h1 { font-size: 4rem; font-weight: 900; letter-spacing: 0.3rem; text-transform: uppercase;
+             text-shadow: 0 0 20px #ff0000, 0 0 40px #ff4444, 0 0 80px #ff0000; margin: 0.5rem 0; }
+        .sub { font-size: 1.2rem; color: #ff4444; letter-spacing: 0.5rem; text-transform: uppercase; }
+        .bar { height: 4px; background: repeating-linear-gradient(90deg, #ff0000 0px, #ff0000 20px, #000 20px, #000 40px);
+               margin: 2rem auto; width: 80%%; max-width: 500px; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">&#9889;</div>
+        <div class="bar"></div>
+        <h1>KEEP AWAY</h1>
+        <div class="bar"></div>
+        <div class="sub">unauthorized access</div>
+    </div>
+</body>
+</html>`
+
 // --- Handlers ---
 
 func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
@@ -417,8 +447,7 @@ func handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowed {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate,
-			fmt.Sprintf("The email <strong>%s</strong> is not authorized to access this system.", userInfo.Email))
+		fmt.Fprint(w, accessDeniedPage)
 		return
 	}
 
