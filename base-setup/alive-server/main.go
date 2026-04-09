@@ -49,6 +49,8 @@ var knownServices = []Service{
 		Path: "/code/", Script: "install-code-server.sh"},
 	{ID: "openclaw", Name: "OpenClaw", ServiceName: "openclaw-gateway", Command: "openclaw",
 		Path: "/openclaw/", Script: "install-openclaw.sh", CheckProcess: "openclaw-gateway"},
+	{ID: "diary", Name: "Project Diary", ServiceName: "", Command: "hugo",
+		Path: "/diary/", Script: "install-diary.sh"},
 }
 
 type Service struct {
@@ -268,9 +270,11 @@ func getServicesStatus() []Service {
 		if s.Installed {
 			if svc.CheckProcess != "" {
 				_, s.Running = runCmd("pgrep", "-f", svc.CheckProcess)
-			} else {
+			} else if svc.ServiceName != "" {
 				out, _ := runCmd("systemctl", "is-active", svc.ServiceName)
 				s.Running = out == "active"
+			} else {
+				s.Running = true // static service (no daemon), installed = running
 			}
 		}
 		results = append(results, s)
