@@ -1,6 +1,6 @@
 {$CADDY_DOMAIN} {
-	@notlogin not path /login /logout
-	forward_auth @notlogin localhost:3000 {
+	@protected not path /oauth2/* /logout
+	forward_auth @protected localhost:3000 {
 		uri /api/auth/verify
 		copy_headers Location
 	}

@@ -85,6 +85,11 @@ RestartSec=5
 WantedBy=multi-user.target
 UNIT_EOF
 
+# Fetch OAuth config for the Go server
+echo "Fetching server config from Secret Manager..."
+gcloud secrets versions access latest --secret=attlas-server-config --quiet > ~/.attlas-server-config.json 2>/dev/null || true
+chmod 600 ~/.attlas-server-config.json
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now alive-server
 

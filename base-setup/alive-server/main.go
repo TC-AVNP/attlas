@@ -11,6 +11,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,22 +25,21 @@ const (
 	port         = 3000
 	cookieName   = "attlas_session"
 	cookieMaxAge = 86400 * 7 // 7 days
-	authUser     = "Testuser"
-	authPass     = "password123"
-)
-
-// Rate limiting config
-const (
-	rateLimitMax    = 10
-	rateLimitWindow = 5 * time.Minute
-	rateLimitBlock  = 5 * time.Minute
 )
 
 var (
 	sessionSecret []byte
 	distDir       string
 	attlasDir     string
+	oauthConfig   *OAuthConfig
 )
+
+// OAuth2 config loaded from ~/.attlas-server-config.json
+type OAuthConfig struct {
+	ClientID     string   `json:"google_oauth_client_id"`
+	ClientSecret string   `json:"google_oauth_client_secret"`
+	AllowedEmails []string `json:"allowed_emails"`
+}
 
 // Known services
 var knownServices = []Service{
@@ -63,98 +63,43 @@ type Service struct {
 	Running      bool   `json:"running"`
 }
 
-// --- Rate limiter ---
+// --- OAuth2 state tokens ---
 
-type rateLimiter struct {
-	mu       sync.Mutex
-	attempts map[string][]time.Time
-	blocked  map[string]time.Time
-}
-
-var limiter = &rateLimiter{
-	attempts: make(map[string][]time.Time),
-	blocked:  make(map[string]time.Time),
-}
-
-func (rl *rateLimiter) isBlocked(ip string) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	if until, ok := rl.blocked[ip]; ok {
-		if time.Now().Before(until) {
-			return true
-		}
-		delete(rl.blocked, ip)
-	}
-	return false
-}
-
-func (rl *rateLimiter) recordFailure(ip string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-
-	now := time.Now()
-	cutoff := now.Add(-rateLimitWindow)
-
-	// Clean old attempts
-	var recent []time.Time
-	for _, t := range rl.attempts[ip] {
-		if t.After(cutoff) {
-			recent = append(recent, t)
-		}
-	}
-	recent = append(recent, now)
-	rl.attempts[ip] = recent
-
-	if len(recent) >= rateLimitMax {
-		rl.blocked[ip] = now.Add(rateLimitBlock)
-		delete(rl.attempts, ip)
-	}
-}
-
-func (rl *rateLimiter) clearAttempts(ip string) {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	delete(rl.attempts, ip)
-}
-
-// --- CSRF tokens ---
-
-type csrfStore struct {
+type stateStore struct {
 	mu     sync.Mutex
-	tokens map[string]time.Time
+	states map[string]time.Time
 }
 
-var csrf = &csrfStore{
-	tokens: make(map[string]time.Time),
+var oauthStates = &stateStore{
+	states: make(map[string]time.Time),
 }
 
-func (cs *csrfStore) generate() string {
+func (ss *stateStore) generate() string {
 	b := make([]byte, 32)
 	rand.Read(b)
-	token := hex.EncodeToString(b)
+	state := hex.EncodeToString(b)
 
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 
-	// Clean expired tokens
+	// Clean expired states
 	now := time.Now()
-	for k, v := range cs.tokens {
+	for k, v := range ss.states {
 		if now.Sub(v) > 10*time.Minute {
-			delete(cs.tokens, k)
+			delete(ss.states, k)
 		}
 	}
 
-	cs.tokens[token] = now
-	return token
+	ss.states[state] = now
+	return state
 }
 
-func (cs *csrfStore) validate(token string) bool {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
+func (ss *stateStore) validate(state string) bool {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
 
-	if t, ok := cs.tokens[token]; ok {
-		delete(cs.tokens, token)
+	if t, ok := ss.states[state]; ok {
+		delete(ss.states, state)
 		return time.Since(t) < 10*time.Minute
 	}
 	return false
@@ -179,8 +124,33 @@ func loadOrCreateSecret() []byte {
 	return encoded
 }
 
-func makeSessionToken(username string) string {
-	payload := fmt.Sprintf("%s:%d", username, time.Now().Unix())
+func loadOAuthConfig() *OAuthConfig {
+	home, _ := os.UserHomeDir()
+	path := filepath.Join(home, ".attlas-server-config.json")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("WARNING: OAuth config not found at %s: %v", path, err)
+		return nil
+	}
+
+	var config OAuthConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		log.Printf("WARNING: Failed to parse OAuth config: %v", err)
+		return nil
+	}
+
+	if config.ClientID == "" || config.ClientSecret == "" {
+		log.Printf("WARNING: OAuth config missing client_id or client_secret")
+		return nil
+	}
+
+	log.Printf("OAuth2 configured with %d allowed email(s)", len(config.AllowedEmails))
+	return &config
+}
+
+func makeSessionToken(email string) string {
+	payload := fmt.Sprintf("%s:%d", email, time.Now().Unix())
 	mac := hmac.New(sha256.New, sessionSecret)
 	mac.Write([]byte(payload))
 	sig := hex.EncodeToString(mac.Sum(nil))[:32]
@@ -284,9 +254,8 @@ func isClaudeLoggedIn() bool {
 // --- Service status ---
 
 func runCmd(name string, args ...string) (string, bool) {
-	ctx, cancel := exec.Command(name, args...), func() {}
-	_ = cancel
-	out, err := ctx.CombinedOutput()
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err == nil
 }
 
@@ -309,40 +278,27 @@ func getServicesStatus() []Service {
 	return results
 }
 
-// --- Login page ---
+// --- Error page ---
 
-const loginPageTemplate = `<!DOCTYPE html>
+const errorPageTemplate = `<!DOCTYPE html>
 <html>
 <head>
-    <title>Attlas Login</title>
+    <title>Attlas — Access Denied</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee;
                display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .box { max-width: 350px; width: 100%%; padding: 2rem; }
-        h1 { color: #68d391; font-size: 1.5rem; margin-bottom: 1.5rem; }
-        label { display: block; margin-bottom: 0.3rem; color: #888; font-size: 0.85rem; }
-        input { width: 100%%; padding: 0.6rem; margin-bottom: 1rem; font-size: 1rem;
-                background: #2d2d44; color: #eee; border: 1px solid #555; border-radius: 4px;
-                box-sizing: border-box; }
-        button { width: 100%%; padding: 0.7rem; font-size: 1rem; cursor: pointer;
-                 background: #5a67d8; color: white; border: none; border-radius: 4px; }
-        button:hover { background: #4c51bf; }
-        .error { color: #fc8181; margin-bottom: 1rem; font-size: 0.9rem; }
+        .box { max-width: 400px; width: 100%%; padding: 2rem; text-align: center; }
+        h1 { color: #fc8181; font-size: 1.5rem; margin-bottom: 1rem; }
+        p { color: #888; line-height: 1.6; }
+        a { color: #5a67d8; }
     </style>
 </head>
 <body>
     <div class="box">
-        <h1>Attlas VM</h1>
-        %s
-        <form method="POST" action="/login">
-            <input type="hidden" name="csrf_token" value="%s">
-            <label>Username</label>
-            <input type="text" name="username" autofocus>
-            <label>Password</label>
-            <input type="password" name="password">
-            <button type="submit">Sign in</button>
-        </form>
+        <h1>Access Denied</h1>
+        <p>%s</p>
+        <p style="margin-top: 1.5rem;"><a href="/oauth2/login">Try again</a></p>
     </div>
 </body>
 </html>`
@@ -353,60 +309,131 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	if isAuthenticated(r) {
 		w.WriteHeader(http.StatusOK)
 	} else {
-		http.Redirect(w, r, "/login", http.StatusFound)
+		http.Redirect(w, r, "/oauth2/login", http.StatusFound)
 	}
 }
 
-func handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	token := csrf.generate()
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, loginPageTemplate, "", token)
+func handleOAuth2Login(w http.ResponseWriter, r *http.Request) {
+	if oauthConfig == nil {
+		http.Error(w, "OAuth2 not configured", http.StatusInternalServerError)
+		return
+	}
+
+	state := oauthStates.generate()
+	authURL := fmt.Sprintf(
+		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&state=%s&access_type=online&prompt=select_account",
+		url.QueryEscape(oauthConfig.ClientID),
+		url.QueryEscape("https://attlas.uk/oauth2/callback"),
+		url.QueryEscape("openid email"),
+		url.QueryEscape(state),
+	)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-func handleLoginPost(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-
-	// CSRF check
-	csrfToken := r.FormValue("csrf_token")
-	if !csrf.validate(csrfToken) {
-		token := csrf.generate()
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, loginPageTemplate, `<div class="error">Invalid request. Please try again.</div>`, token)
+func handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
+	if oauthConfig == nil {
+		http.Error(w, "OAuth2 not configured", http.StatusInternalServerError)
 		return
 	}
 
-	ip := extractIP(r)
-
-	// Rate limit check
-	if limiter.isBlocked(ip) {
-		token := csrf.generate()
+	// Validate state
+	state := r.URL.Query().Get("state")
+	if !oauthStates.validate(state) {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, loginPageTemplate, `<div class="error">Too many failed attempts. Try again later.</div>`, token)
+		fmt.Fprintf(w, errorPageTemplate, "Invalid or expired login request. Please try again.")
 		return
 	}
 
-	username := r.FormValue("username")
-	password := r.FormValue("password")
-
-	if username == authUser && password == authPass {
-		limiter.clearAttempts(ip)
-		sessionToken := makeSessionToken(username)
-		http.SetCookie(w, &http.Cookie{
-			Name:     cookieName,
-			Value:    sessionToken,
-			Path:     "/",
-			MaxAge:   cookieMaxAge,
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			Secure:   true,
-		})
-		http.Redirect(w, r, "/", http.StatusFound)
-	} else {
-		limiter.recordFailure(ip)
-		token := csrf.generate()
+	// Check for error from Google
+	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, loginPageTemplate, `<div class="error">Invalid username or password</div>`, token)
+		fmt.Fprintf(w, errorPageTemplate, "Google sign-in was cancelled or failed.")
+		return
 	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate, "No authorization code received from Google.")
+		return
+	}
+
+	// Exchange code for token
+	tokenResp, err := http.PostForm("https://oauth2.googleapis.com/token", url.Values{
+		"code":          {code},
+		"client_id":     {oauthConfig.ClientID},
+		"client_secret": {oauthConfig.ClientSecret},
+		"redirect_uri":  {"https://attlas.uk/oauth2/callback"},
+		"grant_type":    {"authorization_code"},
+	})
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate, "Failed to contact Google. Please try again.")
+		return
+	}
+	defer tokenResp.Body.Close()
+
+	var tokenData struct {
+		AccessToken string `json:"access_token"`
+		Error       string `json:"error"`
+	}
+	json.NewDecoder(tokenResp.Body).Decode(&tokenData)
+	if tokenData.AccessToken == "" {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate, "Failed to authenticate with Google.")
+		return
+	}
+
+	// Get user info
+	userReq, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	userResp, err := http.DefaultClient.Do(userReq)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate, "Failed to get user info from Google.")
+		return
+	}
+	defer userResp.Body.Close()
+
+	var userInfo struct {
+		Email         string `json:"email"`
+		VerifiedEmail bool   `json:"verified_email"`
+	}
+	json.NewDecoder(userResp.Body).Decode(&userInfo)
+
+	if userInfo.Email == "" || !userInfo.VerifiedEmail {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate, "Could not verify your email address.")
+		return
+	}
+
+	// Check against allowed emails
+	allowed := false
+	for _, e := range oauthConfig.AllowedEmails {
+		if strings.EqualFold(e, userInfo.Email) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, errorPageTemplate,
+			fmt.Sprintf("The email <strong>%s</strong> is not authorized to access this system.", userInfo.Email))
+		return
+	}
+
+	// Create session
+	sessionToken := makeSessionToken(userInfo.Email)
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		MaxAge:   cookieMaxAge,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+	})
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -416,7 +443,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:   "/",
 		MaxAge: -1,
 	})
-	http.Redirect(w, r, "/login", http.StatusFound)
+	http.Redirect(w, r, "/oauth2/login", http.StatusFound)
 }
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -445,7 +472,6 @@ func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
 
 	helperPath := filepath.Join(filepath.Dir(os.Args[0]), "claude-login-helper.py")
 	if _, err := os.Stat(helperPath); err != nil {
-		// Try relative to working directory
 		helperPath = filepath.Join(distDir, "..", "claude-login-helper.py")
 	}
 
@@ -456,7 +482,6 @@ func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
 	cmd.SysProcAttr = nil
 	cmd.Start()
 
-	// Wait for URL
 	var authURL string
 	for i := 0; i < 60; i++ {
 		data, err := os.ReadFile("/tmp/claude-login-url")
@@ -591,7 +616,6 @@ func sendJSON(w http.ResponseWriter, data interface{}) {
 }
 
 func extractIP(r *http.Request) string {
-	// Behind Caddy, use X-Forwarded-For
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.SplitN(xff, ",", 2)
 		return strings.TrimSpace(parts[0])
@@ -608,7 +632,6 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 
 	filePath := filepath.Join(distDir, filepath.Clean(path))
 
-	// Prevent directory traversal
 	if !strings.HasPrefix(filePath, distDir) {
 		http.NotFound(w, r)
 		return
@@ -624,7 +647,6 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SPA fallback — serve index.html for unmatched routes
 	indexPath := filepath.Join(distDir, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
 		w.Header().Set("Content-Type", "text/html")
@@ -639,6 +661,7 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	sessionSecret = loadOrCreateSecret()
+	oauthConfig = loadOAuthConfig()
 
 	// Resolve paths
 	execPath, _ := os.Executable()
@@ -647,7 +670,6 @@ func main() {
 	home, _ := os.UserHomeDir()
 	attlasDir = filepath.Join(home, "attlas")
 
-	// If dist dir doesn't exist relative to executable, try working directory
 	if _, err := os.Stat(distDir); err != nil {
 		wd, _ := os.Getwd()
 		distDir = filepath.Join(wd, "frontend", "dist")
@@ -657,8 +679,8 @@ func main() {
 
 	// Auth
 	mux.HandleFunc("/api/auth/verify", handleAuthVerify)
-	mux.HandleFunc("GET /login", handleLoginPage)
-	mux.HandleFunc("POST /login", handleLoginPost)
+	mux.HandleFunc("GET /oauth2/login", handleOAuth2Login)
+	mux.HandleFunc("GET /oauth2/callback", handleOAuth2Callback)
 	mux.HandleFunc("/logout", handleLogout)
 
 	// API
@@ -678,7 +700,6 @@ func main() {
 }
 
 func init() {
-	// Register common MIME types
 	mime.AddExtensionType(".js", "application/javascript")
 	mime.AddExtensionType(".css", "text/css")
 	mime.AddExtensionType(".svg", "image/svg+xml")
