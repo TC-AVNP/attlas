@@ -47,6 +47,10 @@ Caddy is the single entry point for all HTTPS traffic. The base Caddyfile lives 
 | `attlas-server-config` | OAuth2 client ID/secret + allowed emails |
 | `openclaw-config` | OpenClaw channel tokens and API keys |
 
+## Diary
+
+The `diary/` folder contains one entry per working session. Each entry logs what was done, lessons learned, and the Claude session ID. **Always update the diary at the end of each session.**
+
 ## Git Identity
 
 - Name: commonlisp6
