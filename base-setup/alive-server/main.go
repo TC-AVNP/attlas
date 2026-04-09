@@ -261,12 +261,56 @@ func runCmd(name string, args ...string) (string, bool) {
 	return strings.TrimSpace(string(out)), err == nil
 }
 
+// --- Service state file ---
+
+func serviceStateFile() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".attlas-services.json")
+}
+
+func loadInstalledServices() map[string]bool {
+	data, err := os.ReadFile(serviceStateFile())
+	if err != nil {
+		// First run: detect currently installed services by binary
+		state := make(map[string]bool)
+		for _, svc := range knownServices {
+			if _, err := exec.LookPath(svc.Command); err == nil {
+				state[svc.ID] = true
+			}
+		}
+		saveInstalledServices(state)
+		return state
+	}
+	var state map[string]bool
+	if json.Unmarshal(data, &state) != nil {
+		return make(map[string]bool)
+	}
+	return state
+}
+
+func saveInstalledServices(state map[string]bool) {
+	data, _ := json.Marshal(state)
+	os.WriteFile(serviceStateFile(), data, 0600)
+}
+
+func markServiceInstalled(id string) {
+	state := loadInstalledServices()
+	state[id] = true
+	saveInstalledServices(state)
+}
+
+func markServiceUninstalled(id string) {
+	state := loadInstalledServices()
+	delete(state, id)
+	saveInstalledServices(state)
+}
+
 func getServicesStatus() []Service {
+	installed := loadInstalledServices()
 	var results []Service
 	for _, svc := range knownServices {
 		s := svc
-		_, err := exec.LookPath(svc.Command)
-		s.Installed = err == nil
+		s.Installed = installed[svc.ID]
 		if s.Installed {
 			if svc.CheckProcess != "" {
 				_, s.Running = runCmd("pgrep", "-f", svc.CheckProcess)
@@ -274,7 +318,7 @@ func getServicesStatus() []Service {
 				out, _ := runCmd("systemctl", "is-active", svc.ServiceName)
 				s.Running = out == "active"
 			} else {
-				s.Running = true // static service (no daemon), installed = running
+				s.Running = true // static service (no daemon)
 			}
 		}
 		results = append(results, s)
@@ -623,6 +667,7 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	markServiceInstalled(body.ID)
 	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
@@ -653,6 +698,7 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	markServiceUninstalled(body.ID)
 	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
