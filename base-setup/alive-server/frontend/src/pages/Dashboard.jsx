@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import Card from '../components/Card.jsx'
 import StatusDot from '../components/StatusDot.jsx'
 import Button from '../components/Button.jsx'
 import { useStatus } from '../App.jsx'
@@ -11,10 +12,10 @@ function relativeTime(iso) {
   const t = new Date(iso).getTime()
   if (isNaN(t)) return 'unknown'
   const diffSec = Math.max(0, Math.floor((Date.now() - t) / 1000))
-  if (diffSec < 60)           return `${diffSec}s ago`
-  if (diffSec < 3600)         return `${Math.floor(diffSec / 60)} min ago`
-  if (diffSec < 86400)        return `${Math.floor(diffSec / 3600)} h ago`
-  if (diffSec < 86400 * 30)   return `${Math.floor(diffSec / 86400)} d ago`
+  if (diffSec < 60)         return `${diffSec}s ago`
+  if (diffSec < 3600)       return `${Math.floor(diffSec / 60)} min ago`
+  if (diffSec < 86400)      return `${Math.floor(diffSec / 3600)} h ago`
+  if (diffSec < 86400 * 30) return `${Math.floor(diffSec / 86400)} d ago`
   return new Date(iso).toISOString().slice(0, 10)
 }
 
@@ -34,7 +35,7 @@ function heroStatus(data) {
     return {
       color: 'green',
       label: 'all systems healthy',
-      sub: `all ${installed.length} services running, dotfiles up to date`,
+      sub: `${installed.length} services running · dotfiles in sync · domain ok`,
     }
   }
   const problems = []
@@ -45,11 +46,11 @@ function heroStatus(data) {
   return {
     color: stopped.length > 0 ? 'red' : 'yellow',
     label: problems.join(' · '),
-    sub: 'check sections below',
+    sub: 'check the cards below',
   }
 }
 
-// ── Claude login inline flow ──────────────────────────────────────────
+// ── Claude login flow (inline) ────────────────────────────────────────
 
 function ClaudeLogin({ onDone }) {
   const [state, setState] = useState('idle')
@@ -103,10 +104,10 @@ function ClaudeLogin({ onDone }) {
 
   if (state === 'idle') {
     return (
-      <div>
+      <>
         <Button variant="ghost" onClick={start}>login to claude</Button>
         {msg && <div className={msg.error ? 'msg-error' : 'msg-success'}>{msg.text}</div>}
-      </div>
+      </>
     )
   }
   if (state === 'waiting_url') {
@@ -114,9 +115,9 @@ function ClaudeLogin({ onDone }) {
   }
   return (
     <div className="login-box">
-      <p>1. open this URL in a new tab to authenticate:</p>
+      <p>1. open this URL to authenticate:</p>
       <a href={authUrl} target="_blank" rel="noopener noreferrer">{authUrl}</a>
-      <p style={{ marginTop: '0.8rem' }}>2. paste the code from the browser:</p>
+      <p style={{ marginTop: '0.8rem' }}>2. paste the code:</p>
       <div className="row">
         <input
           className="input"
@@ -133,7 +134,7 @@ function ClaudeLogin({ onDone }) {
   )
 }
 
-// ── Service row ───────────────────────────────────────────────────────
+// ── Service row (inside Services card) ───────────────────────────────
 
 const DETAIL_ROUTES = {
   openclaw: '/services/details/openclaw',
@@ -144,39 +145,30 @@ function ServiceRow({ svc, busy, onInstall, onUninstall }) {
 
   if (!svc.installed) {
     return (
-      <div className="service-row">
+      <div className="svc-row">
         <StatusDot color="grey" title="not installed" />
-        <div className="name">
-          <span className="muted">{svc.name}</span>
-          <span className="path">{svc.path}</span>
+        <div className="svc-main">
+          <span className="svc-name muted">{svc.name}</span>
+          <span className="svc-path">{svc.path}</span>
         </div>
-        <div className="actions">
-          <button
-            className="link-btn"
-            disabled={busy === svc.id}
-            onClick={() => onInstall(svc.id)}
-          >
+        <div className="svc-actions">
+          <button className="link-btn" disabled={busy === svc.id} onClick={() => onInstall(svc.id)}>
             {busy === svc.id ? 'installing…' : 'install'}
           </button>
         </div>
       </div>
     )
   }
-
   return (
-    <div className="service-row">
+    <div className="svc-row">
       <StatusDot color={svc.running ? 'green' : 'red'} title={svc.running ? 'running' : 'stopped'} />
-      <div className="name">
-        <span>{svc.name}</span>
-        <span className="path">{svc.path}</span>
+      <div className="svc-main">
+        <span className="svc-name">{svc.name}</span>
+        <span className="svc-path">{svc.path}</span>
       </div>
-      <div className="actions">
+      <div className="svc-actions">
         <a href={svc.path} target="_blank" rel="noopener noreferrer">open</a>
-        {detailRoute ? (
-          <Link to={detailRoute}>details</Link>
-        ) : (
-          <span className="disabled">details</span>
-        )}
+        {detailRoute ? <Link to={detailRoute}>details</Link> : <span className="disabled">details</span>}
         <button
           className="link-btn dismiss"
           disabled={busy === svc.id}
@@ -190,12 +182,79 @@ function ServiceRow({ svc, busy, onInstall, onUninstall }) {
   )
 }
 
+// ── Cloud spend card (combined total) ────────────────────────────────
+
+function CloudSpendCard() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch('/api/cloud-spend')
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const json = await res.json()
+        if (!cancelled) setData(json)
+      } catch (e) {
+        if (!cancelled) setError(e.message)
+      }
+    }
+    load()
+    const t = setInterval(load, 60000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
+
+  return (
+    <Card label="this month · cloud spend" className="full">
+      {!data && !error && (
+        <div className="muted">loading…</div>
+      )}
+      {data && (
+        <>
+          <div className="card-headline">${(data.total_mtd_usd ?? 0).toFixed(2)}</div>
+          <div className="card-headline-sub">
+            month-to-date · google cloud + anthropic api
+          </div>
+          <div className="spend-split">
+            <div className="spend-col">
+              <div className="spend-amt">${(data.gcp_mtd_usd ?? 0).toFixed(2)}</div>
+              <div className="spend-lbl">google cloud</div>
+              {data.gcp_error && (
+                <div className="spend-err" title={data.gcp_error}>
+                  data unavailable — {data.gcp_error.length > 70 ? 'see logs' : data.gcp_error}
+                </div>
+              )}
+              {!data.gcp_error && (
+                <div className="spend-meta">source: bigquery billing export</div>
+              )}
+            </div>
+            <div className="spend-col">
+              <div className="spend-amt">${(data.anthropic_mtd_usd ?? 0).toFixed(2)}</div>
+              <div className="spend-lbl">anthropic api</div>
+              {data.anthropic_error && (
+                <div className="spend-err" title={data.anthropic_error}>
+                  data unavailable
+                </div>
+              )}
+              {!data.anthropic_error && (
+                <div className="spend-meta">source: cost_report api</div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </Card>
+  )
+}
+
 // ── Dashboard page ────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { status, refresh, showToast } = useStatus()
   const [busy, setBusy] = useState(null)
   const [syncing, setSyncing] = useState(false)
+  const [stopping, setStopping] = useState(false)
 
   if (!status) {
     return (
@@ -267,16 +326,43 @@ export default function Dashboard() {
     finally { setSyncing(false) }
   }
 
+  const stopVM = async () => {
+    const ok = confirm(
+      'Stop the VM?\n\n' +
+      'This will shut down the machine this dashboard runs on. ' +
+      'The page will become unreachable in about 30 seconds. ' +
+      'You will need to start the VM again from the GCP console ' +
+      '(or `gcloud compute instances start`) before the dashboard ' +
+      'comes back.\n\nContinue?'
+    )
+    if (!ok) return
+    setStopping(true)
+    showToast('requesting vm stop…', 'warn')
+    try {
+      const res = await fetch('/api/vm/stop', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        showToast('vm stop requested — dashboard will go dark shortly', 'warn')
+      } else {
+        showToast(data.error || 'stop failed', 'error')
+        setStopping(false)
+      }
+    } catch (e) {
+      showToast(e.message, 'error')
+      setStopping(false)
+    }
+  }
+
   // dotfiles dot color
   let dotfilesColor = 'grey'
   if (dotfiles) {
-    if (dotfiles.last_exit_status !== 0) dotfilesColor = 'red'
-    else if (dotfiles.status === 'behind') dotfilesColor = 'yellow'
+    if (dotfiles.last_exit_status !== 0)    dotfilesColor = 'red'
+    else if (dotfiles.status === 'behind')  dotfilesColor = 'yellow'
     else if (dotfiles.status === 'up-to-date') dotfilesColor = 'green'
   }
 
   return (
-    <div className="page">
+    <div className="detail-page">
       <div className="page-header">
         <div className="brand-title">attlas</div>
         {user?.email && (
@@ -287,7 +373,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Hero */}
+      {/* Hero status line */}
       <div className="hero">
         <div className="hero-headline">
           <StatusDot color={hero.color} />
@@ -296,95 +382,108 @@ export default function Dashboard() {
         {hero.sub && <div className="hero-sub">{hero.sub}</div>}
       </div>
 
-      {/* Infrastructure section — VM identity lives on its own detail page */}
-      <div className="section">
-        <div className="section-label">infrastructure</div>
-        <div className="status-rows">
-          <div className="status-row">
-            <span className="label">vm</span>
-            <span className="value">
-              {vm.name} · {vm.zone}
-            </span>
-            <span className="action">
-              <Link to="/services/details/infrastructure">details</Link>
+      {/* Card grid */}
+      <div className="card-grid">
+        {/* Cloud spend — full width */}
+        <CloudSpendCard />
+
+        {/* Infrastructure */}
+        <Card label="infrastructure">
+          <div className="card-row">
+            <span className="k">name</span>
+            <span className="v">{vm.name}</span>
+          </div>
+          <div className="card-row">
+            <span className="k">machine</span>
+            <span className="v">{vm.machine_type || '—'}</span>
+          </div>
+          <div className="card-row">
+            <span className="k">zone</span>
+            <span className="v">{vm.zone}</span>
+          </div>
+          <div className="card-row">
+            <span className="k">external ip</span>
+            <span className="v">{vm.external_ip}</span>
+          </div>
+          <div className="card-row">
+            <span className="k">status</span>
+            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <StatusDot color={stopping ? 'yellow' : 'green'} pulse={stopping} />
+              {stopping ? 'stopping…' : 'running'}
             </span>
           </div>
-        </div>
-      </div>
+          <div className="card-actions">
+            <Link to="/services/details/infrastructure" className="btn btn-ghost">details</Link>
+            <Button variant="danger" onClick={stopVM} disabled={stopping}>stop vm</Button>
+          </div>
+        </Card>
 
-      {/* Status section */}
-      <div className="section">
-        <div className="section-label">status</div>
-        <div className="status-rows">
-          <div className="status-row">
-            <span className="label">domain</span>
-            <span className="value">
+        {/* Status (domain + claude + dotfiles) */}
+        <Card label="status">
+          <div className="card-row">
+            <span className="k">domain</span>
+            <span className="v">
               <a href={`https://${vm.domain}/`}>{vm.domain}</a>
-              {domain_expiry && domain_expiry.days_remaining !== undefined && (
-                <span className="muted">
-                  {'  →  renews in '}{domain_expiry.days_remaining} days
-                </span>
+              {domain_expiry?.days_remaining !== undefined && (
+                <span className="muted"> · {domain_expiry.days_remaining}d</span>
               )}
             </span>
-            <span />
           </div>
-          <div className="status-row">
-            <span className="label">claude</span>
-            <span className="value" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', whiteSpace: 'normal' }}>
+          <div className="card-row">
+            <span className="k">claude</span>
+            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <StatusDot color={claude?.authenticated ? 'green' : 'grey'} />
               {claude?.authenticated ? 'authenticated' : (claude?.installed ? 'not authenticated' : 'not installed')}
             </span>
-            <span className="action">
-              {claude?.authenticated && <a href="/logout">logout</a>}
-              {claude?.installed && !claude?.authenticated && <ClaudeLogin onDone={refresh} />}
-            </span>
           </div>
-          <div className="status-row">
-            <span className="label">dotfiles</span>
-            <span className="value" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', whiteSpace: 'normal' }}>
+          <div className="card-row">
+            <span className="k">dotfiles</span>
+            <span className="v" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <StatusDot color={dotfilesColor} />
               {dotfiles ? (
                 <>
                   <span>{dotfiles.status || 'unknown'}</span>
                   {dotfiles.head_commit && (
-                    <span className="muted mono" style={{ fontSize: '0.82rem' }}>· {dotfiles.head_commit}</span>
-                  )}
-                  {dotfiles.last_sync && (
-                    <span className="muted" style={{ fontSize: '0.82rem' }}>· synced {relativeTime(dotfiles.last_sync)}</span>
+                    <span className="muted mono" style={{ fontSize: '0.8rem' }}>{dotfiles.head_commit}</span>
                   )}
                 </>
-              ) : (
-                <span className="muted">unknown</span>
-              )}
-            </span>
-            <span className="action">
-              <button
-                className="link-btn"
-                onClick={syncDotfiles}
-                disabled={syncing}
-                style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.82rem' }}
-              >
-                {syncing ? 'syncing…' : 'sync now'}
-              </button>
+              ) : 'unknown'}
             </span>
           </div>
-        </div>
-      </div>
+          {dotfiles?.last_sync && (
+            <div className="card-row">
+              <span className="k">last sync</span>
+              <span className="v">{relativeTime(dotfiles.last_sync)}</span>
+            </div>
+          )}
+          <div className="card-actions">
+            {claude?.installed && !claude?.authenticated ? (
+              <ClaudeLogin onDone={refresh} />
+            ) : (
+              claude?.authenticated && (
+                <a href="/logout" className="btn btn-ghost">claude logout</a>
+              )
+            )}
+            <Button variant="ghost" onClick={syncDotfiles} disabled={syncing}>
+              {syncing ? 'syncing…' : 'sync dotfiles'}
+            </Button>
+          </div>
+        </Card>
 
-      {/* Services section */}
-      <div className="section">
-        <div className="section-label">services</div>
-        <div className="service-rows">
-          {services?.map(svc => (
-            <ServiceRow
-              key={svc.id}
-              svc={svc}
-              busy={busy}
-              onInstall={installService}
-              onUninstall={uninstallService}
-            />
-          ))}
-        </div>
+        {/* Services — full width */}
+        <Card label="services" className="full">
+          <div className="svc-list">
+            {services?.map(svc => (
+              <ServiceRow
+                key={svc.id}
+                svc={svc}
+                busy={busy}
+                onInstall={installService}
+                onUninstall={uninstallService}
+              />
+            ))}
+          </div>
+        </Card>
       </div>
     </div>
   )

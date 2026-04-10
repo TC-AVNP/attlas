@@ -228,11 +228,16 @@ func getVMInfo() map[string]string {
 		zone = zoneRaw[i+1:]
 	}
 	name := gcpMeta("instance/name")
+	mt := gcpMeta("instance/machine-type")
+	if i := strings.LastIndex(mt, "/"); i >= 0 {
+		mt = mt[i+1:]
+	}
 	return map[string]string{
-		"name":        name,
-		"zone":        zone,
-		"external_ip": ip,
-		"domain":      "attlas.uk",
+		"name":         name,
+		"zone":         zone,
+		"external_ip":  ip,
+		"machine_type": mt,
+		"domain":       "attlas.uk",
 	}
 }
 
@@ -547,7 +552,7 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Anthropic cost_report API (last 30 days to match the console).
 	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
-		spend30, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey)
+		spend30, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, time.Now().UTC().AddDate(0, 0, -30))
 		if err != nil {
 			detail.BillingError = err.Error()
 		} else {
@@ -623,19 +628,25 @@ type instanceEvent struct {
 	method    string // "start" | "stop"
 }
 
-// fetchInstanceEvents pulls GCE audit-log start/stop entries for the
-// current instance, strictly after `since`. Sorted chronologically.
+// fetchInstanceEvents pulls GCE audit-log start/stop/insert/delete
+// entries for EVERY instance in the project, strictly after `since`.
+// Sorted chronologically.
 //
-// The filter matches on the instance NAME (via protoPayload.resourceName),
-// not the numeric instance_id, because the instance_id changes every
-// time terraform recreates the VM. The name is set by the terraform
-// output and is stable across rebuilds, so uptime history survives
-// `terraform destroy && terraform apply`.
+// No instance-name filter: this is a single-VM project and the user
+// wants the uptime timeline to span all historical names (so the ~5h
+// on "openclaw-vm" during Apr 8 morning shows up alongside the newer
+// "simple-zombie" history). If this project ever grew multiple VMs
+// we'd need to dedupe / merge overlapping intervals, but for now the
+// single-VM invariant keeps the timeline clean.
+//
+// insert/delete are included so the replay knows when the VM actually
+// existed — under terraform-managed infra the VM is destroyed and
+// recreated during the day, and we don't want to credit a "not yet
+// created" day with 24h of fake uptime.
 func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 	projectID := gcpMeta("project/project-id")
-	name := gcpMeta("instance/name")
-	if projectID == "unknown" || name == "unknown" {
-		return nil, fmt.Errorf("missing metadata (project=%s name=%s)", projectID, name)
+	if projectID == "unknown" {
+		return nil, fmt.Errorf("missing metadata (project=%s)", projectID)
 	}
 
 	token, err := getMetadataToken()
@@ -643,13 +654,8 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 		return nil, fmt.Errorf("metadata token: %v", err)
 	}
 
-	// We include insert/delete alongside start/stop so the replay knows
-	// when the VM actually existed. Under terraform-managed infra the
-	// VM can be destroyed and re-created during the day, and we don't
-	// want to credit a "not yet created" day with 24h of fake uptime.
 	filter := fmt.Sprintf(
-		`resource.type="gce_instance" AND protoPayload.resourceName:"instances/%s" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop" OR protoPayload.methodName="v1.compute.instances.insert" OR protoPayload.methodName="v1.compute.instances.delete") AND timestamp>="%s"`,
-		name,
+		`resource.type="gce_instance" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop" OR protoPayload.methodName="v1.compute.instances.insert" OR protoPayload.methodName="v1.compute.instances.delete") AND timestamp>="%s"`,
 		since.UTC().Format(time.RFC3339),
 	)
 
@@ -917,6 +923,233 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, detail)
 }
 
+// --- Cloud spend (anthropic cost_report + gcp bigquery billing export) ---
+
+// GCP cost comes from the Cloud Billing BigQuery export sitting at
+// `<project>.billing_export.gcp_billing_export_v1_<account>`. The
+// export is set up once by Terraform + a one-time console action;
+// data lands with a ~24h delay, so on a fresh month the first day
+// will show $0.00 until the export catches up. Everything after
+// that is the exact number the official billing page would show.
+
+type CloudSpend struct {
+	AnthropicMTD   float64 `json:"anthropic_mtd_usd"`
+	GCPMTD         float64 `json:"gcp_mtd_usd"`
+	TotalMTD       float64 `json:"total_mtd_usd"`
+	GCPSource      string  `json:"gcp_source"`
+	GCPError       string  `json:"gcp_error,omitempty"`
+	AnthropicError string  `json:"anthropic_error,omitempty"`
+}
+
+var (
+	cloudSpendCacheMu      sync.Mutex
+	cloudSpendCacheValue   CloudSpend
+	cloudSpendCacheExpires time.Time
+)
+
+func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
+	cloudSpendCacheMu.Lock()
+	defer cloudSpendCacheMu.Unlock()
+
+	if time.Now().Before(cloudSpendCacheExpires) {
+		sendJSON(w, cloudSpendCacheValue)
+		return
+	}
+
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	cs := CloudSpend{
+		GCPSource: "bigquery billing export",
+	}
+
+	// GCP MTD from BigQuery billing export.
+	if v, err := fetchGCPSpendBigQuery(monthStart); err != nil {
+		cs.GCPError = err.Error()
+	} else {
+		cs.GCPMTD = v
+	}
+
+	// Anthropic MTD — deliberately NOT reusing the openclaw detail
+	// cache because that one is scoped to Last 30 days to match the
+	// console, while the combined card wants strict month-to-date.
+	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
+		spend, _, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, monthStart)
+		if err != nil {
+			cs.AnthropicError = err.Error()
+		} else {
+			cs.AnthropicMTD = spend
+		}
+	} else {
+		cs.AnthropicError = "anthropic admin key not configured"
+	}
+
+	cs.TotalMTD = cs.AnthropicMTD + cs.GCPMTD
+
+	cloudSpendCacheValue = cs
+	cloudSpendCacheExpires = time.Now().Add(5 * time.Minute)
+	sendJSON(w, cs)
+}
+
+// fetchGCPSpendBigQuery runs a SQL query against the Cloud Billing
+// BigQuery export and returns the current project's month-to-date
+// cost in USD.
+//
+// The export table is created automatically by Google after billing
+// export is enabled in the Cloud Console. The table name follows
+// the pattern:
+//
+//	<project>.<dataset>.gcp_billing_export_v1_<BILLING_ACCOUNT_ID>
+//
+// with the billing account id dashes replaced by underscores. Rather
+// than hard-code that id, we query with a wildcard:
+//
+//	`<project>.<dataset>.gcp_billing_export_v1_*`
+//
+// which BigQuery treats as a table-union across all daily shards of
+// the export.
+//
+// Project id and dataset come from environment variables so this is
+// reusable for projects with a different setup.
+func fetchGCPSpendBigQuery(monthStart time.Time) (float64, error) {
+	projectID := os.Getenv("BILLING_EXPORT_PROJECT")
+	if projectID == "" {
+		projectID = gcpMeta("project/project-id")
+	}
+	dataset := os.Getenv("BILLING_EXPORT_DATASET")
+	if dataset == "" {
+		dataset = "billing_export"
+	}
+	if projectID == "unknown" || projectID == "" {
+		return 0, fmt.Errorf("missing project id")
+	}
+
+	token, err := getMetadataToken()
+	if err != nil {
+		return 0, fmt.Errorf("metadata token: %v", err)
+	}
+
+	sql := fmt.Sprintf(
+		"SELECT SUM(cost) AS total "+
+			"FROM `%s.%s.gcp_billing_export_v1_*` "+
+			"WHERE project.id = '%s' "+
+			"AND usage_start_time >= TIMESTAMP('%s')",
+		projectID, dataset, projectID,
+		monthStart.Format("2006-01-02 15:04:05"),
+	)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"query":        sql,
+		"useLegacySql": false,
+		"timeoutMs":    10000,
+	})
+
+	reqURL := fmt.Sprintf("https://bigquery.googleapis.com/bigquery/v2/projects/%s/queries", projectID)
+	req, _ := http.NewRequest("POST", reqURL, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("bigquery: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return 0, fmt.Errorf("bigquery %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	// BigQuery jobs.query response shape:
+	//   { "jobComplete": true,
+	//     "schema": { "fields": [ { "name": "total", ... } ] },
+	//     "rows": [ { "f": [ { "v": "0.37" } ] } ] }
+	// SUM of zero rows returns a single row with f[0].v = null.
+	var result struct {
+		JobComplete bool `json:"jobComplete"`
+		Rows        []struct {
+			F []struct {
+				V interface{} `json:"v"`
+			} `json:"f"`
+		} `json:"rows"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decode bigquery: %v", err)
+	}
+
+	if !result.JobComplete {
+		return 0, fmt.Errorf("bigquery job not complete")
+	}
+	if len(result.Rows) == 0 || len(result.Rows[0].F) == 0 {
+		return 0, nil // no data yet — could be first day after export enable
+	}
+	switch v := result.Rows[0].F[0].V.(type) {
+	case string:
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return 0, nil
+		}
+		return f, nil
+	case nil:
+		return 0, nil
+	default:
+		return 0, fmt.Errorf("unexpected bigquery cell type %T", v)
+	}
+}
+
+// --- Stop VM ---
+// User-triggered self-destruct. Calls the Compute Engine REST API
+// directly with the metadata-server OAuth token. The API returns
+// immediately with an Operation object; the actual shutdown happens
+// over the next ~30 seconds, which is plenty of time for this HTTP
+// response to complete before alive-server gets killed.
+func handleStopVM(w http.ResponseWriter, r *http.Request) {
+	project := gcpMeta("project/project-id")
+	zoneRaw := gcpMeta("instance/zone")
+	zone := zoneRaw
+	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
+		zone = zoneRaw[i+1:]
+	}
+	name := gcpMeta("instance/name")
+
+	if project == "unknown" || name == "unknown" {
+		sendJSON(w, map[string]interface{}{"error": "metadata missing"})
+		return
+	}
+
+	token, err := getMetadataToken()
+	if err != nil {
+		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("metadata token: %v", err)})
+		return
+	}
+
+	reqURL := fmt.Sprintf(
+		"https://compute.googleapis.com/compute/v1/projects/%s/zones/%s/instances/%s/stop",
+		project, zone, name,
+	)
+	req, _ := http.NewRequest("POST", reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("contact compute: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("compute %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))})
+		return
+	}
+
+	log.Printf("vm stop: requested by dashboard, instance %s/%s/%s", project, zone, name)
+	sendJSON(w, map[string]interface{}{"success": true, "message": "stop requested — vm will be down in ~30s"})
+}
+
 // fetchInstanceCreationTimestamp hits the Compute Engine REST API for
 // the current instance to get its creation timestamp (not exposed in
 // the metadata server). Uses the metadata-server access token.
@@ -976,7 +1209,7 @@ func humanDuration(d time.Duration) string {
 }
 
 // fetchAnthropicSpend calls the Anthropic cost_report admin API and
-// returns (last-30-days total in USD, last-7-days daily breakdown, error).
+// returns (total USD in window, last-7-days daily breakdown, error).
 //
 // Endpoint: GET https://api.anthropic.com/v1/organizations/cost_report
 // Auth:     x-api-key: <admin_key>, anthropic-version: 2023-06-01
@@ -994,13 +1227,8 @@ func humanDuration(d time.Duration) string {
 //     `usage_report/messages` + the published Haiku 4.5 token prices
 //     shows the cost_report values are exactly 100x the dollar value
 //     the console displays. We divide by 100 to convert back.
-//
-// The window is "last 30 days" to match the console's default cost
-// view, so the dashboard's total lines up with what the user sees
-// when they click Analytics → Cost on platform.claude.com.
-func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
+func fetchAnthropicSpend(adminKey string, startWindow time.Time) (float64, []DayCost, error) {
 	now := time.Now().UTC()
-	startWindow := now.AddDate(0, 0, -30)
 	// Anchor at midnight UTC so bucket edges align with the API.
 	startWindow = time.Date(startWindow.Year(), startWindow.Month(), startWindow.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -1587,6 +1815,8 @@ func main() {
 	mux.HandleFunc("POST /api/dotfiles/sync", handleDotfilesSync)
 	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
 	mux.HandleFunc("GET /api/services/infrastructure", handleInfrastructureDetail)
+	mux.HandleFunc("GET /api/cloud-spend", handleCloudSpend)
+	mux.HandleFunc("POST /api/vm/stop", handleStopVM)
 
 	// Diary (Hugo static site)
 	diaryDir := filepath.Join(attlasDir, "diary", "public")
