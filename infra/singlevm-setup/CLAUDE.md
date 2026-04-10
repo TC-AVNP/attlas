@@ -12,17 +12,27 @@ Terraform config for a single GCP VM with static IP, firewall rules, and Secret 
 
 ## Variables
 
-- `vm_user` — non-root user created by the startup script (default: condecopedro)
 - `attlas_repo` — GitHub HTTPS URL for this repo (used by startup script to clone)
+
+## Instance Metadata
+
+- `enable-oslogin = "TRUE"` — SSH access is tied to IAM identity, so
+  `gcloud compute ssh` no longer auto-creates per-laptop phantom users
+  matching each operator's local username. Everyone lands in a stable
+  IAM-derived account and `sudo -iu agnostic-user` to become the
+  service owner.
 
 ## Startup Script
 
-The VM runs `startup.sh` on every boot (via `metadata_startup_script`). It does three things:
-1. Installs git if missing
-2. Creates the `vm_user` account if missing
-3. Clones this repo to `~/iapetus/attlas` using a PAT from GCP Secret Manager (`github-pat`). The `~/iapetus/` workspace dir is created first; `iapetus` (Atlas's father) is the parent directory convention used across all machines.
+The VM runs `startup.sh` on every boot (via `metadata_startup_script`). Responsibilities:
+1. Installs `git` (and only `git`) if missing. Everything else is deferred to `base-setup/setup.sh`.
+2. Creates the three non-root accounts:
+   - `agnostic-user` — login user with NOPASSWD sudo, owns `/home/agnostic-user/iapetus/{attlas,dotfiels}`, backs ttyd/code-server.
+   - `alive-svc` — `nologin` system user running `alive-server.service` with state under `/var/lib/alive-server/`.
+   - `openclaw-svc` — `nologin` system user running `openclaw-gateway.service` with state under `/var/lib/openclaw/`.
+3. Clones this repo to `/home/agnostic-user/iapetus/attlas` using a PAT from GCP Secret Manager (`github-pat`). `iapetus` (Atlas's father) is the parent directory convention used across all machines.
 
-Everything else (packages, dotfiles, services) is handled by `base-setup/` and `services/`, which the user runs manually after SSH.
+Everything else (packages, dotfiles, alive-server build, Caddy, services) is handled by `base-setup/setup.sh`, which an operator runs once after the first boot via `sudo bash ...`.
 
 ## Prerequisites
 

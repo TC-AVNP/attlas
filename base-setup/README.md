@@ -18,9 +18,23 @@ Run once after first SSH into a fresh VM. Installs everything needed for a worki
 
 ## Usage
 
+Run **as root** (setup.sh creates system users, writes systemd units, and
+provisions `/var/lib/<svc>/` state dirs):
+
 ```bash
-~/iapetus/attlas/base-setup/setup.sh
+sudo bash /home/agnostic-user/iapetus/attlas/base-setup/setup.sh
 ```
+
+## Service topology after setup
+
+| Service | User | State dir |
+|---|---|---|
+| `alive-server.service` | `alive-svc` (system, nologin) | `/var/lib/alive-server/` |
+| `openclaw-gateway.service` | `openclaw-svc` (system, nologin) | `/var/lib/openclaw/` |
+| `ttyd.service` | `agnostic-user` (login) | `/home/agnostic-user/` |
+| `code-server.service` | `agnostic-user` (login) | `/home/agnostic-user/.local/share/code-server/` |
+| `dotfiles-sync.timer` | `agnostic-user` | `/home/agnostic-user/iapetus/dotfiels/` |
+| `caddy.service` | `caddy` (package default) | `/etc/caddy/` |
 
 ## Caddy Gateway
 

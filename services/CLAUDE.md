@@ -37,6 +37,14 @@ To add a new service:
 
 ## Usage
 
+Run as root:
+
 ```bash
-~/iapetus/attlas/services/install.sh
+sudo bash /home/agnostic-user/iapetus/attlas/services/install.sh
 ```
+
+## Service user contract
+
+- `install-terminal.sh`, `install-code-server.sh`, `install-diary.sh` default to `SERVICE_USER=agnostic-user` and `User=agnostic-user` in the systemd unit. Browser shells / editors thus land in the login user's home.
+- `install-openclaw.sh` defaults to `SERVICE_USER=openclaw-svc` (a nologin system user) with `SERVICE_STATE_DIR=/var/lib/openclaw` and sets `Environment=HOME=${SERVICE_STATE_DIR}` on the unit, so openclaw finds its state at `/var/lib/openclaw/.openclaw/`.
+- `alive-server.service` itself is installed by `base-setup/setup.sh` (not here) and runs as the dedicated `alive-svc` user.

@@ -239,8 +239,12 @@ func isClaudeInstalled() bool {
 }
 
 func isClaudeLoggedIn() bool {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	path := os.Getenv("CLAUDE_JSON_PATH")
+	if path == "" {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, ".claude.json")
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return false
 	}
@@ -771,8 +775,11 @@ func main() {
 	execPath, _ := os.Executable()
 	execDir := filepath.Dir(execPath)
 	distDir = filepath.Join(execDir, "frontend", "dist")
-	home, _ := os.UserHomeDir()
-	attlasDir = filepath.Join(home, "attlas")
+	attlasDir = os.Getenv("ATTLAS_DIR")
+	if attlasDir == "" {
+		home, _ := os.UserHomeDir()
+		attlasDir = filepath.Join(home, "attlas")
+	}
 
 	if _, err := os.Stat(distDir); err != nil {
 		wd, _ := os.Getwd()

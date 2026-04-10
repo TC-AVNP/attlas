@@ -9,11 +9,11 @@ output "domain" {
 }
 
 output "ssh_command" {
-  description = "SSH command to connect to the VM"
-  value       = "gcloud compute ssh ${var.vm_user}@${var.vm_name} --zone=${var.zone}"
+  description = "SSH command to connect to the VM (OS Login derives the username from your IAM identity). Use `sudo -iu agnostic-user` to land in the service-owning account."
+  value       = "gcloud compute ssh ${var.vm_name} --zone=${var.zone}"
 }
 
 output "startup_log_command" {
   description = "Command to check startup script log"
-  value       = "gcloud compute ssh ${var.vm_user}@${var.vm_name} --zone=${var.zone} --command='sudo tail -50 /var/log/startup-script.log'"
+  value       = "gcloud compute ssh ${var.vm_name} --zone=${var.zone} --command='sudo tail -50 /var/log/startup-script.log'"
 }

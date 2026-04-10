@@ -13,8 +13,15 @@ resource "google_compute_instance" "vm" {
 
   tags = ["https-server", "ssh-iap"]
 
+  # OS Login ties SSH access to IAM identities, so `gcloud compute ssh` no
+  # longer auto-creates per-laptop phantom users matching the operator's
+  # local username. Users land in a stable IAM-derived account and `sudo`
+  # to `agnostic-user` for service work.
+  metadata = {
+    enable-oslogin = "TRUE"
+  }
+
   metadata_startup_script = templatefile("${path.module}/startup.sh", {
-    vm_user     = var.vm_user
     attlas_repo = var.attlas_repo
   })
 

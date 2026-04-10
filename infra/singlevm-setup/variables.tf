@@ -33,12 +33,6 @@ variable "disk_image" {
   type        = string
 }
 
-variable "vm_user" {
-  description = "Non-root user account to create on the VM"
-  type        = string
-  default     = "condecopedro"
-}
-
 variable "attlas_repo" {
   description = "GitHub HTTPS URL for the attlas repo (without PAT)"
   type        = string
