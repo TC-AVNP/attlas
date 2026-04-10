@@ -643,8 +643,12 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 		return nil, fmt.Errorf("metadata token: %v", err)
 	}
 
+	// We include insert/delete alongside start/stop so the replay knows
+	// when the VM actually existed. Under terraform-managed infra the
+	// VM can be destroyed and re-created during the day, and we don't
+	// want to credit a "not yet created" day with 24h of fake uptime.
 	filter := fmt.Sprintf(
-		`resource.type="gce_instance" AND protoPayload.resourceName:"instances/%s" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop") AND timestamp>="%s"`,
+		`resource.type="gce_instance" AND protoPayload.resourceName:"instances/%s" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop" OR protoPayload.methodName="v1.compute.instances.insert" OR protoPayload.methodName="v1.compute.instances.delete") AND timestamp>="%s"`,
 		name,
 		since.UTC().Format(time.RFC3339),
 	)
@@ -695,9 +699,18 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 			lastParseErr = err.Error()
 			continue
 		}
-		method := "start"
-		if strings.Contains(e.ProtoPayload.MethodName, "stop") {
+		// Collapse GCE lifecycle verbs onto a running/not-running axis:
+		//   insert → on  (VM created and running)
+		//   delete → off (VM gone)
+		//   start  → on
+		//   stop   → off
+		var method string
+		switch {
+		case strings.Contains(e.ProtoPayload.MethodName, "stop"),
+			strings.Contains(e.ProtoPayload.MethodName, "delete"):
 			method = "stop"
+		default:
+			method = "start"
 		}
 		events = append(events, instanceEvent{timestamp: t.UTC(), method: method})
 	}
@@ -739,15 +752,24 @@ type uptimeInterval struct {
 
 // computeDailyUptime replays audit events into ON intervals and
 // distributes them across each day of the current UTC month.
+//
+// Lifecycle events (insert/delete) are folded into the same start/stop
+// stream upstream, so by this point every event is either "start"
+// (running) or "stop" (not running).
+//
+// The "state before the first observed event" question is answered
+// by a leading-STOP heuristic: if the first event in the window is a
+// stop, the VM must have been running before, so we credit the
+// pre-window period as ON. If the first event is a start (which on
+// GCE is usually the very first insert for a brand-new VM), the VM
+// didn't exist / was off before, and the pre-window period is NOT
+// counted. This matches reality under terraform-managed infra where
+// the VM can be created mid-month.
 func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int64) {
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	// Anchor before the month so we can infer the state at month-start
-	// by watching the first transition. If the first transition is a
-	// "stop" the VM was on from `anchor` to that stop; if it's a
-	// "start" the VM was off until then. If there are no events at
-	// all, the VM is currently running (we're answering the request),
-	// so we assume it was on since `anchor`.
-	anchor := monthStart.AddDate(0, 0, -7)
+	// Anchor well before the month so `(anchor, first-stop)` covers
+	// any pre-month ON period without accidental gaps.
+	anchor := monthStart.AddDate(0, 0, -30)
 
 	intervals := []uptimeInterval{}
 	var openStart *time.Time
@@ -756,9 +778,12 @@ func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int
 	for i, ev := range events {
 		if i == 0 {
 			if ev.method == "stop" {
+				// VM was running up until this stop.
 				intervals = append(intervals, uptimeInterval{start: anchor, end: ev.timestamp})
 				state = "off"
-			} else { // start
+			} else { // start / insert
+				// VM wasn't running before this event. Open a new
+				// interval but do NOT backfill the pre-event period.
 				t := ev.timestamp
 				openStart = &t
 				state = "on"
@@ -780,10 +805,11 @@ func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int
 	// Still-on state → ongoing interval ending at now.
 	if state == "on" && openStart != nil {
 		intervals = append(intervals, uptimeInterval{start: *openStart, end: now})
-	} else if state == "unknown" {
-		// No events at all: we're running, assume on the full lookback.
-		intervals = append(intervals, uptimeInterval{start: anchor, end: now})
 	}
+	// Note: we used to have an "unknown" fallback here that assumed
+	// the VM was on for the full lookback when no events fired. That
+	// produced phantom uptime for days before the VM even existed, so
+	// it's gone. If the events window is empty, the month stays zero.
 
 	// Build daily buckets for each day of the current month up to "now".
 	var (
