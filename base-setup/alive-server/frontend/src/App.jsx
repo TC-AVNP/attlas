@@ -1,256 +1,81 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, createContext, useContext } from 'react'
+import { BrowserRouter, Routes, Route, Outlet, Link } from 'react-router-dom'
+import Banner from './components/Banner.jsx'
+import Dashboard from './pages/Dashboard.jsx'
+import OpenclawDetail from './pages/detail/Openclaw.jsx'
 
-function App() {
-  const [vm, setVm] = useState(null)
-  const [user, setUser] = useState(null)
-  const [claude, setClaude] = useState(null)
-  const [services, setServices] = useState([])
+// ── Shared status context ─────────────────────────────────────────────
+// /api/status is the backend's firehose: vm, user, claude, services,
+// dotfiles, domain_expiry. Every page consumes it via useStatus().
+
+const StatusContext = createContext(null)
+
+export function useStatus() {
+  const ctx = useContext(StatusContext)
+  if (!ctx) throw new Error('useStatus must be used within <StatusProvider>')
+  return ctx
+}
+
+function StatusProvider({ children }) {
+  const [status, setStatus] = useState(null)
   const [toast, setToast] = useState(null)
-  const [loginState, setLoginState] = useState('idle')
-  const [authUrl, setAuthUrl] = useState('')
-  const [code, setCode] = useState('')
-  const [loginMsg, setLoginMsg] = useState(null)
-  const [installing, setInstalling] = useState(null)
-  const [uninstalling, setUninstalling] = useState(null)
 
-  const showToast = (msg, color) => {
-    setToast({ msg, color })
+  const showToast = useCallback((msg, variant = 'success') => {
+    setToast({ msg, variant })
     setTimeout(() => setToast(null), 4000)
-  }
+  }, [])
 
-  const fetchStatus = async () => {
+  const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch('/api/status')
       const data = await res.json()
-      setVm(data.vm)
-      setUser(data.user)
-      setClaude(data.claude)
-      setServices(data.services)
+      setStatus(data)
     } catch (e) {
       console.error('Failed to fetch status', e)
     }
-  }
+  }, [])
 
-  useEffect(() => { fetchStatus() }, [])
-
-  const startLogin = async () => {
-    setLoginState('waiting_url')
-    setLoginMsg(null)
-    try {
-      const res = await fetch('/api/claude-login', { method: 'POST' })
-      const data = await res.json()
-      if (data.url) {
-        setAuthUrl(data.url)
-        setLoginState('waiting_code')
-      } else {
-        setLoginMsg({ text: data.error || 'Failed to start login', error: true })
-        setLoginState('idle')
-      }
-    } catch (e) {
-      setLoginMsg({ text: e.message, error: true })
-      setLoginState('idle')
-    }
-  }
-
-  const submitCode = async () => {
-    if (!code.trim()) return
-    setLoginMsg({ text: 'Submitting code...', error: false })
-    try {
-      const res = await fetch('/api/claude-login/code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code.trim() })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setLoginMsg({ text: 'Logged in!', error: false })
-        setLoginState('idle')
-        setCode('')
-        setTimeout(fetchStatus, 1500)
-      } else {
-        setLoginMsg({ text: data.error || 'Login failed', error: true })
-      }
-    } catch (e) {
-      setLoginMsg({ text: e.message, error: true })
-    }
-  }
-
-  const installService = async (id) => {
-    if (!confirm(`Install ${id}?`)) return
-    setInstalling(id)
-    showToast(`Installing ${id}...`, '#5a67d8')
-    try {
-      const res = await fetch('/api/install-service', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      })
-      const data = await res.json()
-      if (data.success) {
-        showToast(`${id} installed!`, '#48bb78')
-        setTimeout(fetchStatus, 1000)
-      } else {
-        showToast(data.error || 'Install failed', '#fc8181')
-      }
-    } catch (e) {
-      showToast(e.message, '#fc8181')
-    } finally {
-      setInstalling(null)
-    }
-  }
-
-  const uninstallService = async (id) => {
-    if (!confirm(`Uninstall ${id}? This will stop and remove the service.`)) return
-    setUninstalling(id)
-    showToast(`Uninstalling ${id}...`, '#e53e3e')
-    try {
-      const res = await fetch('/api/uninstall-service', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id })
-      })
-      const data = await res.json()
-      if (data.success) {
-        showToast(`${id} uninstalled`, '#48bb78')
-        setTimeout(fetchStatus, 1000)
-      } else {
-        showToast(data.error || 'Uninstall failed', '#fc8181')
-      }
-    } catch (e) {
-      showToast(e.message, '#fc8181')
-    } finally {
-      setUninstalling(null)
-    }
-  }
-
-  if (!vm) return <p style={{ color: '#888', textAlign: 'center', marginTop: '3rem' }}>Loading...</p>
+  useEffect(() => { fetchStatus() }, [fetchStatus])
 
   return (
-    <>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ margin: 0 }}>I am alive!</h1>
-          <div className="subtitle">Attlas VM Dashboard</div>
-        </div>
-        {user?.email && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: '#888', fontSize: '0.85rem' }}>
-            <span>{user.email}</span>
-            <a href="/logout" style={{ color: '#fc8181', textDecoration: 'none', fontSize: '0.8rem' }}>logout</a>
-          </div>
-        )}
-      </div>
-
-      <h2>VM Info</h2>
-      <table>
-        <tbody>
-          <tr><td className="label">Name</td><td>{vm.name}</td></tr>
-          <tr><td className="label">Zone</td><td>{vm.zone}</td></tr>
-          <tr><td className="label">External IP</td><td>{vm.external_ip}</td></tr>
-          <tr><td className="label">Domain</td><td><a href={`https://${vm.domain}/`}>{vm.domain}</a></td></tr>
-          <tr><td className="label">Allowed users</td><td>{user?.allowed_emails?.join(', ') || 'N/A'}</td></tr>
-        </tbody>
-      </table>
-
-      <h2>Claude Code</h2>
-      {!claude?.installed ? (
-        <div className="muted">Not installed. Run ~/attlas/base-setup/setup.sh</div>
-      ) : claude?.authenticated ? (
-        <div className="dot-green">Authenticated</div>
-      ) : (
-        <>
-          <div className="dot-red">Not authenticated</div>
-          {loginState === 'idle' && (
-            <div style={{ marginTop: '0.8rem' }}>
-              <button className="btn btn-primary" onClick={startLogin}>
-                Login to Claude Code
-              </button>
-            </div>
-          )}
-          {loginState === 'waiting_url' && (
-            <div style={{ marginTop: '0.8rem', color: '#888' }}>Starting login...</div>
-          )}
-          {loginState === 'waiting_code' && (
-            <div className="login-box">
-              <p>1. Click to authenticate:</p>
-              <a href={authUrl} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>
-                {authUrl}
-              </a>
-              <div style={{ marginTop: '1rem' }}>
-                <p>2. Paste the authentication code:</p>
-                <div className="row" style={{ marginTop: '0.5rem' }}>
-                  <input
-                    className="input"
-                    type="text"
-                    placeholder="Paste code from browser..."
-                    value={code}
-                    onChange={e => setCode(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && submitCode()}
-                  />
-                  <button className="btn btn-success" onClick={submitCode}>Submit</button>
-                </div>
-              </div>
-            </div>
-          )}
-          {loginMsg && (
-            <div className={loginMsg.error ? 'msg-error' : 'msg-success'} style={{ marginTop: '0.5rem' }}>
-              {loginMsg.text}
-            </div>
-          )}
-        </>
-      )}
-
-      <h2>Services</h2>
-      <table>
-        <tbody>
-          <tr className="table-header">
-            <td>Service</td><td>Status</td><td>Path</td>
-          </tr>
-          {services.map(svc => (
-            <tr key={svc.id}>
-              {svc.installed ? (
-                <>
-                  <td className={svc.running ? 'dot-green' : 'dot-red'}>{svc.name}</td>
-                  <td>{svc.running ? 'running' : 'stopped'}</td>
-                  <td>
-                    {svc.path ? <a href={svc.path} target="_blank" rel="noopener noreferrer">{svc.path}</a> : '\u2014'}
-                    {' '}
-                    <button
-                      className="btn btn-uninstall"
-                      onClick={() => uninstallService(svc.id)}
-                      disabled={uninstalling === svc.id}
-                      title="Uninstall"
-                    >
-                      {uninstalling === svc.id ? '...' : '\u2715'}
-                    </button>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td className="dot-grey muted">{svc.name}</td>
-                  <td className="muted">not installed</td>
-                  <td>
-                    <button
-                      className="btn btn-sm"
-                      onClick={() => installService(svc.id)}
-                      disabled={installing === svc.id}
-                    >
-                      {installing === svc.id ? 'Installing...' : 'Install'}
-                    </button>
-                  </td>
-                </>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-
+    <StatusContext.Provider value={{ status, refresh: fetchStatus, showToast }}>
+      {children}
       {toast && (
-        <div className="toast" style={{ background: toast.color }}>
-          {toast.msg}
-        </div>
+        <div className={`toast toast-${toast.variant}`}>{toast.msg}</div>
       )}
-    </>
+    </StatusContext.Provider>
   )
 }
 
-export default App
+// ── Shared layout ─────────────────────────────────────────────────────
+
+function Layout() {
+  const { status } = useStatus()
+
+  return (
+    <div className="layout">
+      <Banner expiry={status?.domain_expiry} />
+      <Outlet />
+      <footer className="footer">
+        attlas · <Link to="/">dashboard</Link>
+      </footer>
+    </div>
+  )
+}
+
+// ── Router ────────────────────────────────────────────────────────────
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <StatusProvider>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/services/details/openclaw" element={<OpenclawDetail />} />
+          </Route>
+        </Routes>
+      </StatusProvider>
+    </BrowserRouter>
+  )
+}

@@ -42,7 +42,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${SERVICE_HOME}/iapetus
-ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable /usr/bin/zsh
+ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable -t titleFixed=attlas /usr/bin/zsh
 Restart=always
 RestartSec=5
 

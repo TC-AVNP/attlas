@@ -39,7 +39,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${SERVICE_HOME}/iapetus
-ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --auth none --disable-telemetry
+ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --auth none --disable-telemetry --app-name attlas
 Restart=always
 RestartSec=5
 

@@ -5,6 +5,16 @@
 		copy_headers Location
 	}
 
+	# Global favicon override — every */favicon.{ico,svg,png} request at
+	# any subpath is rewritten to /favicon.svg and served by alive-server.
+	# Must land BEFORE the per-service imports so it wins matcher priority.
+	@favicon path_regexp ^/.*favicon\.(ico|svg|png)$
+	handle @favicon {
+		rewrite * /favicon.svg
+		header Cache-Control "public, max-age=86400"
+		reverse_proxy localhost:3000
+	}
+
 	import /etc/caddy/conf.d/*.caddy
 
 	handle /* {
