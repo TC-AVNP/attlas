@@ -173,7 +173,8 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now openclaw-gateway
+systemctl enable openclaw-gateway
+systemctl restart openclaw-gateway
 
 # 7. Expose gateway via Caddy
 cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/

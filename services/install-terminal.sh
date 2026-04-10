@@ -53,8 +53,11 @@ UNIT
 # Deploy Caddy route snippet
 cp "$SCRIPT_DIR/terminal.caddy" /etc/caddy/conf.d/
 
-# Start
+# Start. Use enable + restart (not enable --now) so re-installs pick up
+# unit-file changes — enable --now is a no-op when the service is already
+# running and would leave the old process behind.
 systemctl daemon-reload
-systemctl enable --now ttyd
+systemctl enable ttyd
+systemctl restart ttyd
 
 echo "terminal installed -> /terminal (port 7681), running as ${SERVICE_USER}"
