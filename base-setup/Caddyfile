@@ -1,5 +1,10 @@
 {$CADDY_DOMAIN} {
-	@protected not path /oauth2/* /logout
+	# Public paths (no auth): oauth2 callback, logout, and any favicon
+	# request at any subpath. Everything else runs through forward_auth.
+	@protected {
+		not path /oauth2/* /logout
+		not path_regexp ^/.*favicon\.(ico|svg|png)$
+	}
 	forward_auth @protected localhost:3000 {
 		uri /api/auth/verify
 		copy_headers Location
