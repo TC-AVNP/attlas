@@ -27,6 +27,8 @@ fi
 echo "code-server: $(code-server --version 2>&1 | head -1)"
 
 # Create systemd unit
+# WorkingDirectory=%h/iapetus opens the iapetus workspace as the default
+# folder in code-server. %h resolves to the User=`s home.
 cat > /etc/systemd/system/code-server.service <<UNIT
 [Unit]
 Description=code-server - VS Code in browser
@@ -35,6 +37,7 @@ After=network.target
 [Service]
 Type=simple
 User=${SERVICE_USER}
+WorkingDirectory=%h/iapetus
 ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8080 --auth none --disable-telemetry
 Restart=always
 RestartSec=5

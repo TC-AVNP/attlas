@@ -24,6 +24,9 @@ fi
 echo "ttyd: $(ttyd --version 2>&1 | head -1)"
 
 # Create systemd unit
+# WorkingDirectory=%h/iapetus drops the user into the iapetus workspace by
+# default when they open /terminal in the browser. %h resolves to the home
+# of the User= above.
 cat > /etc/systemd/system/ttyd.service <<UNIT
 [Unit]
 Description=ttyd - Web terminal
@@ -32,6 +35,7 @@ After=network.target
 [Service]
 Type=simple
 User=${SERVICE_USER}
+WorkingDirectory=%h/iapetus
 ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable /usr/bin/zsh
 Restart=always
 RestartSec=5

@@ -629,7 +629,9 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("bash", script)
+	// install-*.sh scripts require root (they write to /etc/systemd/system/),
+	// so we run them via sudo. Authorized by /etc/sudoers.d/alive-svc-services.
+	cmd := exec.Command("sudo", "-n", "bash", script)
 	cmd.Dir = filepath.Join(attlasDir, "services")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -637,7 +639,7 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
+	exec.Command("sudo", "-n", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
 
@@ -659,7 +661,9 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.Command("bash", script)
+	// uninstall-*.sh scripts require root (they touch /etc/systemd/system/
+	// and /etc/caddy/conf.d/), so we run them via sudo.
+	cmd := exec.Command("sudo", "-n", "bash", script)
 	cmd.Dir = filepath.Join(attlasDir, "services")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -667,7 +671,7 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
+	exec.Command("sudo", "-n", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
 
