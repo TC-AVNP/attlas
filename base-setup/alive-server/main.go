@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,9 +38,10 @@ var (
 
 // OAuth2 config loaded from ~/.attlas-server-config.json
 type OAuthConfig struct {
-	ClientID     string   `json:"google_oauth_client_id"`
-	ClientSecret string   `json:"google_oauth_client_secret"`
-	AllowedEmails []string `json:"allowed_emails"`
+	ClientID          string   `json:"google_oauth_client_id"`
+	ClientSecret      string   `json:"google_oauth_client_secret"`
+	AllowedEmails     []string `json:"allowed_emails"`
+	AnthropicAdminKey string   `json:"anthropic_admin_key"` // F2: Anthropic cost_report API
 }
 
 // Known services
@@ -260,6 +263,16 @@ func runCmd(name string, args ...string) (string, bool) {
 	return strings.TrimSpace(string(out)), err == nil
 }
 
+// runCmdCtx runs a command with a hard timeout. Used for subprocesses
+// that might hang (openclaw gateway probes, systemctl on a stuck unit).
+func runCmdCtx(timeout time.Duration, name string, args ...string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out)), err == nil
+}
+
 // loadInstalledServices is a live binary lookup, not a cached state file.
 // The previous .attlas-services.json cache invalidated only on first read,
 // which made the dashboard show a stale snapshot if services were installed
@@ -273,6 +286,376 @@ func loadInstalledServices() map[string]bool {
 		}
 	}
 	return state
+}
+
+// --- Dotfiles status (F1) ---
+
+// DotfilesStatus is what the dashboard shows for the `dotfiles` row.
+// Fields that can't be resolved (missing repo, systemd unit not installed,
+// never run) come back as zero values and the Status field degrades to
+// "unknown" — the frontend handles that.
+type DotfilesStatus struct {
+	LastSync        string `json:"last_sync"`         // ISO timestamp of last successful run
+	LastExitStatus  int    `json:"last_exit_status"`  // 0 = ok
+	HeadCommit      string `json:"head_commit"`       // short hash
+	HeadCommittedAt string `json:"head_committed_at"` // ISO
+	RemoteCommit    string `json:"remote_commit"`     // short hash
+	Behind          int    `json:"behind"`            // commit count HEAD..origin/<branch>
+	Status          string `json:"status"`            // "up-to-date" | "behind" | "error" | "unknown"
+}
+
+// dotfilesDir resolves the dotfiels repo relative to ATTLAS_DIR
+// (attlas lives at $WORKSPACE/attlas, dotfiels at $WORKSPACE/dotfiels).
+// The repo name retains the upstream "dotfiels" typo.
+func dotfilesDir() string {
+	return filepath.Join(filepath.Dir(attlasDir), "dotfiels")
+}
+
+func getDotfilesStatus() DotfilesStatus {
+	status := DotfilesStatus{Status: "unknown"}
+
+	dir := dotfilesDir()
+	if _, err := os.Stat(dir); err != nil {
+		return status
+	}
+
+	// systemctl show dotfiles-sync.service
+	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "dotfiles-sync.service",
+		"-p", "ExecMainExitTimestamp", "-p", "ExecMainStatus"); ok {
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "ExecMainStatus=") {
+				if v, err := strconv.Atoi(strings.TrimPrefix(line, "ExecMainStatus=")); err == nil {
+					status.LastExitStatus = v
+				}
+			} else if strings.HasPrefix(line, "ExecMainExitTimestamp=") {
+				raw := strings.TrimPrefix(line, "ExecMainExitTimestamp=")
+				// systemd emits e.g. "Fri 2026-04-10 13:34:42 UTC"
+				if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil {
+					status.LastSync = t.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+	}
+
+	// Detect branch (upstream is master — but derive rather than hardcode).
+	branch, _ := runCmdCtx(2*time.Second, "git", "-C", dir, "symbolic-ref", "--short", "HEAD")
+	if branch == "" {
+		branch = "master"
+	}
+
+	if head, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "HEAD"); ok {
+		status.HeadCommit = head
+	}
+	if committedAt, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "log", "-1", "--format=%cI", "HEAD"); ok {
+		status.HeadCommittedAt = committedAt
+	}
+	if remote, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "origin/"+branch); ok {
+		status.RemoteCommit = remote
+	}
+	if behindOut, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-list", "--count", "HEAD..origin/"+branch); ok {
+		if n, err := strconv.Atoi(behindOut); err == nil {
+			status.Behind = n
+		}
+	}
+
+	// Derive semantic status.
+	if status.LastExitStatus != 0 && status.LastSync != "" {
+		status.Status = "error"
+	} else if status.Behind > 0 {
+		status.Status = "behind"
+	} else if status.HeadCommit != "" {
+		status.Status = "up-to-date"
+	}
+
+	return status
+}
+
+func handleDotfilesSync(w http.ResponseWriter, r *http.Request) {
+	// Authorized via /etc/sudoers.d/alive-svc-dotfiles-sync.
+	cmd := exec.Command("sudo", "-n", "systemctl", "start", "dotfiles-sync.service")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		sendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
+		return
+	}
+	sendJSON(w, map[string]interface{}{"success": true})
+}
+
+// --- Domain expiry (F3) ---
+
+type DomainExpiry struct {
+	ExpiresAt     string `json:"expires_at"`     // ISO date
+	DaysRemaining int    `json:"days_remaining"` // whole days from now
+	Severity      string `json:"severity"`       // ok | warn | danger | unknown
+}
+
+var (
+	domainCacheMu      sync.Mutex
+	domainCacheValue   DomainExpiry
+	domainCacheExpires time.Time
+)
+
+var whoisExpiryRE = regexp.MustCompile(`(?i)^\s*Expiry date:\s*(.+)$`)
+
+func getDomainExpiry() DomainExpiry {
+	domainCacheMu.Lock()
+	defer domainCacheMu.Unlock()
+	if time.Now().Before(domainCacheExpires) {
+		// Refresh daysRemaining on every call even from cache — the underlying
+		// date is stable but the countdown should tick down.
+		v := domainCacheValue
+		if t, err := time.Parse("2006-01-02", v.ExpiresAt); err == nil {
+			v.DaysRemaining = int(time.Until(t).Hours() / 24)
+			v.Severity = domainSeverity(v.DaysRemaining)
+		}
+		return v
+	}
+
+	result := DomainExpiry{Severity: "unknown"}
+
+	// Tolerate `whois: command not found` on a fresh VM.
+	if _, err := exec.LookPath("whois"); err != nil {
+		domainCacheValue = result
+		domainCacheExpires = time.Now().Add(10 * time.Minute)
+		return result
+	}
+
+	out, ok := runCmdCtx(10*time.Second, "whois", "attlas.uk")
+	if !ok {
+		domainCacheValue = result
+		domainCacheExpires = time.Now().Add(10 * time.Minute)
+		return result
+	}
+
+	for _, line := range strings.Split(out, "\n") {
+		m := whoisExpiryRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		raw := strings.TrimSpace(m[1])
+		// Nominet format: DD-Mon-YYYY
+		t, err := time.Parse("02-Jan-2006", raw)
+		if err != nil {
+			continue
+		}
+		result.ExpiresAt = t.Format("2006-01-02")
+		result.DaysRemaining = int(time.Until(t).Hours() / 24)
+		result.Severity = domainSeverity(result.DaysRemaining)
+		break
+	}
+
+	domainCacheValue = result
+	domainCacheExpires = time.Now().Add(6 * time.Hour)
+	return result
+}
+
+func domainSeverity(days int) string {
+	switch {
+	case days > 60:
+		return "ok"
+	case days >= 30:
+		return "warn"
+	default:
+		return "danger"
+	}
+}
+
+// --- Openclaw detail (F2) ---
+
+type DayCost struct {
+	Date string  `json:"date"` // YYYY-MM-DD
+	USD  float64 `json:"usd"`
+}
+
+type OpenclawDetail struct {
+	Running        bool      `json:"running"`
+	Uptime         string    `json:"uptime"`
+	ActiveTasks    int       `json:"active_tasks"`
+	Sessions       int       `json:"sessions"`         // lifetime, across agents
+	TasksRun       int       `json:"tasks_run"`        // lifetime total
+	SpendThisMonth float64   `json:"spend_this_month"` // USD
+	SpendDaily     []DayCost `json:"spend_daily"`      // last 7 days
+	BillingError   string    `json:"billing_error,omitempty"`
+}
+
+var (
+	openclawCacheMu      sync.Mutex
+	openclawCacheValue   OpenclawDetail
+	openclawCacheExpires time.Time
+)
+
+// openclawStatusJSON is the shape we actually consume out of
+// `openclaw status --all --json`. Only the fields we care about.
+type openclawStatusJSON struct {
+	Tasks struct {
+		Total    int `json:"total"`
+		Active   int `json:"active"`
+		ByStatus struct {
+			Running int `json:"running"`
+		} `json:"byStatus"`
+	} `json:"tasks"`
+	Sessions struct {
+		Count int `json:"count"`
+	} `json:"sessions"`
+	Agents struct {
+		TotalSessions int `json:"totalSessions"`
+	} `json:"agents"`
+}
+
+func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
+	openclawCacheMu.Lock()
+	defer openclawCacheMu.Unlock()
+
+	if time.Now().Before(openclawCacheExpires) {
+		sendJSON(w, openclawCacheValue)
+		return
+	}
+
+	detail := OpenclawDetail{}
+
+	// 1. systemd runtime status.
+	if out, ok := runCmdCtx(2*time.Second, "systemctl", "is-active", "openclaw-gateway"); ok {
+		detail.Running = out == "active"
+	}
+	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "openclaw-gateway",
+		"-p", "ActiveEnterTimestamp"); ok {
+		raw := strings.TrimPrefix(strings.TrimSpace(out), "ActiveEnterTimestamp=")
+		if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil && !t.IsZero() {
+			detail.Uptime = humanDuration(time.Since(t))
+		}
+	}
+
+	// 2. openclaw status --all --json via sudo -u openclaw-svc.
+	//    Authorized via /etc/sudoers.d/alive-svc-openclaw.
+	if out, ok := runCmdCtx(2*time.Second, "sudo", "-n", "-u", "openclaw-svc", "-H",
+		"/usr/bin/openclaw", "status", "--all", "--json"); ok {
+		var s openclawStatusJSON
+		if err := json.Unmarshal([]byte(out), &s); err == nil {
+			detail.TasksRun = s.Tasks.Total
+			detail.ActiveTasks = s.Tasks.Active
+			if detail.ActiveTasks == 0 {
+				detail.ActiveTasks = s.Tasks.ByStatus.Running
+			}
+			detail.Sessions = s.Sessions.Count
+			if detail.Sessions == 0 {
+				detail.Sessions = s.Agents.TotalSessions
+			}
+		}
+	}
+
+	// 3. Anthropic cost_report API.
+	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
+		spendMonth, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey)
+		if err != nil {
+			detail.BillingError = err.Error()
+		} else {
+			detail.SpendThisMonth = spendMonth
+			detail.SpendDaily = daily
+		}
+	} else {
+		detail.BillingError = "anthropic admin key not configured"
+	}
+
+	openclawCacheValue = detail
+	openclawCacheExpires = time.Now().Add(30 * time.Second)
+	sendJSON(w, detail)
+}
+
+func humanDuration(d time.Duration) string {
+	if d < 0 {
+		return "—"
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	mins := int(d.Minutes()) % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	return fmt.Sprintf("%dm", mins)
+}
+
+// fetchAnthropicSpend calls the Anthropic cost_report admin API and
+// returns (month-to-date total, last-7-days daily breakdown, error).
+//
+// Endpoint: GET https://api.anthropic.com/v1/organizations/cost_report
+// Auth:     x-api-key: <admin_key>, anthropic-version: 2023-06-01
+// Query:    starting_at=<ISO UTC>, bucket_width=1d
+func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
+	now := time.Now().UTC()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	reqURL := fmt.Sprintf(
+		"https://api.anthropic.com/v1/organizations/cost_report?starting_at=%s&bucket_width=1d",
+		url.QueryEscape(startOfMonth.Format(time.RFC3339)),
+	)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, _ := http.NewRequest("GET", reqURL, nil)
+	req.Header.Set("x-api-key", adminKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("contact anthropic: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return 0, nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// The cost_report response shape is documented as:
+	//   { "data": [ { "starting_at": "...", "ending_at": "...",
+	//                 "results": [ { "amount": {"value": "1.23", "currency":"USD"}, ... } ] }, ... ] }
+	// We sum amounts per bucket.
+	var payload struct {
+		Data []struct {
+			StartingAt string `json:"starting_at"`
+			Results    []struct {
+				Amount struct {
+					Value    string `json:"value"`
+					Currency string `json:"currency"`
+				} `json:"amount"`
+			} `json:"results"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return 0, nil, fmt.Errorf("decode anthropic response: %v", err)
+	}
+
+	var monthTotal float64
+	byDate := make(map[string]float64)
+	for _, bucket := range payload.Data {
+		t, err := time.Parse(time.RFC3339, bucket.StartingAt)
+		if err != nil {
+			continue
+		}
+		day := t.UTC().Format("2006-01-02")
+		for _, r := range bucket.Results {
+			if r.Amount.Currency != "USD" && r.Amount.Currency != "" {
+				continue
+			}
+			v, err := strconv.ParseFloat(r.Amount.Value, 64)
+			if err != nil {
+				continue
+			}
+			byDate[day] += v
+			monthTotal += v
+		}
+	}
+
+	// Build the last-7-day array in chronological order, filling gaps with 0.
+	daily := make([]DayCost, 0, 7)
+	for i := 6; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i).Format("2006-01-02")
+		daily = append(daily, DayCost{Date: d, USD: byDate[d]})
+	}
+
+	return monthTotal, daily, nil
 }
 
 func getServicesStatus() []Service {
@@ -525,7 +908,9 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 			"installed":     isClaudeInstalled(),
 			"authenticated": isClaudeLoggedIn(),
 		},
-		"services": getServicesStatus(),
+		"services":      getServicesStatus(),
+		"dotfiles":      getDotfilesStatus(),
+		"domain_expiry": getDomainExpiry(),
 	})
 }
 
@@ -768,6 +1153,8 @@ func main() {
 	mux.HandleFunc("POST /api/claude-login/code", handleClaudeCode)
 	mux.HandleFunc("POST /api/install-service", handleInstallService)
 	mux.HandleFunc("POST /api/uninstall-service", handleUninstallService)
+	mux.HandleFunc("POST /api/dotfiles/sync", handleDotfilesSync)
+	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
 
 	// Diary (Hugo static site)
 	diaryDir := filepath.Join(attlasDir, "diary", "public")
