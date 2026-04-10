@@ -13,6 +13,12 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_USER="${SERVICE_USER:-agnostic-user}"
+SERVICE_HOME="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)"
+
+if [[ -z "${SERVICE_HOME}" || ! -d "${SERVICE_HOME}" ]]; then
+  echo "ERROR: home directory for ${SERVICE_USER} not found." >&2
+  exit 1
+fi
 
 # Install ttyd
 if ! command -v ttyd &>/dev/null; then
@@ -24,9 +30,9 @@ fi
 echo "ttyd: $(ttyd --version 2>&1 | head -1)"
 
 # Create systemd unit
-# WorkingDirectory=%h/iapetus drops the user into the iapetus workspace by
-# default when they open /terminal in the browser. %h resolves to the home
-# of the User= above.
+# WorkingDirectory drops the user into the iapetus workspace by default
+# when they open /terminal in the browser. The path is hardcoded (not %h)
+# because for system units %h resolves to /root regardless of User=.
 cat > /etc/systemd/system/ttyd.service <<UNIT
 [Unit]
 Description=ttyd - Web terminal
@@ -35,7 +41,7 @@ After=network.target
 [Service]
 Type=simple
 User=${SERVICE_USER}
-WorkingDirectory=%h/iapetus
+WorkingDirectory=${SERVICE_HOME}/iapetus
 ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable /usr/bin/zsh
 Restart=always
 RestartSec=5
