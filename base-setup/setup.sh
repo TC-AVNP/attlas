@@ -79,6 +79,14 @@ sudo -u "${AGNOSTIC_USER}" bash "${DOTFIELS_DIR}/install.sh"
 chsh -s /usr/bin/zsh "${AGNOSTIC_USER}"
 echo "Default shell set to zsh for ${AGNOSTIC_USER}"
 
+# 5b. Mark the iapetus workspace as safe for every user. Without this,
+#     git refuses to query a repo from a process whose euid doesn't
+#     match the on-disk owner (notably alive-svc reading the dotfiels
+#     checkout for the dashboard's F1 panel).
+echo "Adding iapetus repos to system-wide git safe.directory..."
+git config --system --replace-all safe.directory "${DOTFIELS_DIR}"
+git config --system --add          safe.directory "${ATTLAS_DIR}"
+
 # 6. Install Claude Code (global npm, available to any user)
 if ! command -v claude &>/dev/null; then
   echo "Installing Claude Code..."
