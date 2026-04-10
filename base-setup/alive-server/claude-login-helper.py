@@ -70,7 +70,18 @@ def main():
         os.dup2(slave_fd, 1)
         os.dup2(slave_fd, 2)
         if slave_fd > 2: os.close(slave_fd)
-        os.execvpe("claude", ["claude", "login"], env)
+        # Run `claude login` as agnostic-user, not as alive-svc, so the
+        # resulting .claude.json lands in the interactive user's home and
+        # `claude` invoked from /terminal sees the same login.
+        # Requires /etc/sudoers.d/alive-svc-claude to grant alive-svc
+        # NOPASSWD sudo to /usr/bin/claude as agnostic-user.
+        # -H switches HOME to agnostic-user's home so claude writes its
+        # config there. -n forbids password prompts (fail-fast on misconfig).
+        os.execvpe(
+            "sudo",
+            ["sudo", "-n", "-u", "agnostic-user", "-H", "claude", "login"],
+            env,
+        )
 
     # Parent
     os.close(slave_fd)
@@ -223,9 +234,12 @@ def main():
     try: os.waitpid(pid, 0)
     except ChildProcessError: pass
 
-    # Check auth
+    # Check auth (also via sudo so we read agnostic-user's auth state)
     import subprocess
-    result = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True, timeout=5)
+    result = subprocess.run(
+        ["sudo", "-n", "-u", "agnostic-user", "-H", "claude", "auth", "status"],
+        capture_output=True, text=True, timeout=5,
+    )
     log(f"Auth status: {result.stdout.strip()}")
 
     if '"loggedIn": true' in result.stdout:
