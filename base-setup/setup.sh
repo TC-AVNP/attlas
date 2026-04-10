@@ -20,16 +20,17 @@ if ! command -v node &>/dev/null || [[ "$(node -v)" != v24* ]]; then
 fi
 echo "Node.js: $(node -v)"
 
-# 3. Clone dotfiles
-if [ ! -d ~/dotfiles ]; then
-  echo "Cloning dotfiles..."
+# 3. Clone dotfiles into the iapetus workspace
+mkdir -p ~/iapetus
+if [ ! -d ~/iapetus/dotfiels ]; then
+  echo "Cloning dotfiels..."
   PAT=$(gcloud secrets versions access latest --secret=github-pat --quiet)
-  git clone "https://${PAT}@github.com/TC-AVNP/dotfiels.git" ~/dotfiles
+  git clone "https://${PAT}@github.com/TC-AVNP/dotfiels.git" ~/iapetus/dotfiels
 fi
 
 # 4. Run dotfiles installer
 echo "Running dotfiles installer..."
-cd ~/dotfiles && bash install.sh
+cd ~/iapetus/dotfiels && bash install.sh
 
 # 5. Set zsh as default shell
 sudo chsh -s /usr/bin/zsh "$(whoami)"
@@ -149,5 +150,5 @@ if [ -t 0 ]; then
   fi
 else
   echo "Non-interactive mode — skipping services prompt."
-  echo "Run ~/attlas/services/install.sh to install services."
+  echo "Run ~/iapetus/attlas/services/install.sh to install services."
 fi

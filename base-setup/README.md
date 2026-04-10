@@ -19,7 +19,7 @@ Run once after first SSH into a fresh VM. Installs everything needed for a worki
 ## Usage
 
 ```bash
-~/attlas/base-setup/setup.sh
+~/iapetus/attlas/base-setup/setup.sh
 ```
 
 ## Caddy Gateway

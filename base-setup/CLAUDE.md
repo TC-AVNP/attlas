@@ -39,7 +39,7 @@ Any new service that needs to be reachable from the internet MUST have a `.caddy
 ## Usage
 
 ```bash
-~/attlas/base-setup/setup.sh
+~/iapetus/attlas/base-setup/setup.sh
 ```
 
 At the end, it prompts whether to also install services (ttyd, code-server).

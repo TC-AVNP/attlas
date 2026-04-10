@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DIARY_DIR="$HOME/attlas/diary"
+DIARY_DIR="$HOME/iapetus/attlas/diary"
 
 # Install Hugo
 if ! command -v hugo &>/dev/null; then

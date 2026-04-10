@@ -11,7 +11,7 @@ Browser-accessible services that run behind the Caddy gateway.
 ## Usage
 
 ```bash
-~/attlas/services/install.sh
+~/iapetus/attlas/services/install.sh
 ```
 
 This presents a menu of available services. Select which ones to install, or `a` for all.
