@@ -99,6 +99,7 @@ export default function OpenclawDetail() {
   const daily = data.spend_daily || []
   const month = new Date().toLocaleString('en-US', { month: 'long' }).toLowerCase()
   const billingOk = !data.billing_error
+  const year = new Date().getUTCFullYear()
   const sessions = data.sessions ?? 0
   const tasksRun = data.tasks_run ?? 0
   const activeTasks = data.active_tasks ?? 0
@@ -110,18 +111,24 @@ export default function OpenclawDetail() {
       <div className="detail-sub">AI agent daemon</div>
 
       <div className="card-grid">
-        {/* Spend card — full width */}
-        <Card label="spend" className="full">
+        {/* Spend card — full width. Label is deliberately verbose so there
+            is no way to mistake this for, e.g., openclaw's own usage
+            counters or the Claude Code subscription. */}
+        <Card label="anthropic api · billed spend" className="full">
           {billingOk ? (
             <>
               <div className="card-headline">${spendThisMonth.toFixed(2)}</div>
-              <div className="card-headline-sub">{month}</div>
+              <div className="card-headline-sub">
+                {month} {year} · month-to-date · source: anthropic cost_report api
+              </div>
               <BarChart days={daily} />
             </>
           ) : (
             <>
               <div className="card-headline" style={{ color: 'var(--muted)' }}>—</div>
-              <div className="card-headline-sub">billing data unavailable</div>
+              <div className="card-headline-sub">
+                anthropic billing data unavailable · {data.billing_error}
+              </div>
             </>
           )}
         </Card>
