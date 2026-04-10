@@ -238,23 +238,18 @@ func isClaudeInstalled() bool {
 	return err == nil
 }
 
+// isClaudeLoggedIn asks the claude CLI itself, running as the interactive
+// login user via sudo, instead of trying to read the user's .claude.json
+// (which has 600 perms and lives in a different user's home). Requires
+// /etc/sudoers.d/alive-svc-claude to allow alive-svc to run claude as
+// agnostic-user without a password.
 func isClaudeLoggedIn() bool {
-	path := os.Getenv("CLAUDE_JSON_PATH")
-	if path == "" {
-		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, ".claude.json")
-	}
-	data, err := os.ReadFile(path)
+	cmd := exec.Command("sudo", "-n", "-u", "agnostic-user", "-H", "claude", "auth", "status")
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	var m map[string]interface{}
-	if json.Unmarshal(data, &m) != nil {
-		return false
-	}
-	_, hasOAuth := m["oauthAccount"]
-	_, hasKey := m["apiKey"]
-	return hasOAuth || hasKey
+	return strings.Contains(string(out), `"loggedIn": true`)
 }
 
 // --- Service status ---
@@ -265,48 +260,19 @@ func runCmd(name string, args ...string) (string, bool) {
 	return strings.TrimSpace(string(out)), err == nil
 }
 
-// --- Service state file ---
-
-func serviceStateFile() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".attlas-services.json")
-}
-
+// loadInstalledServices is a live binary lookup, not a cached state file.
+// The previous .attlas-services.json cache invalidated only on first read,
+// which made the dashboard show a stale snapshot if services were installed
+// out-of-band (e.g. via `bash services/install.sh` from an SSH session).
+// LookPath is microseconds; there is no reason to persist its result.
 func loadInstalledServices() map[string]bool {
-	data, err := os.ReadFile(serviceStateFile())
-	if err != nil {
-		// First run: detect currently installed services by binary
-		state := make(map[string]bool)
-		for _, svc := range knownServices {
-			if _, err := exec.LookPath(svc.Command); err == nil {
-				state[svc.ID] = true
-			}
+	state := make(map[string]bool)
+	for _, svc := range knownServices {
+		if _, err := exec.LookPath(svc.Command); err == nil {
+			state[svc.ID] = true
 		}
-		saveInstalledServices(state)
-		return state
-	}
-	var state map[string]bool
-	if json.Unmarshal(data, &state) != nil {
-		return make(map[string]bool)
 	}
 	return state
-}
-
-func saveInstalledServices(state map[string]bool) {
-	data, _ := json.Marshal(state)
-	os.WriteFile(serviceStateFile(), data, 0600)
-}
-
-func markServiceInstalled(id string) {
-	state := loadInstalledServices()
-	state[id] = true
-	saveInstalledServices(state)
-}
-
-func markServiceUninstalled(id string) {
-	state := loadInstalledServices()
-	delete(state, id)
-	saveInstalledServices(state)
 }
 
 func getServicesStatus() []Service {
@@ -671,7 +637,6 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	markServiceInstalled(body.ID)
 	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
@@ -702,7 +667,6 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	markServiceUninstalled(body.ID)
 	exec.Command("sudo", "systemctl", "reload", "caddy").Run()
 	sendJSON(w, map[string]interface{}{"success": true})
 }
