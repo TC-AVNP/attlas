@@ -38,5 +38,5 @@ To add a new service:
 ## Usage
 
 ```bash
-~/attlas/services/install.sh
+~/iapetus/attlas/services/install.sh
 ```

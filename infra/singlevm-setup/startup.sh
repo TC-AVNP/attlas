@@ -24,8 +24,15 @@ if ! id "$${VM_USER}" &>/dev/null; then
   chmod 440 /etc/sudoers.d/$${VM_USER}
 fi
 
-# 3. Clone attlas repo if not already cloned
-if [ ! -d "$${HOME_DIR}/attlas" ]; then
+# 3. Clone attlas repo into the iapetus workspace if not already cloned.
+#    Layout on the VM mirrors local: everything lives under ~/iapetus/
+#    (named after Atlas's father — parent directory of attlas).
+WORKSPACE_DIR="$${HOME_DIR}/iapetus"
+ATTLAS_DIR="$${WORKSPACE_DIR}/attlas"
+
+sudo -u "$${VM_USER}" mkdir -p "$${WORKSPACE_DIR}"
+
+if [ ! -d "$${ATTLAS_DIR}" ]; then
   echo "Cloning attlas repo..."
   # Fetch PAT from Secret Manager
   PAT=$(gcloud secrets versions access latest --secret=github-pat --quiet 2>/dev/null || true)
@@ -33,11 +40,11 @@ if [ ! -d "$${HOME_DIR}/attlas" ]; then
     echo "ERROR: Could not fetch github-pat from Secret Manager. Skipping clone."
   else
     REPO_WITH_PAT=$(echo "$${ATTLAS_REPO}" | sed "s|https://|https://$${PAT}@|")
-    sudo -u "$${VM_USER}" git clone "$${REPO_WITH_PAT}" "$${HOME_DIR}/attlas"
-    echo "attlas repo cloned to $${HOME_DIR}/attlas"
+    sudo -u "$${VM_USER}" git clone "$${REPO_WITH_PAT}" "$${ATTLAS_DIR}"
+    echo "attlas repo cloned to $${ATTLAS_DIR}"
   fi
 else
-  echo "attlas repo already exists at $${HOME_DIR}/attlas"
+  echo "attlas repo already exists at $${ATTLAS_DIR}"
 fi
 
 echo "=== startup.sh finished at $(date) ==="

@@ -32,7 +32,7 @@ terraform init
 terraform apply
 ```
 
-After apply, SSH into the VM and run `~/attlas/base-setup/setup.sh`.
+After apply, SSH into the VM and run `~/iapetus/attlas/base-setup/setup.sh`.
 
 ## Terraform state
 

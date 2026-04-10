@@ -20,7 +20,7 @@ Terraform config for a single GCP VM with static IP, firewall rules, and Secret 
 The VM runs `startup.sh` on every boot (via `metadata_startup_script`). It does three things:
 1. Installs git if missing
 2. Creates the `vm_user` account if missing
-3. Clones this repo to `~/attlas` using a PAT from GCP Secret Manager (`github-pat`)
+3. Clones this repo to `~/iapetus/attlas` using a PAT from GCP Secret Manager (`github-pat`). The `~/iapetus/` workspace dir is created first; `iapetus` (Atlas's father) is the parent directory convention used across all machines.
 
 Everything else (packages, dotfiles, services) is handled by `base-setup/` and `services/`, which the user runs manually after SSH.
 
