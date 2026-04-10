@@ -781,11 +781,6 @@ func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int
 	var openStart *time.Time
 	state := "unknown"
 
-	log.Printf("uptime: replaying %d events, anchor=%s, now=%s", len(events), anchor.Format(time.RFC3339), now.Format(time.RFC3339))
-	for i, e := range events {
-		log.Printf("uptime: evt[%d] %s %s", i, e.timestamp.Format(time.RFC3339), e.method)
-	}
-
 	for i, ev := range events {
 		if i == 0 {
 			if ev.method == "stop" {
@@ -821,11 +816,6 @@ func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int
 	// the VM was on for the full lookback when no events fired. That
 	// produced phantom uptime for days before the VM even existed, so
 	// it's gone. If the events window is empty, the month stays zero.
-
-	log.Printf("uptime: produced %d intervals", len(intervals))
-	for i, iv := range intervals {
-		log.Printf("uptime: int[%d] %s → %s (%.1fh)", i, iv.start.Format(time.RFC3339), iv.end.Format(time.RFC3339), iv.end.Sub(iv.start).Hours())
-	}
 
 	// Build daily buckets for each day of the current month up to "now".
 	var (
@@ -1068,7 +1058,15 @@ func fetchGCPSpendBigQuery(monthStart time.Time) (float64, error) {
 
 	if resp.StatusCode >= 400 {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return 0, fmt.Errorf("bigquery %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		rawStr := strings.TrimSpace(string(raw))
+		// "Table does not match" happens on a fresh setup before the
+		// billing export has been enabled in the Cloud Console, or
+		// during the first 24h before the first daily shard lands.
+		// Surface a human-friendly message for the dashboard.
+		if strings.Contains(rawStr, "does not match any table") {
+			return 0, fmt.Errorf("waiting for first billing export (up to 24h after enabling in console)")
+		}
+		return 0, fmt.Errorf("bigquery %d: %s", resp.StatusCode, rawStr)
 	}
 
 	// BigQuery jobs.query response shape:
