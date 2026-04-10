@@ -686,9 +686,13 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 	}
 
 	events := make([]instanceEvent, 0, len(result.Entries))
+	var parseFailures int
+	var lastParseErr string
 	for _, e := range result.Entries {
-		t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
+		t, err := parseLoggingTimestamp(e.Timestamp)
 		if err != nil {
+			parseFailures++
+			lastParseErr = err.Error()
 			continue
 		}
 		method := "start"
@@ -700,7 +704,31 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 	sort.Slice(events, func(i, j int) bool {
 		return events[i].timestamp.Before(events[j].timestamp)
 	})
+	log.Printf("infra: fetched %d raw entries, parsed %d events, %d parse failures (last err: %q)",
+		len(result.Entries), len(events), parseFailures, lastParseErr)
 	return events, nil
+}
+
+// parseLoggingTimestamp is tolerant of the variety of timestamp shapes
+// Cloud Logging emits: integer seconds, 3-digit millis, 6-digit micros,
+// 9-digit nanos, and occasionally no fractional part at all.
+func parseLoggingTimestamp(s string) (time.Time, error) {
+	formats := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.000000000Z07:00",
+		"2006-01-02T15:04:05.000000Z07:00",
+		"2006-01-02T15:04:05.000Z07:00",
+	}
+	var lastErr error
+	for _, f := range formats {
+		t, err := time.Parse(f, s)
+		if err == nil {
+			return t, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
 }
 
 // uptimeInterval is a contiguous [start, end] period of VM ON state.
