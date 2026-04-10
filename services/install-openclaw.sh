@@ -1,24 +1,47 @@
 #!/usr/bin/env bash
 # OpenClaw — AI agent daemon with Telegram, Brave search, Anthropic
+#
+# Must be invoked as root. The daemon runs as SERVICE_USER (default
+# openclaw-svc — a nologin system user) with SERVICE_STATE_DIR used as the
+# service's HOME. openclaw reads its state from $HOME/.openclaw, so the
+# effective state path is ${SERVICE_STATE_DIR}/.openclaw/.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OPENCLAW_HOME="$HOME/.openclaw"
+if [[ $EUID -ne 0 ]]; then
+  echo "ERROR: install-openclaw.sh must run as root." >&2
+  exit 1
+fi
 
-# 1. Install OpenClaw
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_USER="${SERVICE_USER:-openclaw-svc}"
+SERVICE_STATE_DIR="${SERVICE_STATE_DIR:-/var/lib/openclaw}"
+OPENCLAW_HOME="${SERVICE_STATE_DIR}/.openclaw"
+
+# 1. Install OpenClaw (global npm package)
 if ! command -v openclaw &>/dev/null; then
-  sudo npm install -g openclaw@latest
+  npm install -g openclaw@latest
 fi
 echo "openclaw: $(openclaw --version 2>&1 | head -1 || echo 'installed')"
 
-# 2. Fetch secrets from GCP Secret Manager
+# 2. Provision the state directory
+install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${SERVICE_STATE_DIR}"
+install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${OPENCLAW_HOME}"
+
+# 3. Fetch secrets from GCP Secret Manager
 echo "Fetching OpenClaw secrets from Secret Manager..."
 SECRETS_FILE=$(mktemp)
+trap 'rm -f "$SECRETS_FILE"' EXIT
 gcloud secrets versions access latest --secret=openclaw-config --quiet > "$SECRETS_FILE"
 
-# 3. Build config from template + secrets
+# 4. Build config from template + secrets (runs as root, written files
+#    are then chowned to the service user).
 echo "Building OpenClaw config..."
-mkdir -p "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents/main/agent" "$OPENCLAW_HOME/devices" "$OPENCLAW_HOME/workspace"
+mkdir -p \
+  "$OPENCLAW_HOME/identity" \
+  "$OPENCLAW_HOME/credentials" \
+  "$OPENCLAW_HOME/agents/main/agent" \
+  "$OPENCLAW_HOME/devices" \
+  "$OPENCLAW_HOME/workspace"
 
 python3 - "$SECRETS_FILE" "$SCRIPT_DIR" "$OPENCLAW_HOME" <<'PYEOF'
 import json, os, sys
@@ -115,24 +138,19 @@ with open(os.path.join(oc_home, "devices", "paired.json"), "w") as f:
 print("Config files written to " + oc_home)
 PYEOF
 
-rm -f "$SECRETS_FILE"
-
-# 4. Set permissions
+# 5. Fix ownership and permissions
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "${SERVICE_STATE_DIR}"
 chmod 700 "$OPENCLAW_HOME"
 find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type d -exec chmod 700 {} \;
 find "$OPENCLAW_HOME/identity" "$OPENCLAW_HOME/credentials" "$OPENCLAW_HOME/agents" -type f -exec chmod 600 {} \;
 
-# 5. Install and start daemon as system-level service
-# Stop user-level service if it exists (migration from old setup)
-systemctl --user stop openclaw-gateway 2>/dev/null || true
-systemctl --user disable openclaw-gateway 2>/dev/null || true
-
+# 6. Install the daemon as a system-level systemd service
 OPENCLAW_VERSION=$(openclaw --version 2>&1 | grep -oP '[\d.]+' | head -1)
 NODE_BIN=$(which node)
 OPENCLAW_PKG=$(dirname "$(readlink -f "$(which openclaw)")")
 OPENCLAW_JS="${OPENCLAW_PKG}/dist/index.js"
 
-sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null <<UNIT_EOF
+cat > /etc/systemd/system/openclaw-gateway.service <<UNIT
 [Unit]
 Description=OpenClaw Gateway (v${OPENCLAW_VERSION})
 After=network-online.target
@@ -140,22 +158,25 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$(whoami)
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
 ExecStart=${NODE_BIN} ${OPENCLAW_JS} gateway --port 18789
 Restart=always
 RestartSec=5
-Environment=HOME=/home/$(whoami)
+StateDirectory=openclaw
+StateDirectoryMode=0700
+Environment=HOME=${SERVICE_STATE_DIR}
 Environment=OPENCLAW_GATEWAY_PORT=18789
 
 [Install]
 WantedBy=multi-user.target
-UNIT_EOF
+UNIT
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now openclaw-gateway
+systemctl daemon-reload
+systemctl enable --now openclaw-gateway
 
-# 6. Expose dashboard via Caddy
-sudo cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/
+# 7. Expose gateway via Caddy
+cp "$SCRIPT_DIR/openclaw.caddy" /etc/caddy/conf.d/
 
-echo "openclaw installed and configured"
-echo "Check status: openclaw daemon status"
+echo "openclaw installed and configured (running as ${SERVICE_USER})"
+echo "State dir: ${OPENCLAW_HOME}"

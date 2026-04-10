@@ -32,7 +32,13 @@ terraform init
 terraform apply
 ```
 
-After apply, SSH into the VM and run `~/iapetus/attlas/base-setup/setup.sh`.
+After apply, SSH into the VM (`gcloud compute ssh simple-zombie --zone=europe-west1-b`) and run:
+
+```bash
+sudo bash /home/agnostic-user/iapetus/attlas/base-setup/setup.sh
+```
+
+This installs all packages, clones dotfiels, builds the dashboard, and sets up every systemd service in one shot. `startup.sh` has already created the `agnostic-user`, `alive-svc`, and `openclaw-svc` accounts and cloned attlas. OS Login is enabled on the instance, so `gcloud compute ssh` uses your IAM-derived username; to land in the service-owning account for interactive work, run `sudo -iu agnostic-user` after connecting.
 
 ## Terraform state
 

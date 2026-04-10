@@ -24,7 +24,9 @@ The dashboard is a Go binary at `alive-server/main.go`. It handles:
 - Service install/uninstall (`/api/install-service`, `/api/uninstall-service`)
 - Static file serving for the React frontend (`frontend/dist/`)
 
-OAuth2 config is read from `~/.attlas-server-config.json` (fetched from GCP Secret Manager during setup). Session secret is auto-generated at `~/.attlas-session-secret`.
+OAuth2 config is read from `$HOME/.attlas-server-config.json` where `$HOME` for the service is `/var/lib/alive-server/` (set via `Environment=HOME=…` on the `alive-server.service` unit). Setup fetches the config from GCP Secret Manager and writes it there before first start. Session secret is auto-generated at `/var/lib/alive-server/.attlas-session-secret` on first run.
+
+The binary also honors two env overrides: `ATTLAS_DIR` (points at `/home/agnostic-user/iapetus/attlas` so the dashboard finds `services/install-*.sh` and `diary/public/`) and `CLAUDE_JSON_PATH` (points at the interactive user's `~/.claude.json`; read may fail on permissions — this is cosmetic, the "Claude logged in" indicator just reports false).
 
 ## Caddy Ownership
 
@@ -38,8 +40,10 @@ Any new service that needs to be reachable from the internet MUST have a `.caddy
 
 ## Usage
 
+Must be run as root (creates users, writes units, provisions state dirs):
+
 ```bash
-~/iapetus/attlas/base-setup/setup.sh
+sudo bash /home/agnostic-user/iapetus/attlas/base-setup/setup.sh
 ```
 
-At the end, it prompts whether to also install services (ttyd, code-server).
+At the end, it prompts whether to also install services (ttyd, code-server, openclaw, diary).
