@@ -64,8 +64,11 @@ sudo -u "${SERVICE_USER}" code-server --install-extension dart-code.flutter 2>/d
 # Deploy Caddy route snippet
 cp "$SCRIPT_DIR/code.caddy" /etc/caddy/conf.d/
 
-# Start
+# Start. Use enable + restart (not enable --now) so re-installs pick up
+# unit-file changes — enable --now is a no-op when the service is already
+# running and would leave the old process behind.
 systemctl daemon-reload
-systemctl enable --now code-server
+systemctl enable code-server
+systemctl restart code-server
 
 echo "code-server installed -> /code (port 8080), running as ${SERVICE_USER}"
