@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -17,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -468,14 +470,14 @@ type DayCost struct {
 }
 
 type OpenclawDetail struct {
-	Running        bool      `json:"running"`
-	Uptime         string    `json:"uptime"`
-	ActiveTasks    int       `json:"active_tasks"`
-	Sessions       int       `json:"sessions"`         // lifetime, across agents
-	TasksRun       int       `json:"tasks_run"`        // lifetime total
-	SpendThisMonth float64   `json:"spend_this_month"` // USD
-	SpendDaily     []DayCost `json:"spend_daily"`      // last 7 days
-	BillingError   string    `json:"billing_error,omitempty"`
+	Running          bool      `json:"running"`
+	Uptime           string    `json:"uptime"`
+	ActiveTasks      int       `json:"active_tasks"`
+	Sessions         int       `json:"sessions"`           // lifetime, across agents
+	TasksRun         int       `json:"tasks_run"`          // lifetime total
+	SpendLast30Days  float64   `json:"spend_last_30_days"` // USD, matches platform.claude.com default cost view
+	SpendDaily       []DayCost `json:"spend_daily"`        // last 7 days
+	BillingError     string    `json:"billing_error,omitempty"`
 }
 
 var (
@@ -543,13 +545,13 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Anthropic cost_report API.
+	// 3. Anthropic cost_report API (last 30 days to match the console).
 	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
-		spendMonth, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey)
+		spend30, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey)
 		if err != nil {
 			detail.BillingError = err.Error()
 		} else {
-			detail.SpendThisMonth = spendMonth
+			detail.SpendLast30Days = spend30
 			detail.SpendDaily = daily
 		}
 	} else {
@@ -559,6 +561,348 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	openclawCacheValue = detail
 	openclawCacheExpires = time.Now().Add(30 * time.Second)
 	sendJSON(w, detail)
+}
+
+// --- Infrastructure detail (daily VM uptime via Cloud Logging) ---
+
+type DayUptime struct {
+	Date    string `json:"date"`    // YYYY-MM-DD (UTC)
+	Seconds int64  `json:"seconds"` // 0 to 86400
+}
+
+type InfrastructureDetail struct {
+	Name              string      `json:"name"`
+	Zone              string      `json:"zone"`
+	Region            string      `json:"region"`
+	ExternalIP        string      `json:"external_ip"`
+	InternalIP        string      `json:"internal_ip"`
+	Domain            string      `json:"domain"`
+	MachineType       string      `json:"machine_type"`
+	CreationTimestamp string      `json:"creation_timestamp"` // ISO (from metadata)
+	OSBootTime        string      `json:"os_boot_time"`       // ISO
+	UptimeNow         string      `json:"uptime_now"`         // human-readable
+	DailyUptime       []DayUptime `json:"daily_uptime"`
+	TotalSecondsMonth int64       `json:"total_seconds_month"`
+	EventsError       string      `json:"events_error,omitempty"`
+}
+
+var (
+	infraCacheMu      sync.Mutex
+	infraCacheValue   InfrastructureDetail
+	infraCacheExpires time.Time
+)
+
+// getMetadataToken fetches a short-lived OAuth access token for the
+// VM's default service account via the metadata server. Used to call
+// GCP REST APIs (Cloud Logging) without shelling out to gcloud.
+func getMetadataToken() (string, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, _ := http.NewRequest("GET",
+		"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", nil)
+	req.Header.Set("Metadata-Flavor", "Google")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var data struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", err
+	}
+	if data.AccessToken == "" {
+		return "", fmt.Errorf("empty access token")
+	}
+	return data.AccessToken, nil
+}
+
+// instanceEvent is a single start/stop audit entry for this VM.
+type instanceEvent struct {
+	timestamp time.Time
+	method    string // "start" | "stop"
+}
+
+// fetchInstanceEvents pulls GCE audit-log start/stop entries for the
+// current instance, strictly after `since`. Sorted chronologically.
+//
+// The filter matches on the instance NAME (via protoPayload.resourceName),
+// not the numeric instance_id, because the instance_id changes every
+// time terraform recreates the VM. The name is set by the terraform
+// output and is stable across rebuilds, so uptime history survives
+// `terraform destroy && terraform apply`.
+func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
+	projectID := gcpMeta("project/project-id")
+	name := gcpMeta("instance/name")
+	if projectID == "unknown" || name == "unknown" {
+		return nil, fmt.Errorf("missing metadata (project=%s name=%s)", projectID, name)
+	}
+
+	token, err := getMetadataToken()
+	if err != nil {
+		return nil, fmt.Errorf("metadata token: %v", err)
+	}
+
+	filter := fmt.Sprintf(
+		`resource.type="gce_instance" AND protoPayload.resourceName:"instances/%s" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop") AND timestamp>="%s"`,
+		name,
+		since.UTC().Format(time.RFC3339),
+	)
+
+	body := map[string]interface{}{
+		"resourceNames": []string{"projects/" + projectID},
+		"filter":        filter,
+		"pageSize":      1000,
+		"orderBy":       "timestamp asc",
+	}
+	bodyJSON, _ := json.Marshal(body)
+
+	req, _ := http.NewRequest("POST", "https://logging.googleapis.com/v2/entries:list", bytes.NewReader(bodyJSON))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logging request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("logging %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var result struct {
+		Entries []struct {
+			Timestamp    string `json:"timestamp"`
+			ProtoPayload struct {
+				MethodName string `json:"methodName"`
+			} `json:"protoPayload"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode logging: %v", err)
+	}
+
+	events := make([]instanceEvent, 0, len(result.Entries))
+	for _, e := range result.Entries {
+		t, err := time.Parse(time.RFC3339Nano, e.Timestamp)
+		if err != nil {
+			continue
+		}
+		method := "start"
+		if strings.Contains(e.ProtoPayload.MethodName, "stop") {
+			method = "stop"
+		}
+		events = append(events, instanceEvent{timestamp: t.UTC(), method: method})
+	}
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].timestamp.Before(events[j].timestamp)
+	})
+	return events, nil
+}
+
+// uptimeInterval is a contiguous [start, end] period of VM ON state.
+type uptimeInterval struct {
+	start time.Time
+	end   time.Time
+}
+
+// computeDailyUptime replays audit events into ON intervals and
+// distributes them across each day of the current UTC month.
+func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int64) {
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	// Anchor before the month so we can infer the state at month-start
+	// by watching the first transition. If the first transition is a
+	// "stop" the VM was on from `anchor` to that stop; if it's a
+	// "start" the VM was off until then. If there are no events at
+	// all, the VM is currently running (we're answering the request),
+	// so we assume it was on since `anchor`.
+	anchor := monthStart.AddDate(0, 0, -7)
+
+	intervals := []uptimeInterval{}
+	var openStart *time.Time
+	state := "unknown"
+
+	for i, ev := range events {
+		if i == 0 {
+			if ev.method == "stop" {
+				intervals = append(intervals, uptimeInterval{start: anchor, end: ev.timestamp})
+				state = "off"
+			} else { // start
+				t := ev.timestamp
+				openStart = &t
+				state = "on"
+			}
+			continue
+		}
+		if ev.method == "start" && state == "off" {
+			t := ev.timestamp
+			openStart = &t
+			state = "on"
+		} else if ev.method == "stop" && state == "on" {
+			intervals = append(intervals, uptimeInterval{start: *openStart, end: ev.timestamp})
+			openStart = nil
+			state = "off"
+		}
+		// duplicate consecutive start/stop pairs are ignored
+	}
+
+	// Still-on state → ongoing interval ending at now.
+	if state == "on" && openStart != nil {
+		intervals = append(intervals, uptimeInterval{start: *openStart, end: now})
+	} else if state == "unknown" {
+		// No events at all: we're running, assume on the full lookback.
+		intervals = append(intervals, uptimeInterval{start: anchor, end: now})
+	}
+
+	// Build daily buckets for each day of the current month up to "now".
+	var (
+		daily      []DayUptime
+		totalSecs  int64
+		maxDayUTC  = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	)
+	for d := monthStart; !d.After(maxDayUTC); d = d.AddDate(0, 0, 1) {
+		dayEnd := d.Add(24 * time.Hour)
+		var secs int64
+		for _, iv := range intervals {
+			ovStart := iv.start
+			if ovStart.Before(d) {
+				ovStart = d
+			}
+			ovEnd := iv.end
+			if ovEnd.After(dayEnd) {
+				ovEnd = dayEnd
+			}
+			if ovEnd.After(ovStart) {
+				secs += int64(ovEnd.Sub(ovStart).Seconds())
+			}
+		}
+		daily = append(daily, DayUptime{Date: d.Format("2006-01-02"), Seconds: secs})
+		totalSecs += secs
+	}
+	return daily, totalSecs
+}
+
+// osBootTime reads /proc/stat btime for the kernel-boot epoch. Used as
+// a proxy for "current VM start", since on GCE an instance start = OS
+// boot in nearly all cases.
+func osBootTime() time.Time {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "btime ") {
+			if ts, err := strconv.ParseInt(strings.TrimPrefix(line, "btime "), 10, 64); err == nil {
+				return time.Unix(ts, 0).UTC()
+			}
+		}
+	}
+	return time.Time{}
+}
+
+func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
+	infraCacheMu.Lock()
+	defer infraCacheMu.Unlock()
+
+	if time.Now().Before(infraCacheExpires) {
+		sendJSON(w, infraCacheValue)
+		return
+	}
+
+	now := time.Now().UTC()
+	detail := InfrastructureDetail{
+		Name:       gcpMeta("instance/name"),
+		ExternalIP: gcpMeta("instance/network-interfaces/0/access-configs/0/external-ip"),
+		InternalIP: gcpMeta("instance/network-interfaces/0/ip"),
+		Domain:     "attlas.uk",
+	}
+
+	zoneRaw := gcpMeta("instance/zone") // "projects/<num>/zones/europe-west1-b"
+	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
+		detail.Zone = zoneRaw[i+1:]
+	} else {
+		detail.Zone = zoneRaw
+	}
+	if idx := strings.LastIndex(detail.Zone, "-"); idx >= 0 {
+		detail.Region = detail.Zone[:idx]
+	}
+
+	mtRaw := gcpMeta("instance/machine-type")
+	if i := strings.LastIndex(mtRaw, "/"); i >= 0 {
+		detail.MachineType = mtRaw[i+1:]
+	} else {
+		detail.MachineType = mtRaw
+	}
+
+	// /proc/stat btime → OS boot time → current uptime.
+	if bt := osBootTime(); !bt.IsZero() {
+		detail.OSBootTime = bt.Format(time.RFC3339)
+		detail.UptimeNow = humanDuration(now.Sub(bt))
+	}
+
+	// Creation timestamp isn't in the metadata server directly; query
+	// the compute API with the metadata token.
+	if ts, err := fetchInstanceCreationTimestamp(); err == nil {
+		detail.CreationTimestamp = ts
+	}
+
+	// Daily uptime from Cloud Logging audit events.
+	events, err := fetchInstanceEvents(now.AddDate(0, 0, -38)) // month + 7d anchor + headroom
+	if err != nil {
+		detail.EventsError = err.Error()
+	}
+	daily, totalSecs := computeDailyUptime(events, now)
+	detail.DailyUptime = daily
+	detail.TotalSecondsMonth = totalSecs
+
+	infraCacheValue = detail
+	infraCacheExpires = time.Now().Add(5 * time.Minute)
+	sendJSON(w, detail)
+}
+
+// fetchInstanceCreationTimestamp hits the Compute Engine REST API for
+// the current instance to get its creation timestamp (not exposed in
+// the metadata server). Uses the metadata-server access token.
+func fetchInstanceCreationTimestamp() (string, error) {
+	project := gcpMeta("project/project-id")
+	zoneRaw := gcpMeta("instance/zone")
+	zone := zoneRaw
+	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
+		zone = zoneRaw[i+1:]
+	}
+	name := gcpMeta("instance/name")
+	if project == "unknown" || name == "unknown" {
+		return "", fmt.Errorf("metadata missing")
+	}
+
+	token, err := getMetadataToken()
+	if err != nil {
+		return "", err
+	}
+
+	reqURL := fmt.Sprintf("https://compute.googleapis.com/compute/v1/projects/%s/zones/%s/instances/%s",
+		project, zone, name)
+	req, _ := http.NewRequest("GET", reqURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("compute %d", resp.StatusCode)
+	}
+	var data struct {
+		CreationTimestamp string `json:"creationTimestamp"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", err
+	}
+	return data.CreationTimestamp, nil
 }
 
 func humanDuration(d time.Duration) string {
@@ -578,27 +922,37 @@ func humanDuration(d time.Duration) string {
 }
 
 // fetchAnthropicSpend calls the Anthropic cost_report admin API and
-// returns (month-to-date total, last-7-days daily breakdown, error).
+// returns (last-30-days total in USD, last-7-days daily breakdown, error).
 //
 // Endpoint: GET https://api.anthropic.com/v1/organizations/cost_report
 // Auth:     x-api-key: <admin_key>, anthropic-version: 2023-06-01
 // Query:    starting_at=<ISO UTC>, bucket_width=1d[, page=<token>]
 //
-// The response paginates at 7 buckets per page. We walk `next_page`
-// until `has_more` is false (capped at 10 pages / 70 days so a
-// runaway account can't stall the dashboard).
+// Two surprises discovered while reverse-engineering this against
+// the platform.claude.com cost page:
 //
-// The result shape is flat, not nested — each entry looks like:
-//   { "amount": "22.13153", "currency": "USD", "workspace_id": null, ... }
-// (NOT { "amount": { "value": "...", "currency": "..." } }, which was
-// my first guess and the reason this whole card read $0.00 initially.)
+//  1. The response paginates at 7 buckets per page. We walk
+//     `next_page` until `has_more` is false (capped at 10 pages /
+//     70 days so a runaway account can't stall the dashboard).
+//
+//  2. The `amount` field is a string in CENTS, not dollars, despite
+//     being reported with `currency: "USD"`. Cross-checking against
+//     `usage_report/messages` + the published Haiku 4.5 token prices
+//     shows the cost_report values are exactly 100x the dollar value
+//     the console displays. We divide by 100 to convert back.
+//
+// The window is "last 30 days" to match the console's default cost
+// view, so the dashboard's total lines up with what the user sees
+// when they click Analytics → Cost on platform.claude.com.
 func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
 	now := time.Now().UTC()
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	startWindow := now.AddDate(0, 0, -30)
+	// Anchor at midnight UTC so bucket edges align with the API.
+	startWindow = time.Date(startWindow.Year(), startWindow.Month(), startWindow.Day(), 0, 0, 0, 0, time.UTC)
 
 	base := fmt.Sprintf(
 		"https://api.anthropic.com/v1/organizations/cost_report?starting_at=%s&bucket_width=1d",
-		url.QueryEscape(startOfMonth.Format(time.RFC3339)),
+		url.QueryEscape(startWindow.Format(time.RFC3339)),
 	)
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -617,7 +971,7 @@ func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
 		NextPage string   `json:"next_page"`
 	}
 
-	var monthTotal float64
+	var windowTotal float64
 	byDate := make(map[string]float64)
 
 	pageURL := base
@@ -658,8 +1012,10 @@ func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
 				if err != nil {
 					continue
 				}
+				// cost_report amounts are in cents despite the "USD" label.
+				v = v / 100
 				byDate[day] += v
-				monthTotal += v
+				windowTotal += v
 			}
 		}
 
@@ -676,7 +1032,7 @@ func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
 		daily = append(daily, DayCost{Date: d, USD: byDate[d]})
 	}
 
-	return monthTotal, daily, nil
+	return windowTotal, daily, nil
 }
 
 func getServicesStatus() []Service {
@@ -1176,6 +1532,7 @@ func main() {
 	mux.HandleFunc("POST /api/uninstall-service", handleUninstallService)
 	mux.HandleFunc("POST /api/dotfiles/sync", handleDotfilesSync)
 	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
+	mux.HandleFunc("GET /api/services/infrastructure", handleInfrastructureDetail)
 
 	// Diary (Hugo static site)
 	diaryDir := filepath.Join(attlasDir, "diary", "public")
