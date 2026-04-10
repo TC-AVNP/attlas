@@ -582,70 +582,91 @@ func humanDuration(d time.Duration) string {
 //
 // Endpoint: GET https://api.anthropic.com/v1/organizations/cost_report
 // Auth:     x-api-key: <admin_key>, anthropic-version: 2023-06-01
-// Query:    starting_at=<ISO UTC>, bucket_width=1d
+// Query:    starting_at=<ISO UTC>, bucket_width=1d[, page=<token>]
+//
+// The response paginates at 7 buckets per page. We walk `next_page`
+// until `has_more` is false (capped at 10 pages / 70 days so a
+// runaway account can't stall the dashboard).
+//
+// The result shape is flat, not nested — each entry looks like:
+//   { "amount": "22.13153", "currency": "USD", "workspace_id": null, ... }
+// (NOT { "amount": { "value": "...", "currency": "..." } }, which was
+// my first guess and the reason this whole card read $0.00 initially.)
 func fetchAnthropicSpend(adminKey string) (float64, []DayCost, error) {
 	now := time.Now().UTC()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 
-	reqURL := fmt.Sprintf(
+	base := fmt.Sprintf(
 		"https://api.anthropic.com/v1/organizations/cost_report?starting_at=%s&bucket_width=1d",
 		url.QueryEscape(startOfMonth.Format(time.RFC3339)),
 	)
 
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, _ := http.NewRequest("GET", reqURL, nil)
-	req.Header.Set("x-api-key", adminKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, nil, fmt.Errorf("contact anthropic: %v", err)
+	type costResult struct {
+		Currency string `json:"currency"`
+		Amount   string `json:"amount"`
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return 0, nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	type bucket struct {
+		StartingAt string       `json:"starting_at"`
+		Results    []costResult `json:"results"`
 	}
-
-	// The cost_report response shape is documented as:
-	//   { "data": [ { "starting_at": "...", "ending_at": "...",
-	//                 "results": [ { "amount": {"value": "1.23", "currency":"USD"}, ... } ] }, ... ] }
-	// We sum amounts per bucket.
-	var payload struct {
-		Data []struct {
-			StartingAt string `json:"starting_at"`
-			Results    []struct {
-				Amount struct {
-					Value    string `json:"value"`
-					Currency string `json:"currency"`
-				} `json:"amount"`
-			} `json:"results"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return 0, nil, fmt.Errorf("decode anthropic response: %v", err)
+	type page struct {
+		Data     []bucket `json:"data"`
+		HasMore  bool     `json:"has_more"`
+		NextPage string   `json:"next_page"`
 	}
 
 	var monthTotal float64
 	byDate := make(map[string]float64)
-	for _, bucket := range payload.Data {
-		t, err := time.Parse(time.RFC3339, bucket.StartingAt)
+
+	pageURL := base
+	for i := 0; i < 10; i++ {
+		req, _ := http.NewRequest("GET", pageURL, nil)
+		req.Header.Set("x-api-key", adminKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+
+		resp, err := client.Do(req)
 		if err != nil {
-			continue
+			return 0, nil, fmt.Errorf("contact anthropic: %v", err)
 		}
-		day := t.UTC().Format("2006-01-02")
-		for _, r := range bucket.Results {
-			if r.Amount.Currency != "USD" && r.Amount.Currency != "" {
-				continue
-			}
-			v, err := strconv.ParseFloat(r.Amount.Value, 64)
+
+		if resp.StatusCode >= 400 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			return 0, nil, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var p page
+		if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+			resp.Body.Close()
+			return 0, nil, fmt.Errorf("decode anthropic response: %v", err)
+		}
+		resp.Body.Close()
+
+		for _, b := range p.Data {
+			t, err := time.Parse(time.RFC3339, b.StartingAt)
 			if err != nil {
 				continue
 			}
-			byDate[day] += v
-			monthTotal += v
+			day := t.UTC().Format("2006-01-02")
+			for _, r := range b.Results {
+				if r.Currency != "USD" && r.Currency != "" {
+					continue
+				}
+				v, err := strconv.ParseFloat(r.Amount, 64)
+				if err != nil {
+					continue
+				}
+				byDate[day] += v
+				monthTotal += v
+			}
 		}
+
+		if !p.HasMore || p.NextPage == "" {
+			break
+		}
+		pageURL = base + "&page=" + url.QueryEscape(p.NextPage)
 	}
 
 	// Build the last-7-day array in chronological order, filling gaps with 0.
