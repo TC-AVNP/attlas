@@ -95,11 +95,9 @@ export default function OpenclawDetail() {
     )
   }
 
-  const spendThisMonth = data.spend_this_month ?? 0
+  const spend30 = data.spend_last_30_days ?? 0
   const daily = data.spend_daily || []
-  const month = new Date().toLocaleString('en-US', { month: 'long' }).toLowerCase()
   const billingOk = !data.billing_error
-  const year = new Date().getUTCFullYear()
   const sessions = data.sessions ?? 0
   const tasksRun = data.tasks_run ?? 0
   const activeTasks = data.active_tasks ?? 0
@@ -111,15 +109,15 @@ export default function OpenclawDetail() {
       <div className="detail-sub">AI agent daemon</div>
 
       <div className="card-grid">
-        {/* Spend card — full width. Label is deliberately verbose so there
-            is no way to mistake this for, e.g., openclaw's own usage
-            counters or the Claude Code subscription. */}
-        <Card label="anthropic api · billed spend" className="full">
+        {/* Spend card — full width. Label + subtitle match what you see
+            on platform.claude.com → Analytics → Cost (default view:
+            "Last 30 days" across all API keys, no workbench). */}
+        <Card label="anthropic api · last 30 days" className="full">
           {billingOk ? (
             <>
-              <div className="card-headline">${spendThisMonth.toFixed(2)}</div>
+              <div className="card-headline">${spend30.toFixed(2)}</div>
               <div className="card-headline-sub">
-                {month} {year} · month-to-date · source: anthropic cost_report api
+                last 30 days · mirrors platform.claude.com cost page
               </div>
               <BarChart days={daily} />
             </>

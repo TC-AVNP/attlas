@@ -296,20 +296,26 @@ export default function Dashboard() {
         {hero.sub && <div className="hero-sub">{hero.sub}</div>}
       </div>
 
+      {/* Infrastructure section — VM identity lives on its own detail page */}
+      <div className="section">
+        <div className="section-label">infrastructure</div>
+        <div className="status-rows">
+          <div className="status-row">
+            <span className="label">vm</span>
+            <span className="value">
+              {vm.name} · {vm.zone}
+            </span>
+            <span className="action">
+              <Link to="/services/details/infrastructure">details</Link>
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Status section */}
       <div className="section">
         <div className="section-label">status</div>
         <div className="status-rows">
-          <div className="status-row">
-            <span className="label">vm</span>
-            <span className="value">{vm.name} · {vm.zone}</span>
-            <span />
-          </div>
-          <div className="status-row">
-            <span className="label">ip</span>
-            <span className="value mono">{vm.external_ip}</span>
-            <span />
-          </div>
           <div className="status-row">
             <span className="label">domain</span>
             <span className="value">
