@@ -879,6 +879,150 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	sendJSON(w, detail)
 }
 
+// --- Terminal detail (tmux-backed ttyd sessions) ---
+//
+// All shells served by /terminal/ are wrapped in tmux via
+// services/ttyd-tmux.sh. The tmux server uses a named socket
+// (-L attlas) under /tmp/tmux-<uid>/attlas, owned by the SERVICE_USER
+// the ttyd systemd unit runs as (agnostic-user by default). To read /
+// write that socket the dashboard (running as alive-svc) shells out
+// via `sudo -n -u agnostic-user tmux -L attlas …`, authorized by
+// /etc/sudoers.d/alive-svc-tmux installed by install-terminal.sh.
+
+const (
+	terminalSocket      = "attlas"
+	terminalSessionUser = "agnostic-user"
+)
+
+// Session names are echoed back from tmux and also passed to the
+// client for the attach URL (/terminal/?arg=<name>). Limit them to a
+// safe character class so neither the shell wrapper nor a malformed
+// HTML attribute can be subverted.
+var terminalSessionRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
+
+type TerminalSession struct {
+	Name      string `json:"name"`
+	Windows   int    `json:"windows"`
+	CreatedAt string `json:"created_at"`      // ISO
+	Created   string `json:"created_rel"`     // "3 h ago"
+	Attached  bool   `json:"attached"`
+	Activity  string `json:"activity_rel"`    // last activity, relative
+}
+
+type TerminalDetail struct {
+	Running  bool              `json:"running"`  // ttyd systemd unit
+	Uptime   string            `json:"uptime"`   // ttyd unit uptime
+	Sessions []TerminalSession `json:"sessions"`
+	Error    string            `json:"error,omitempty"`
+}
+
+// tmuxCmd builds an `sudo -n -u agnostic-user tmux -L attlas …` call.
+func tmuxCmd(ctx context.Context, args ...string) *exec.Cmd {
+	full := append([]string{"-n", "-u", terminalSessionUser, "/usr/bin/tmux", "-L", terminalSocket}, args...)
+	return exec.CommandContext(ctx, "sudo", full...)
+}
+
+// listTmuxSessions queries tmux for all sessions on the shared
+// socket. Returns an empty slice (not an error) when tmux has no
+// server running, which is the common case before anyone has opened
+// /terminal/ for the first time since boot.
+func listTmuxSessions() ([]TerminalSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Format: name|windows|created(unix)|attached(0/1)|last_activity(unix)
+	fmtStr := "#{session_name}|#{session_windows}|#{session_created}|#{session_attached}|#{session_activity}"
+	out, err := tmuxCmd(ctx, "list-sessions", "-F", fmtStr).CombinedOutput()
+	if err != nil {
+		// tmux exits 1 with "no server running on ..." when idle.
+		if strings.Contains(string(out), "no server running") {
+			return []TerminalSession{}, nil
+		}
+		return nil, fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	var sessions []TerminalSession
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) < 5 {
+			continue
+		}
+		windows, _ := strconv.Atoi(parts[1])
+		createdUnix, _ := strconv.ParseInt(parts[2], 10, 64)
+		attached, _ := strconv.Atoi(parts[3])
+		activityUnix, _ := strconv.ParseInt(parts[4], 10, 64)
+
+		s := TerminalSession{
+			Name:     parts[0],
+			Windows:  windows,
+			Attached: attached > 0,
+		}
+		if createdUnix > 0 {
+			t := time.Unix(createdUnix, 0).UTC()
+			s.CreatedAt = t.Format(time.RFC3339)
+			s.Created = humanDuration(time.Since(t)) + " ago"
+		}
+		if activityUnix > 0 {
+			s.Activity = humanDuration(time.Since(time.Unix(activityUnix, 0))) + " ago"
+		}
+		sessions = append(sessions, s)
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		return sessions[i].Name < sessions[j].Name
+	})
+	if sessions == nil {
+		sessions = []TerminalSession{}
+	}
+	return sessions, nil
+}
+
+func handleTerminalDetail(w http.ResponseWriter, r *http.Request) {
+	detail := TerminalDetail{Sessions: []TerminalSession{}}
+
+	if out, ok := runCmdCtx(2*time.Second, "systemctl", "is-active", "ttyd"); ok {
+		detail.Running = out == "active"
+	}
+	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "ttyd",
+		"-p", "ActiveEnterTimestamp"); ok {
+		raw := strings.TrimPrefix(strings.TrimSpace(out), "ActiveEnterTimestamp=")
+		if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil && !t.IsZero() {
+			detail.Uptime = humanDuration(time.Since(t))
+		}
+	}
+
+	sessions, err := listTmuxSessions()
+	if err != nil {
+		detail.Error = err.Error()
+	} else {
+		detail.Sessions = sessions
+	}
+	sendJSON(w, detail)
+}
+
+func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	name := strings.TrimSpace(body.Name)
+	if !terminalSessionRE.MatchString(name) {
+		sendJSON(w, map[string]interface{}{"error": "Invalid session name"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := tmuxCmd(ctx, "kill-session", "-t", "="+name).CombinedOutput()
+	if err != nil {
+		sendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
+		return
+	}
+	sendJSON(w, map[string]interface{}{"success": true})
+}
+
 // --- Infrastructure detail (daily VM uptime via Cloud Logging) ---
 
 // VMUptimeSeries is one stacked series in the daily-uptime chart, keyed
@@ -2389,6 +2533,8 @@ func main() {
 	mux.HandleFunc("POST /api/uninstall-service", handleUninstallService)
 	mux.HandleFunc("POST /api/dotfiles/sync", handleDotfilesSync)
 	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
+	mux.HandleFunc("GET /api/services/terminal", handleTerminalDetail)
+	mux.HandleFunc("POST /api/services/terminal/kill", handleTerminalKill)
 	mux.HandleFunc("GET /api/services/infrastructure", handleInfrastructureDetail)
 	mux.HandleFunc("GET /api/cloud-spend", handleCloudSpend)
 	mux.HandleFunc("GET /api/costs/breakdown", handleCostsBreakdown)

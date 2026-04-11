@@ -1,3 +1,13 @@
 handle /terminal* {
+	# Bare /terminal/ (no ?arg=…) redirects to the terminal detail page in
+	# "launcher" mode, where the user picks a name for a fresh session
+	# before ttyd ever spawns a shell. Only the exact root path is matched
+	# so ttyd's JS/font/websocket subpaths still reverse-proxy normally.
+	@launcher {
+		path /terminal /terminal/
+		not query arg=*
+	}
+	redir @launcher /services/details/terminal?prompt=1 302
+
 	reverse_proxy localhost:7681
 }
