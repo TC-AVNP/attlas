@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -88,16 +90,26 @@ const externalAPICacheTTL = 15 * time.Minute
 
 // --- OAuth2 state tokens ---
 
+// A state entry holds both the creation time (for expiry) and an optional
+// return URL captured at /oauth2/login time. The callback handler uses the
+// return URL to send the user back to the page they originally tried to
+// visit — critical for flows like petboard's MCP /authorize, which must
+// land back on a specific URL with its query params intact.
+type stateEntry struct {
+	createdAt time.Time
+	returnTo  string
+}
+
 type stateStore struct {
 	mu     sync.Mutex
-	states map[string]time.Time
+	states map[string]stateEntry
 }
 
 var oauthStates = &stateStore{
-	states: make(map[string]time.Time),
+	states: make(map[string]stateEntry),
 }
 
-func (ss *stateStore) generate() string {
+func (ss *stateStore) generate(returnTo string) string {
 	b := make([]byte, 32)
 	rand.Read(b)
 	state := hex.EncodeToString(b)
@@ -108,24 +120,150 @@ func (ss *stateStore) generate() string {
 	// Clean expired states
 	now := time.Now()
 	for k, v := range ss.states {
-		if now.Sub(v) > 10*time.Minute {
+		if now.Sub(v.createdAt) > 10*time.Minute {
 			delete(ss.states, k)
 		}
 	}
 
-	ss.states[state] = now
+	ss.states[state] = stateEntry{createdAt: now, returnTo: returnTo}
 	return state
 }
 
-func (ss *stateStore) validate(state string) bool {
+// validate consumes the state token and returns (returnTo, ok). The entry
+// is single-use — it is deleted from the store regardless of whether the
+// caller ends up redirecting to the return URL.
+func (ss *stateStore) validate(state string) (string, bool) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
-	if t, ok := ss.states[state]; ok {
+	if entry, ok := ss.states[state]; ok {
 		delete(ss.states, state)
-		return time.Since(t) < 10*time.Minute
+		if time.Since(entry.createdAt) < 10*time.Minute {
+			return entry.returnTo, true
+		}
+	}
+	return "", false
+}
+
+// --- Public-path registry ---
+//
+// Any service that needs a subset of its paths to bypass alive-server's
+// Google-OAuth gate drops a file into /etc/attlas-public-paths.d/. Each
+// file is a newline-separated list of path prefixes; '#' starts a comment,
+// blank lines are ignored. On startup and on SIGHUP the directory is
+// re-read and an in-memory prefix list is atomically swapped in. The
+// handleAuthVerify handler consults this list before doing any session
+// check, returning 200 OK for matches so Caddy forward_auth lets the
+// request through to the downstream service.
+//
+// This exists so services can implement their own auth for specific
+// endpoints (e.g. petboard's MCP OAuth 2.1 flow, which needs the
+// /.well-known/*, /token, /register, and /mcp paths to be reachable
+// without a browser session) without having to modify the base Caddyfile.
+
+const defaultPublicPathsDir = "/etc/attlas-public-paths.d"
+
+type pathRegistry struct {
+	mu       sync.RWMutex
+	prefixes []string
+}
+
+var publicPathRegistry = &pathRegistry{}
+
+func publicPathsDir() string {
+	if dir := os.Getenv("ATTLAS_PUBLIC_PATHS_DIR"); dir != "" {
+		return dir
+	}
+	return defaultPublicPathsDir
+}
+
+// load reads every *.conf file in the configured directory and rebuilds
+// the in-memory prefix list. Called at startup and on SIGHUP. Safe to
+// call concurrently with matches().
+func (r *pathRegistry) load() {
+	dir := publicPathsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// Not an error — the directory may not exist yet if no service
+		// has registered paths. Clear the list and move on.
+		r.mu.Lock()
+		r.prefixes = nil
+		r.mu.Unlock()
+		if !os.IsNotExist(err) {
+			log.Printf("public-paths: read %s: %v", dir, err)
+		}
+		return
+	}
+
+	var prefixes []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("public-paths: read %s: %v", path, err)
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			// Strip '#' comments from anywhere on the line, then trim.
+			if i := strings.Index(line, "#"); i >= 0 {
+				line = line[:i]
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// Require prefixes to be absolute paths so an accidental
+			// empty or relative entry can't match everything.
+			if !strings.HasPrefix(line, "/") {
+				log.Printf("public-paths: ignoring non-absolute prefix %q in %s", line, path)
+				continue
+			}
+			prefixes = append(prefixes, line)
+		}
+	}
+
+	r.mu.Lock()
+	r.prefixes = prefixes
+	r.mu.Unlock()
+	log.Printf("public-paths: loaded %d prefix(es) from %s", len(prefixes), dir)
+}
+
+// matches reports whether the given path starts with any registered
+// public prefix.
+func (r *pathRegistry) matches(path string) bool {
+	if path == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.prefixes {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
 	}
 	return false
+}
+
+// isSafeRelativePath reports whether a candidate return URL can safely be
+// used as a redirect target. We only accept same-origin relative paths:
+// must start with '/', must not start with '//' (protocol-relative), and
+// must parse with an empty scheme and empty host. This prevents open
+// redirects via a crafted return_to query param.
+func isSafeRelativePath(p string) bool {
+	if p == "" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return false
+	}
+	if strings.ContainsAny(p, "\\\r\n") {
+		return false
+	}
+	u, err := url.Parse(p)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "" && u.Host == ""
 }
 
 // --- Session ---
@@ -743,25 +881,31 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 
 // --- Infrastructure detail (daily VM uptime via Cloud Logging) ---
 
-type DayUptime struct {
-	Date    string `json:"date"`    // YYYY-MM-DD (UTC)
-	Seconds int64  `json:"seconds"` // 0 to 86400
+// VMUptimeSeries is one stacked series in the daily-uptime chart, keyed
+// by VM name. If multiple instance_ids share a name (destroy/recreate
+// cycles under terraform), their seconds are summed into the same
+// series — that matches the user's mental model of "one VM called X".
+type VMUptimeSeries struct {
+	Name         string  `json:"name"`
+	TotalSeconds int64   `json:"total_seconds"`
+	Daily        []int64 `json:"daily"` // aligned to InfrastructureDetail.UptimeDays
 }
 
 type InfrastructureDetail struct {
-	Name              string      `json:"name"`
-	Zone              string      `json:"zone"`
-	Region            string      `json:"region"`
-	ExternalIP        string      `json:"external_ip"`
-	InternalIP        string      `json:"internal_ip"`
-	Domain            string      `json:"domain"`
-	MachineType       string      `json:"machine_type"`
-	CreationTimestamp string      `json:"creation_timestamp"` // ISO (from metadata)
-	OSBootTime        string      `json:"os_boot_time"`       // ISO
-	UptimeNow         string      `json:"uptime_now"`         // human-readable
-	DailyUptime       []DayUptime `json:"daily_uptime"`
-	TotalSecondsMonth int64       `json:"total_seconds_month"`
-	EventsError       string      `json:"events_error,omitempty"`
+	Name              string           `json:"name"`
+	Zone              string           `json:"zone"`
+	Region            string           `json:"region"`
+	ExternalIP        string           `json:"external_ip"`
+	InternalIP        string           `json:"internal_ip"`
+	Domain            string           `json:"domain"`
+	MachineType       string           `json:"machine_type"`
+	CreationTimestamp string           `json:"creation_timestamp"` // ISO (from metadata)
+	OSBootTime        string           `json:"os_boot_time"`       // ISO
+	UptimeNow         string           `json:"uptime_now"`         // human-readable
+	UptimeDays        []string         `json:"uptime_days"`        // chronological YYYY-MM-DD list
+	UptimeSeries      []VMUptimeSeries `json:"uptime_series"`      // one per VM, Daily aligned to UptimeDays
+	TotalSecondsMonth int64            `json:"total_seconds_month"`
+	EventsError       string           `json:"events_error,omitempty"`
 }
 
 var (
@@ -795,262 +939,148 @@ func getMetadataToken() (string, error) {
 	return data.AccessToken, nil
 }
 
-// instanceEvent is a single start/stop audit entry for this VM.
-type instanceEvent struct {
-	timestamp time.Time
-	method    string // "start" | "stop"
-}
-
-// fetchInstanceEvents pulls GCE audit-log start/stop/insert/delete
-// entries for EVERY instance in the project, strictly after `since`.
-// Sorted chronologically.
+// fetchInstanceUptime queries Cloud Monitoring for the per-VM daily
+// uptime metric over [monthStart, endExclusive), returning:
 //
-// No instance-name filter: this is a single-VM project and the user
-// wants the uptime timeline to span all historical names (so the ~5h
-// on "openclaw-vm" during Apr 8 morning shows up alongside the newer
-// "simple-zombie" history). If this project ever grew multiple VMs
-// we'd need to dedupe / merge overlapping intervals, but for now the
-// single-VM invariant keeps the timeline clean.
+//	days   — chronological YYYY-MM-DD list covering the window, zero-filled
+//	series — map[instance_name] -> []int64 seconds, one per day in days
 //
-// insert/delete are included so the replay knows when the VM actually
-// existed — under terraform-managed infra the VM is destroyed and
-// recreated during the day, and we don't want to credit a "not yet
-// created" day with 24h of fake uptime.
-func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
+// This replaces the old Cloud Logging audit-event replay, which was
+// fundamentally wrong: it could only see API-initiated start/stop
+// events, so anything that stopped the VM another way (guest OS
+// shutdown, host maintenance reboot, preemption, crash) looked like
+// "still running" to the replay, and days with no events defaulted
+// to 24h of phantom uptime. For the attlas project this showed 168
+// hours of Apr 1-7 uptime that never actually happened.
+//
+// compute.googleapis.com/instance/uptime is a DELTA metric Google
+// scrapes every ~60 seconds. With ALIGN_DELTA + alignmentPeriod
+// 86400s each point is exactly "seconds the VM was running during
+// that UTC day". No guesswork, no replay, no assumptions.
+//
+// We intentionally do NOT use crossSeriesReducer so the response
+// preserves per-VM series. Each series carries the VM name in
+// metric.labels.instance_name (even for deleted VMs — the label
+// persists with the time series forever). When two VM instances
+// share a name — terraform destroy/recreate cycles produce this
+// constantly — their daily seconds are merged into a single output
+// series, matching the user's mental model of "one VM named X".
+func fetchInstanceUptime(monthStart, endExclusive time.Time) (
+	days []string, series map[string][]int64, err error,
+) {
 	projectID := gcpMeta("project/project-id")
 	if projectID == "unknown" {
-		return nil, fmt.Errorf("missing metadata (project=%s)", projectID)
+		return nil, nil, fmt.Errorf("missing metadata (project=%s)", projectID)
 	}
 
-	token, err := getMetadataToken()
-	if err != nil {
-		return nil, fmt.Errorf("metadata token: %v", err)
+	token, terr := getMetadataToken()
+	if terr != nil {
+		return nil, nil, fmt.Errorf("metadata token: %v", terr)
 	}
 
-	filter := fmt.Sprintf(
-		`resource.type="gce_instance" AND (protoPayload.methodName="v1.compute.instances.start" OR protoPayload.methodName="v1.compute.instances.stop" OR protoPayload.methodName="v1.compute.instances.insert" OR protoPayload.methodName="v1.compute.instances.delete") AND timestamp>="%s"`,
-		since.UTC().Format(time.RFC3339),
+	for d := monthStart; d.Before(endExclusive); d = d.AddDate(0, 0, 1) {
+		days = append(days, d.Format("2006-01-02"))
+	}
+	dayIndex := make(map[string]int, len(days))
+	for i, d := range days {
+		dayIndex[d] = i
+	}
+	series = make(map[string][]int64)
+
+	params := url.Values{}
+	params.Set("filter", `metric.type="compute.googleapis.com/instance/uptime" AND resource.type="gce_instance"`)
+	params.Set("interval.startTime", monthStart.Format(time.RFC3339))
+	params.Set("interval.endTime", endExclusive.Format(time.RFC3339))
+	params.Set("aggregation.alignmentPeriod", "86400s")
+	params.Set("aggregation.perSeriesAligner", "ALIGN_DELTA")
+	params.Set("view", "FULL")
+
+	baseURL := fmt.Sprintf(
+		"https://monitoring.googleapis.com/v3/projects/%s/timeSeries?%s",
+		projectID, params.Encode(),
 	)
 
-	// Cloud Logging's entries:list API can legitimately return empty
-	// pages in the middle of a multi-page result — it scans log
-	// buckets in time windows and some windows are empty even when
-	// later ones contain data. Walking pages until nextPageToken is
-	// empty is required, NOT optional. We saw this in practice:
-	// page 1 had 2 old insert events, pages 2-4 were empty with
-	// live cursors, and page 5 had the 37 events we actually cared
-	// about. Stopping at the first non-empty page lost 95% of data.
-	//
-	// Hard cap at 50 pages so a pathological filter can't stall the
-	// dashboard for minutes. With pageSize=1000 that's up to 50k
-	// entries, comfortably more than we'll ever have in a month.
-	const maxPages = 50
+	type respShape struct {
+		TimeSeries []struct {
+			Metric struct {
+				Labels map[string]string `json:"labels"`
+			} `json:"metric"`
+			Points []struct {
+				Interval struct {
+					StartTime string `json:"startTime"`
+					EndTime   string `json:"endTime"`
+				} `json:"interval"`
+				Value struct {
+					DoubleValue float64 `json:"doubleValue"`
+				} `json:"value"`
+			} `json:"points"`
+		} `json:"timeSeries"`
+		NextPageToken string `json:"nextPageToken"`
+	}
+
 	client := &http.Client{Timeout: 8 * time.Second}
-
-	type logEntry struct {
-		Timestamp    string `json:"timestamp"`
-		ProtoPayload struct {
-			MethodName string `json:"methodName"`
-		} `json:"protoPayload"`
-	}
-	type logResponse struct {
-		Entries       []logEntry `json:"entries"`
-		NextPageToken string     `json:"nextPageToken"`
-	}
-
-	var allRaw []logEntry
-	var pageToken string
+	const maxPages = 20
+	pageToken := ""
 	pagesFetched := 0
+	totalSeries := 0
 	for pagesFetched < maxPages {
-		body := map[string]interface{}{
-			"resourceNames": []string{"projects/" + projectID},
-			"filter":        filter,
-			"pageSize":      1000,
-			"orderBy":       "timestamp asc",
-		}
+		reqURL := baseURL
 		if pageToken != "" {
-			body["pageToken"] = pageToken
+			reqURL += "&pageToken=" + url.QueryEscape(pageToken)
 		}
-		bodyJSON, _ := json.Marshal(body)
-
-		req, _ := http.NewRequest("POST", "https://logging.googleapis.com/v2/entries:list", bytes.NewReader(bodyJSON))
+		req, _ := http.NewRequest("GET", reqURL, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("logging request page %d: %v", pagesFetched+1, err)
+		resp, rerr := client.Do(req)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("monitoring request page %d: %v", pagesFetched+1, rerr)
 		}
 		if resp.StatusCode >= 400 {
-			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 			resp.Body.Close()
-			return nil, fmt.Errorf("logging %d on page %d: %s", resp.StatusCode, pagesFetched+1, strings.TrimSpace(string(raw)))
+			return nil, nil, fmt.Errorf("monitoring %d on page %d: %s",
+				resp.StatusCode, pagesFetched+1, strings.TrimSpace(string(raw)))
 		}
 
-		var page logResponse
+		var page respShape
 		if derr := json.NewDecoder(resp.Body).Decode(&page); derr != nil {
 			resp.Body.Close()
-			return nil, fmt.Errorf("decode logging page %d: %v", pagesFetched+1, derr)
+			return nil, nil, fmt.Errorf("decode monitoring page %d: %v", pagesFetched+1, derr)
 		}
 		resp.Body.Close()
 
-		allRaw = append(allRaw, page.Entries...)
-		pagesFetched++
+		for _, ts := range page.TimeSeries {
+			name := ts.Metric.Labels["instance_name"]
+			if name == "" {
+				name = "unknown"
+			}
+			totalSeries++
+			if _, exists := series[name]; !exists {
+				series[name] = make([]int64, len(days))
+			}
+			for _, p := range ts.Points {
+				if len(p.Interval.StartTime) < 10 {
+					continue
+				}
+				dateStr := p.Interval.StartTime[:10]
+				idx, ok := dayIndex[dateStr]
+				if !ok {
+					continue
+				}
+				series[name][idx] += int64(p.Value.DoubleValue)
+			}
+		}
 
+		pagesFetched++
 		if page.NextPageToken == "" {
 			break
 		}
 		pageToken = page.NextPageToken
 	}
 
-	events := make([]instanceEvent, 0, len(allRaw))
-	var parseFailures int
-	var lastParseErr string
-	for _, e := range allRaw {
-		t, err := parseLoggingTimestamp(e.Timestamp)
-		if err != nil {
-			parseFailures++
-			lastParseErr = err.Error()
-			continue
-		}
-		// Collapse GCE lifecycle verbs onto a running/not-running axis:
-		//   insert → on  (VM created and running)
-		//   delete → off (VM gone)
-		//   start  → on
-		//   stop   → off
-		var method string
-		switch {
-		case strings.Contains(e.ProtoPayload.MethodName, "stop"),
-			strings.Contains(e.ProtoPayload.MethodName, "delete"):
-			method = "stop"
-		default:
-			method = "start"
-		}
-		events = append(events, instanceEvent{timestamp: t.UTC(), method: method})
-	}
-	sort.Slice(events, func(i, j int) bool {
-		return events[i].timestamp.Before(events[j].timestamp)
-	})
-	log.Printf("infra: fetched %d raw entries over %d pages, parsed %d events, %d parse failures (last err: %q)",
-		len(allRaw), pagesFetched, len(events), parseFailures, lastParseErr)
-	return events, nil
-}
-
-// parseLoggingTimestamp is tolerant of the variety of timestamp shapes
-// Cloud Logging emits: integer seconds, 3-digit millis, 6-digit micros,
-// 9-digit nanos, and occasionally no fractional part at all.
-func parseLoggingTimestamp(s string) (time.Time, error) {
-	formats := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05.000000000Z07:00",
-		"2006-01-02T15:04:05.000000Z07:00",
-		"2006-01-02T15:04:05.000Z07:00",
-	}
-	var lastErr error
-	for _, f := range formats {
-		t, err := time.Parse(f, s)
-		if err == nil {
-			return t, nil
-		}
-		lastErr = err
-	}
-	return time.Time{}, lastErr
-}
-
-// uptimeInterval is a contiguous [start, end] period of VM ON state.
-type uptimeInterval struct {
-	start time.Time
-	end   time.Time
-}
-
-// computeDailyUptime replays audit events into ON intervals and
-// distributes them across each day of the current UTC month.
-//
-// Lifecycle events (insert/delete) are folded into the same start/stop
-// stream upstream, so by this point every event is either "start"
-// (running) or "stop" (not running).
-//
-// The "state before the first observed event" question is answered
-// by a leading-STOP heuristic: if the first event in the window is a
-// stop, the VM must have been running before, so we credit the
-// pre-window period as ON. If the first event is a start (which on
-// GCE is usually the very first insert for a brand-new VM), the VM
-// didn't exist / was off before, and the pre-window period is NOT
-// counted. This matches reality under terraform-managed infra where
-// the VM can be created mid-month.
-func computeDailyUptime(events []instanceEvent, now time.Time) ([]DayUptime, int64) {
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	// Anchor well before the month so `(anchor, first-stop)` covers
-	// any pre-month ON period without accidental gaps.
-	anchor := monthStart.AddDate(0, 0, -30)
-
-	intervals := []uptimeInterval{}
-	var openStart *time.Time
-	state := "unknown"
-
-	for i, ev := range events {
-		if i == 0 {
-			if ev.method == "stop" {
-				// VM was running up until this stop.
-				intervals = append(intervals, uptimeInterval{start: anchor, end: ev.timestamp})
-				state = "off"
-			} else { // start / insert
-				// VM wasn't running before this event. Open a new
-				// interval but do NOT backfill the pre-event period.
-				t := ev.timestamp
-				openStart = &t
-				state = "on"
-			}
-			continue
-		}
-		if ev.method == "start" && state == "off" {
-			t := ev.timestamp
-			openStart = &t
-			state = "on"
-		} else if ev.method == "stop" && state == "on" {
-			intervals = append(intervals, uptimeInterval{start: *openStart, end: ev.timestamp})
-			openStart = nil
-			state = "off"
-		}
-		// duplicate consecutive start/stop pairs are ignored
-	}
-
-	// Still-on state → ongoing interval ending at now.
-	if state == "on" && openStart != nil {
-		intervals = append(intervals, uptimeInterval{start: *openStart, end: now})
-	}
-	// Note: we used to have an "unknown" fallback here that assumed
-	// the VM was on for the full lookback when no events fired. That
-	// produced phantom uptime for days before the VM even existed, so
-	// it's gone. If the events window is empty, the month stays zero.
-
-	// Build daily buckets for each day of the current month up to "now".
-	var (
-		daily      []DayUptime
-		totalSecs  int64
-		maxDayUTC  = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	)
-	for d := monthStart; !d.After(maxDayUTC); d = d.AddDate(0, 0, 1) {
-		dayEnd := d.Add(24 * time.Hour)
-		var secs int64
-		for _, iv := range intervals {
-			ovStart := iv.start
-			if ovStart.Before(d) {
-				ovStart = d
-			}
-			ovEnd := iv.end
-			if ovEnd.After(dayEnd) {
-				ovEnd = dayEnd
-			}
-			if ovEnd.After(ovStart) {
-				secs += int64(ovEnd.Sub(ovStart).Seconds())
-			}
-		}
-		daily = append(daily, DayUptime{Date: d.Format("2006-01-02"), Seconds: secs})
-		totalSecs += secs
-	}
-	return daily, totalSecs
+	log.Printf("infra: monitoring returned %d time series over %d pages, merged into %d named VMs",
+		totalSeries, pagesFetched, len(series))
+	return days, series, nil
 }
 
 // osBootTime reads /proc/stat btime for the kernel-boot epoch. Used as
@@ -1117,14 +1147,40 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 		detail.CreationTimestamp = ts
 	}
 
-	// Daily uptime from Cloud Logging audit events.
-	events, err := fetchInstanceEvents(now.AddDate(0, 0, -38)) // month + 7d anchor + headroom
+	// Per-VM daily uptime from Cloud Monitoring. Window is the current
+	// UTC month so far, exclusive of tomorrow — today's bucket is
+	// included but ~1-5 minutes behind real time (Monitoring's
+	// scrape interval).
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+
+	uDays, uSeries, err := fetchInstanceUptime(monthStart, tomorrow)
 	if err != nil {
 		detail.EventsError = err.Error()
 	}
-	daily, totalSecs := computeDailyUptime(events, now)
-	detail.DailyUptime = daily
-	detail.TotalSecondsMonth = totalSecs
+	detail.UptimeDays = uDays
+
+	// Build per-VM entries + overall total. Sort by total desc so
+	// the biggest contributors land first in both the chart's
+	// stacking order and the legend.
+	var totalMonth int64
+	detail.UptimeSeries = make([]VMUptimeSeries, 0, len(uSeries))
+	for name, daily := range uSeries {
+		var seriesTotal int64
+		for _, s := range daily {
+			seriesTotal += s
+		}
+		totalMonth += seriesTotal
+		detail.UptimeSeries = append(detail.UptimeSeries, VMUptimeSeries{
+			Name:         name,
+			TotalSeconds: seriesTotal,
+			Daily:        daily,
+		})
+	}
+	sort.Slice(detail.UptimeSeries, func(i, j int) bool {
+		return detail.UptimeSeries[i].TotalSeconds > detail.UptimeSeries[j].TotalSeconds
+	})
+	detail.TotalSecondsMonth = totalMonth
 
 	infraCacheValue = detail
 	infraCacheExpires = time.Now().Add(externalAPICacheTTL)
@@ -1869,11 +1925,26 @@ const accessDeniedPage = `<!DOCTYPE html>
 // --- Handlers ---
 
 func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
+	// Caddy forward_auth sends the original request URI in X-Forwarded-Uri.
+	// Consult the public-path registry first: services register path
+	// prefixes they want to handle with their own auth (or no auth), and
+	// we wave those through without a session check.
+	origURI := r.Header.Get("X-Forwarded-Uri")
+	if publicPathRegistry.matches(origURI) {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if isAuthenticated(r) {
 		w.WriteHeader(http.StatusOK)
-	} else {
-		http.Redirect(w, r, "/oauth2/login", http.StatusFound)
+		return
 	}
+	// Preserve the original URL across the OAuth round-trip so the user
+	// lands back on the page they tried to visit instead of on /.
+	loginURL := "/oauth2/login"
+	if isSafeRelativePath(origURI) {
+		loginURL += "?return_to=" + url.QueryEscape(origURI)
+	}
+	http.Redirect(w, r, loginURL, http.StatusFound)
 }
 
 func handleOAuth2Login(w http.ResponseWriter, r *http.Request) {
@@ -1882,7 +1953,14 @@ func handleOAuth2Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := oauthStates.generate()
+	// Capture the return URL from the ?return_to query param. Rejected
+	// unless it's a safe same-origin relative path.
+	returnTo := r.URL.Query().Get("return_to")
+	if !isSafeRelativePath(returnTo) {
+		returnTo = ""
+	}
+
+	state := oauthStates.generate(returnTo)
 	authURL := fmt.Sprintf(
 		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&state=%s&access_type=online&prompt=select_account",
 		url.QueryEscape(oauthConfig.ClientID),
@@ -1899,9 +1977,10 @@ func handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate state
+	// Validate state and recover the captured return URL in one step.
 	state := r.URL.Query().Get("state")
-	if !oauthStates.validate(state) {
+	returnTo, ok := oauthStates.validate(state)
+	if !ok {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, errorPageTemplate, "Invalid or expired login request. Please try again.")
 		return
@@ -1995,7 +2074,15 @@ func handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   true,
 	})
-	http.Redirect(w, r, "/", http.StatusFound)
+
+	// Prefer the captured return URL, falling back to / if missing or
+	// unsafe (validated defensively here even though generate() also
+	// screens it).
+	dest := "/"
+	if isSafeRelativePath(returnTo) {
+		dest = returnTo
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -2256,6 +2343,20 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 func main() {
 	sessionSecret = loadOrCreateSecret()
 	oauthConfig = loadOAuthConfig()
+
+	// Initial load of the public-path registry and a SIGHUP-triggered
+	// reloader so services can `systemctl kill --signal=SIGHUP alive-server`
+	// after installing or uninstalling to pick up their changes without
+	// dropping existing sessions.
+	publicPathRegistry.load()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGHUP)
+	go func() {
+		for range sigCh {
+			log.Printf("SIGHUP received — reloading public-path registry")
+			publicPathRegistry.load()
+		}
+	}()
 
 	// Resolve paths
 	execPath, _ := os.Executable()
