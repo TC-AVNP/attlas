@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, createContext, useContext } from 'react'
 import { BrowserRouter, Routes, Route, Outlet, Link } from 'react-router-dom'
 import Banner from './components/Banner.jsx'
+import ThemeToggle from './components/ThemeToggle.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import OpenclawDetail from './pages/detail/Openclaw.jsx'
 import InfrastructureDetail from './pages/detail/Infrastructure.jsx'
@@ -56,6 +57,7 @@ function Layout() {
 
   return (
     <div className="layout">
+      <ThemeToggle />
       <Banner expiry={status?.domain_expiry} />
       <Outlet />
       <footer className="footer">

@@ -1,4 +1,16 @@
-:root {
+/* ── Theme tokens ──────────────────────────────────────────────────── */
+/*
+ * Two themes: dark (default, diary-derived) and light. The light palette
+ * is NOT just inverted dark — the neon-green accent and pure-yellow
+ * header colors wash out to near-unreadable on a white surface, so both
+ * get darkened for acceptable contrast (WCAG AA on light bg).
+ *
+ * Theme is selected by a `data-theme` attribute on <html>. The toggle
+ * component flips this and persists the choice to localStorage.
+ * `prefers-color-scheme` is honored only on first visit; after that the
+ * user's explicit choice wins.
+ */
+:root, [data-theme="dark"] {
   --bg: #0c0c0c;
   --fg: #c0c0c0;
   --border: #333;
@@ -9,9 +21,38 @@
   --surface: #1a1a1a;
   --danger: #ff5555;
   --warning: #ffcc00;
+  --btn-on-accent: #000;    /* text color for filled primary buttons */
+  --bar-today-hover: #ffaa33;
+  --accent-hover: #33ff33;
+  --dot-green-glow: rgba(0, 255, 0, 0.4);
+  --dot-red-glow:   rgba(255, 85, 85, 0.4);
+  --dot-yellow-glow:rgba(255, 204, 0, 0.4);
+  --banner-warn-bg:   rgba(255, 204, 0, 0.08);
+  --banner-danger-bg: rgba(255, 85, 85, 0.10);
 
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+[data-theme="light"] {
+  --bg: #fafafa;
+  --fg: #1a1a1a;
+  --border: #e5e5e5;
+  --accent: #007a00;         /* darkened green for contrast on white */
+  --brand: #d56800;          /* darkened orange likewise */
+  --header: #9a5200;         /* section labels (originally pure yellow) */
+  --muted: #6b6b6b;
+  --surface: #ffffff;
+  --danger: #dc2626;
+  --warning: #b45309;
+  --btn-on-accent: #ffffff;
+  --bar-today-hover: #ff8700;
+  --accent-hover: #00aa00;
+  --dot-green-glow: rgba(0, 122, 0, 0.25);
+  --dot-red-glow:   rgba(220, 38, 38, 0.25);
+  --dot-yellow-glow:rgba(180, 83, 9, 0.25);
+  --banner-warn-bg:   rgba(180, 83, 9, 0.08);
+  --banner-danger-bg: rgba(220, 38, 38, 0.08);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -25,6 +66,7 @@ html, body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 #root { min-height: 100vh; }
@@ -56,17 +98,17 @@ a:hover { text-decoration: underline; }
 
 .page {
   flex: 1;
-  max-width: 720px;
+  max-width: 1100px;
   width: 100%;
   margin: 0 auto;
-  padding: 3rem 1.5rem 4rem;
+  padding: 2rem 1.5rem 4rem;
 }
 
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  margin-bottom: 3rem;
+  margin-bottom: 1rem;
 }
 
 .brand-title {
@@ -122,7 +164,7 @@ a:hover { text-decoration: underline; }
 /* ── Hero status ────────────────────────────────────────────────────── */
 
 .hero {
-  padding: 2rem 0 1rem;
+  padding: 0 0 1rem;
   text-align: left;
 }
 
@@ -261,9 +303,9 @@ a:hover { text-decoration: underline; }
   border-radius: 50%;
   flex: 0 0 auto;
 }
-.dot-green  { background: var(--accent);  box-shadow: 0 0 6px rgba(0,255,0,0.4); }
-.dot-red    { background: var(--danger);  box-shadow: 0 0 6px rgba(255,85,85,0.4); }
-.dot-yellow { background: var(--warning); box-shadow: 0 0 6px rgba(255,204,0,0.4); }
+.dot-green  { background: var(--accent);  box-shadow: 0 0 6px var(--dot-green-glow); }
+.dot-red    { background: var(--danger);  box-shadow: 0 0 6px var(--dot-red-glow); }
+.dot-yellow { background: var(--warning); box-shadow: 0 0 6px var(--dot-yellow-glow); }
 .dot-grey   { background: var(--muted);  }
 .dot-pulse  { animation: pulse 1.6s ease-in-out infinite; }
 
@@ -291,12 +333,12 @@ a:hover { text-decoration: underline; }
 
 .btn-primary {
   background: var(--accent);
-  color: #000;
+  color: var(--btn-on-accent);
   border-color: var(--accent);
 }
 .btn-primary:hover:not(:disabled) {
-  background: #33ff33;
-  border-color: #33ff33;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .btn-ghost {
@@ -316,7 +358,7 @@ a:hover { text-decoration: underline; }
 }
 .btn-danger:hover:not(:disabled) {
   background: var(--danger);
-  color: #000;
+  color: var(--btn-on-accent);
 }
 
 /* ── Cards ──────────────────────────────────────────────────────────── */
@@ -374,12 +416,12 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--border);
 }
 .banner-warn {
-  background: rgba(255, 204, 0, 0.08);
+  background: var(--banner-warn-bg);
   color: var(--warning);
   border-bottom-color: var(--warning);
 }
 .banner-danger {
-  background: rgba(255, 85, 85, 0.1);
+  background: var(--banner-danger-bg);
   color: var(--danger);
   border-bottom-color: var(--danger);
 }
@@ -465,7 +507,7 @@ a:hover { text-decoration: underline; }
 /* ── Footer ─────────────────────────────────────────────────────────── */
 
 .footer {
-  max-width: 720px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
   color: var(--muted);
@@ -476,12 +518,19 @@ a:hover { text-decoration: underline; }
 }
 
 /* ── Detail page chrome (also used by the redesigned dashboard) ────── */
-
+/*
+ * Wider than the previous 820px to avoid the "narrow column floating
+ * in a huge empty page" problem on wide monitors. 1100px is comfortable
+ * for a 2-column card grid with room to breathe but still narrow
+ * enough that section titles don't become visually orphaned from
+ * their content. Top padding is 2rem (was 3rem) to tighten the gap
+ * between the header and the hero.
+ */
 .detail-page {
-  max-width: 820px;
+  max-width: 1100px;
   width: 100%;
   margin: 0 auto;
-  padding: 3rem 1.5rem 4rem;
+  padding: 2rem 1.5rem 4rem;
 }
 
 /* Spend-split rows inside the cloud spend card ─────────────────────── */
@@ -633,7 +682,7 @@ a:hover { text-decoration: underline; }
 .bar-chart .bar-today { fill: var(--brand); }
 .bar-chart .bar-danger{ fill: var(--danger); }
 .bar-chart .bar:hover { fill: var(--brand); cursor: pointer; }
-.bar-chart .bar-danger:hover { fill: #ff8080; }
+.bar-chart .bar-danger:hover { fill: var(--bar-today-hover); }
 .bar-chart .day-label{
   fill: var(--muted);
   font-family: var(--font-mono);
@@ -646,4 +695,41 @@ a:hover { text-decoration: underline; }
   display: flex;
   justify-content: center;
   margin-top: 2rem;
+}
+
+/* ── Theme toggle (fixed top-right) ─────────────────────────────────── */
+/*
+ * Floating in the top-right of the viewport so it's reachable from
+ * every page without each page having to render it. Small icon-only
+ * button — dark mode shows a sun (switch to light), light mode shows
+ * a moon (switch to dark). Semi-transparent surface so it doesn't
+ * fight the content on either theme.
+ */
+.theme-toggle {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 50;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  transition: border-color 0.12s, color 0.12s, transform 0.12s;
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: scale(1.05);
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
