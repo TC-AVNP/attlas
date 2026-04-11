@@ -242,6 +242,9 @@ function CloudSpendCard() {
               )}
             </div>
           </div>
+          <div className="card-actions">
+            <Link to="/services/details/costs" className="btn btn-ghost">details</Link>
+          </div>
         </>
       )}
     </Card>
