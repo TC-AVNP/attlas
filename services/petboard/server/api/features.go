@@ -25,6 +25,7 @@ func (a *API) createFeature(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("feature.created", map[string]any{"slug": slug, "feature_id": f.ID})
 	writeJSON(w, http.StatusCreated, f)
 }
 
@@ -53,6 +54,13 @@ func (a *API) updateFeature(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if body.Status != nil {
+		a.publish("feature.status_changed", map[string]any{
+			"feature_id": id, "status": *body.Status,
+		})
+	} else {
+		a.publish("feature.updated", map[string]any{"feature_id": id})
+	}
 	writeJSON(w, http.StatusOK, f)
 }
 
@@ -67,5 +75,6 @@ func (a *API) deleteFeature(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("feature.deleted", map[string]any{"feature_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }

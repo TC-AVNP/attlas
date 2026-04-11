@@ -31,5 +31,6 @@ func (a *API) logEffort(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("effort.logged", map[string]any{"slug": slug, "minutes": body.Minutes})
 	writeJSON(w, http.StatusCreated, log)
 }

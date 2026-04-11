@@ -44,6 +44,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("project.created", map[string]any{"slug": p.Slug, "id": p.ID})
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -89,6 +90,7 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("project.updated", map[string]any{"slug": slug})
 	writeJSON(w, http.StatusOK, detail)
 }
 
@@ -100,5 +102,6 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	a.publish("project.deleted", map[string]any{"slug": slug})
 	w.WriteHeader(http.StatusNoContent)
 }
