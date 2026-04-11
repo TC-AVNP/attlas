@@ -629,9 +629,11 @@ a:hover { text-decoration: underline; }
   height: 140px;
   margin-top: 1.2rem;
 }
-.bar-chart .bar      { fill: var(--accent); transition: fill 0.12s; }
-.bar-chart .bar-today{ fill: var(--brand); }
-.bar-chart .bar:hover{ fill: var(--brand); cursor: pointer; }
+.bar-chart .bar       { fill: var(--accent); transition: fill 0.12s; }
+.bar-chart .bar-today { fill: var(--brand); }
+.bar-chart .bar-danger{ fill: var(--danger); }
+.bar-chart .bar:hover { fill: var(--brand); cursor: pointer; }
+.bar-chart .bar-danger:hover { fill: #ff8080; }
 .bar-chart .day-label{
   fill: var(--muted);
   font-family: var(--font-mono);

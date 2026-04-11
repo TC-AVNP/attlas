@@ -1106,6 +1106,263 @@ func fetchGCPSpendBigQuery(monthStart time.Time) (float64, error) {
 	}
 }
 
+// --- Costs breakdown (detail page) -----------------------------------
+//
+// Used by /services/details/costs. Goes deeper than /api/cloud-spend:
+// instead of one GCP total, it classifies each billing-export row
+// into one of three categories and returns a 30-day daily series for
+// each of the two headline categories (VM compute and network
+// egress). "Other" collapses to a single number (disk, IP, minor
+// SKUs).
+//
+// The 30-day window is "last 30 completed UTC days" — today is
+// excluded because the export lags ~24h and today's bucket is
+// always partial. Callers that want MTD should keep using
+// /api/cloud-spend.
+
+const costsBreakdownWindowDays = 30
+
+type CostCategorySeries struct {
+	Total30d float64   `json:"total_30d_usd"`
+	AvgDaily float64   `json:"avg_daily_usd"`
+	Daily    []DayCost `json:"daily"`
+}
+
+type CostsBreakdown struct {
+	VMCompute      CostCategorySeries `json:"vm_compute"`
+	NetworkEgress  CostCategorySeries `json:"network_egress"`
+	OtherGCP       float64            `json:"other_gcp_30d_usd"`
+	Anthropic      float64            `json:"anthropic_30d_usd"`
+	WindowDays     int                `json:"window_days"`
+	WindowStart    string             `json:"window_start"` // YYYY-MM-DD
+	WindowEnd      string             `json:"window_end"`   // YYYY-MM-DD, exclusive
+	GCPError       string             `json:"gcp_error,omitempty"`
+	AnthropicError string             `json:"anthropic_error,omitempty"`
+}
+
+var (
+	costsBreakdownCacheMu      sync.Mutex
+	costsBreakdownCacheValue   CostsBreakdown
+	costsBreakdownCacheExpires time.Time
+)
+
+func handleCostsBreakdown(w http.ResponseWriter, r *http.Request) {
+	costsBreakdownCacheMu.Lock()
+	defer costsBreakdownCacheMu.Unlock()
+
+	if time.Now().Before(costsBreakdownCacheExpires) {
+		sendJSON(w, costsBreakdownCacheValue)
+		return
+	}
+
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	windowStart := today.AddDate(0, 0, -costsBreakdownWindowDays)
+	windowEnd := today
+
+	cb := CostsBreakdown{
+		WindowDays:  costsBreakdownWindowDays,
+		WindowStart: windowStart.Format("2006-01-02"),
+		WindowEnd:   windowEnd.Format("2006-01-02"),
+	}
+
+	vm, egress, total, err := fetchGCPCategorizedCosts(windowStart, windowEnd)
+	if err != nil {
+		cb.GCPError = err.Error()
+	}
+	// Always build zero-filled series so the chart renders an empty
+	// axis instead of "no data yet" when the export is wired up but
+	// the current window has no rows yet.
+	cb.VMCompute = buildCostSeries(vm, windowStart, windowEnd)
+	cb.NetworkEgress = buildCostSeries(egress, windowStart, windowEnd)
+	if err == nil {
+		cb.OtherGCP = total - cb.VMCompute.Total30d - cb.NetworkEgress.Total30d
+		if cb.OtherGCP < 0 {
+			// SUD credits can push "other" slightly negative if VM
+			// compute classification misses a SKU edge case. Clamp
+			// instead of showing a negative number on the UI.
+			cb.OtherGCP = 0
+		}
+	}
+
+	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
+		spend, _, aerr := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, windowStart)
+		if aerr != nil {
+			cb.AnthropicError = aerr.Error()
+		} else {
+			cb.Anthropic = spend
+		}
+	} else {
+		cb.AnthropicError = "anthropic admin key not configured"
+	}
+
+	costsBreakdownCacheValue = cb
+	costsBreakdownCacheExpires = time.Now().Add(10 * time.Minute)
+	sendJSON(w, cb)
+}
+
+// fetchGCPCategorizedCosts runs ONE BigQuery SELECT that classifies
+// each row into vm_compute / network_egress / other and returns
+// per-day sums for the two headline categories plus the global total.
+//
+// Net cost = `cost + SUM(credits.amount)` because SUD and other
+// credits appear as negative line items in a separate `credits`
+// array; summing those in gives the bill-matching number instead of
+// the inflated gross. Standard pattern from Google's own docs.
+//
+// Classification (keep in sync with backlog.md):
+//
+//	vm_compute     — any SKU with "instance core" or "instance ram"
+//	                 in its description (E2/N2/etc.). Single-VM
+//	                 project so this is effectively "simple-zombie".
+//	network_egress — SKUs with "internet egress" in the description.
+//	                 Destinations split into multiple SKUs (EMEA →
+//	                 Americas, EMEA → APAC, ...) and all sum in.
+//	other          — everything else. Returned as a single 30d
+//	                 number, not a daily series.
+//
+// Anticipated SKU patterns are based on GCP docs; if the real export
+// uses different substrings, update the CASE arms here and nothing
+// else.
+func fetchGCPCategorizedCosts(start, end time.Time) (
+	vmCompute map[string]float64,
+	networkEgress map[string]float64,
+	total float64,
+	err error,
+) {
+	projectID := os.Getenv("BILLING_EXPORT_PROJECT")
+	if projectID == "" {
+		projectID = gcpMeta("project/project-id")
+	}
+	dataset := os.Getenv("BILLING_EXPORT_DATASET")
+	if dataset == "" {
+		dataset = "billing_export"
+	}
+	if projectID == "unknown" || projectID == "" {
+		return nil, nil, 0, fmt.Errorf("missing project id")
+	}
+
+	token, terr := getMetadataToken()
+	if terr != nil {
+		return nil, nil, 0, fmt.Errorf("metadata token: %v", terr)
+	}
+
+	sql := fmt.Sprintf(
+		"SELECT "+
+			"  DATE(usage_start_time) AS day, "+
+			"  CASE "+
+			"    WHEN LOWER(sku.description) LIKE '%%instance core%%' "+
+			"      OR LOWER(sku.description) LIKE '%%instance ram%%' "+
+			"      THEN 'vm_compute' "+
+			"    WHEN LOWER(sku.description) LIKE '%%internet egress%%' "+
+			"      THEN 'network_egress' "+
+			"    ELSE 'other' "+
+			"  END AS category, "+
+			"  SUM(cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)) AS net_cost "+
+			"FROM `%s.%s.gcp_billing_export_v1_*` "+
+			"WHERE project.id = '%s' "+
+			"  AND DATE(usage_start_time) >= DATE('%s') "+
+			"  AND DATE(usage_start_time) < DATE('%s') "+
+			"GROUP BY day, category",
+		projectID, dataset, projectID,
+		start.Format("2006-01-02"),
+		end.Format("2006-01-02"),
+	)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"query":        sql,
+		"useLegacySql": false,
+		"timeoutMs":    10000,
+	})
+
+	reqURL := fmt.Sprintf("https://bigquery.googleapis.com/bigquery/v2/projects/%s/queries", projectID)
+	req, _ := http.NewRequest("POST", reqURL, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, rerr := client.Do(req)
+	if rerr != nil {
+		return nil, nil, 0, fmt.Errorf("bigquery: %v", rerr)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		rawStr := strings.TrimSpace(string(raw))
+		if strings.Contains(rawStr, "does not match any table") {
+			return nil, nil, 0, fmt.Errorf("waiting for first billing export (up to 24h after enabling in console)")
+		}
+		return nil, nil, 0, fmt.Errorf("bigquery %d: %s", resp.StatusCode, rawStr)
+	}
+
+	var result struct {
+		JobComplete bool `json:"jobComplete"`
+		Rows        []struct {
+			F []struct {
+				V interface{} `json:"v"`
+			} `json:"f"`
+		} `json:"rows"`
+	}
+	if derr := json.NewDecoder(resp.Body).Decode(&result); derr != nil {
+		return nil, nil, 0, fmt.Errorf("decode bigquery: %v", derr)
+	}
+	if !result.JobComplete {
+		return nil, nil, 0, fmt.Errorf("bigquery job not complete")
+	}
+
+	vmCompute = make(map[string]float64)
+	networkEgress = make(map[string]float64)
+	for _, row := range result.Rows {
+		if len(row.F) < 3 {
+			continue
+		}
+		day, _ := row.F[0].V.(string)
+		category, _ := row.F[1].V.(string)
+		costStr, _ := row.F[2].V.(string)
+		cost, perr := strconv.ParseFloat(costStr, 64)
+		if perr != nil {
+			continue
+		}
+
+		total += cost
+		switch category {
+		case "vm_compute":
+			vmCompute[day] += cost
+		case "network_egress":
+			networkEgress[day] += cost
+		}
+	}
+
+	return vmCompute, networkEgress, total, nil
+}
+
+// buildCostSeries zero-fills a map of date→cost into a chronological
+// 30-entry array bounded by [start, end). Also computes total and
+// average so the frontend can show them as headline numbers without
+// recomputing.
+func buildCostSeries(byDate map[string]float64, start, end time.Time) CostCategorySeries {
+	daily := make([]DayCost, 0, 32)
+	var total float64
+	for d := start; d.Before(end); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		v := byDate[key]
+		total += v
+		daily = append(daily, DayCost{Date: key, USD: v})
+	}
+
+	var avg float64
+	if len(daily) > 0 {
+		avg = total / float64(len(daily))
+	}
+
+	return CostCategorySeries{
+		Total30d: total,
+		AvgDaily: avg,
+		Daily:    daily,
+	}
+}
+
 // --- Stop VM ---
 // User-triggered self-destruct. Calls the Compute Engine REST API
 // directly with the metadata-server OAuth token. The API returns
@@ -1824,6 +2081,7 @@ func main() {
 	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
 	mux.HandleFunc("GET /api/services/infrastructure", handleInfrastructureDetail)
 	mux.HandleFunc("GET /api/cloud-spend", handleCloudSpend)
+	mux.HandleFunc("GET /api/costs/breakdown", handleCostsBreakdown)
 	mux.HandleFunc("POST /api/vm/stop", handleStopVM)
 
 	// Diary (Hugo static site)
