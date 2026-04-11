@@ -70,6 +70,21 @@ type Service struct {
 	Running      bool   `json:"running"`
 }
 
+// externalAPICacheTTL is the shared cache window for every handler
+// that fans out to a rate-limited upstream (Anthropic cost_report,
+// GCP BigQuery billing export, GCP Cloud Logging). The frontend polls
+// some of these endpoints every 15–60s, so without caching the
+// openclaw detail page alone would hit Anthropic ~4 times/minute and
+// the infra detail page would hit Cloud Logging at the same rate —
+// which is exactly how we started getting rate-limited.
+//
+// 15 minutes is short enough that "is anything on fire?" glances
+// still see fresh-enough numbers, and long enough that even a busy
+// day with multiple dashboards open never pushes us near any
+// upstream's published rate limits. If you bump this and start
+// seeing 429s again, this is the first knob to shrink.
+const externalAPICacheTTL = 15 * time.Minute
+
 // --- OAuth2 state tokens ---
 
 type stateStore struct {
@@ -564,7 +579,7 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	openclawCacheValue = detail
-	openclawCacheExpires = time.Now().Add(30 * time.Second)
+	openclawCacheExpires = time.Now().Add(externalAPICacheTTL)
 	sendJSON(w, detail)
 }
 
@@ -919,7 +934,7 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 	detail.TotalSecondsMonth = totalSecs
 
 	infraCacheValue = detail
-	infraCacheExpires = time.Now().Add(5 * time.Minute)
+	infraCacheExpires = time.Now().Add(externalAPICacheTTL)
 	sendJSON(w, detail)
 }
 
@@ -987,7 +1002,7 @@ func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
 	cs.TotalMTD = cs.AnthropicMTD + cs.GCPMTD
 
 	cloudSpendCacheValue = cs
-	cloudSpendCacheExpires = time.Now().Add(5 * time.Minute)
+	cloudSpendCacheExpires = time.Now().Add(externalAPICacheTTL)
 	sendJSON(w, cs)
 }
 
@@ -1197,7 +1212,7 @@ func handleCostsBreakdown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	costsBreakdownCacheValue = cb
-	costsBreakdownCacheExpires = time.Now().Add(10 * time.Minute)
+	costsBreakdownCacheExpires = time.Now().Add(externalAPICacheTTL)
 	sendJSON(w, cb)
 }
 
