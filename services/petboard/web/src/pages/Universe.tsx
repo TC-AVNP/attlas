@@ -15,6 +15,15 @@ import PriorityPill from "../components/PriorityPill";
 import { formatHours } from "../lib/format";
 import CanvasUniverse from "../canvas/CanvasUniverse";
 
+// Tiny query for the open-todos count badge in the header.
+function useOpenTodoCount(): number {
+  const { data } = useQuery({
+    queryKey: ["todos", false],
+    queryFn: () => api.listTodos(false),
+  });
+  return data?.todos.length ?? 0;
+}
+
 type ViewMode = "canvas" | "list";
 
 function totalsFor(p: Project): { done: number; total: number } {
@@ -29,6 +38,7 @@ function totalsFor(p: Project): { done: number; total: number } {
 
 export default function Universe() {
   const [view, setView] = useState<ViewMode>("canvas");
+  const openTodos = useOpenTodoCount();
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["projects"],
@@ -58,6 +68,18 @@ export default function Universe() {
           <p className="text-xs text-neutral-500">the universe</p>
         </div>
         <div className="flex items-center gap-2 text-xs">
+          <Link
+            to="/todos"
+            className="px-3 py-1 rounded border border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200 flex items-center gap-1.5"
+            title="standalone todos that aren't tied to any project"
+          >
+            todos
+            {openTodos > 0 && (
+              <span className="px-1 rounded bg-amber-500/20 text-amber-300 text-[10px] tabular-nums">
+                {openTodos}
+              </span>
+            )}
+          </Link>
           <button
             type="button"
             onClick={() => setView("canvas")}

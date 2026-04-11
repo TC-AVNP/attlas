@@ -54,3 +54,17 @@ export interface ProjectDetail extends Project {
 export interface ListProjectsResponse {
   projects: Project[];
 }
+
+// Todo is a standalone reminder that isn't tied to any project. Used
+// for cross-cutting work like "refactor the foo package" — things you
+// want to remember but don't deserve their own project.
+export interface Todo {
+  id: number;
+  text: string;
+  created_at: number;
+  completed_at?: number;
+}
+
+export interface ListTodosResponse {
+  todos: Todo[];
+}

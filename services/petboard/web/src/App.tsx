@@ -9,6 +9,7 @@
 import { Routes, Route } from "react-router-dom";
 import Universe from "./pages/Universe";
 import ProjectDetail from "./pages/ProjectDetail";
+import Todos from "./pages/Todos";
 import { useLiveUpdates } from "./api/events";
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Universe />} />
       <Route path="/p/:slug" element={<ProjectDetail />} />
+      <Route path="/todos" element={<Todos />} />
     </Routes>
   );
 }
