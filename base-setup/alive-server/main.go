@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -254,6 +255,163 @@ func getVMInfo() map[string]string {
 		"machine_type": mt,
 		"domain":       "attlas.uk",
 	}
+}
+
+// --- System load (live CPU + memory for the main dashboard) ---
+
+// SystemLoad is the /proc-sourced snapshot that the dashboard shows at
+// the top of the home page. Everything here is read from Linux
+// pseudo-files in microseconds, so no caching is needed and the poll
+// loop of /api/status can call getSystemLoad on every request.
+type SystemLoad struct {
+	CPUCores      int     `json:"cpu_cores"`
+	CPUPercent    int     `json:"cpu_percent"` // 0..100, delta-based from /proc/stat
+	LoadAvg1      float64 `json:"load_avg_1"`
+	LoadAvg5      float64 `json:"load_avg_5"`
+	LoadAvg15     float64 `json:"load_avg_15"`
+	MemTotalBytes uint64  `json:"mem_total_bytes"`
+	MemUsedBytes  uint64  `json:"mem_used_bytes"`
+	MemPercent    int     `json:"mem_percent"` // 0..100
+}
+
+// /proc/stat is a cumulative counter of jiffies since boot. Meaningful
+// CPU utilization requires two samples: we remember the last one in a
+// process-global and compute the delta vs "now". First call after
+// process start returns 0 because there's nothing to delta against;
+// every subsequent call covers the time since the previous call.
+type cpuStatSample struct {
+	total uint64
+	idle  uint64
+	at    time.Time
+}
+
+var (
+	cpuSampleMu sync.Mutex
+	cpuSample   cpuStatSample
+)
+
+// readCPUStat parses the aggregate "cpu" line from /proc/stat:
+//
+//	cpu  user nice system idle iowait irq softirq steal guest guest_nice
+//
+// Total = sum of all columns, idle = column 4 (index 3 after "cpu").
+// Per Linux convention the idle column includes both idle and iowait;
+// iowait is part of the 5th column and NOT counted as idle here, so
+// high iowait correctly shows up as "CPU busy" on the dashboard.
+func readCPUStat() (total, idle uint64, err error) {
+	data, rerr := os.ReadFile("/proc/stat")
+	if rerr != nil {
+		return 0, 0, rerr
+	}
+	firstNL := strings.IndexByte(string(data), '\n')
+	if firstNL < 0 {
+		return 0, 0, fmt.Errorf("unexpected /proc/stat layout")
+	}
+	fields := strings.Fields(string(data[:firstNL]))
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return 0, 0, fmt.Errorf("unexpected /proc/stat header: %q", string(data[:firstNL]))
+	}
+	for i := 1; i < len(fields); i++ {
+		v, perr := strconv.ParseUint(fields[i], 10, 64)
+		if perr != nil {
+			return 0, 0, perr
+		}
+		total += v
+		if i == 4 { // idle column
+			idle = v
+		}
+	}
+	return total, idle, nil
+}
+
+func getCPUUtilization() int {
+	cpuSampleMu.Lock()
+	defer cpuSampleMu.Unlock()
+
+	total, idle, err := readCPUStat()
+	if err != nil {
+		return 0
+	}
+
+	prev := cpuSample
+	cpuSample = cpuStatSample{total: total, idle: idle, at: time.Now()}
+
+	if prev.at.IsZero() || total <= prev.total {
+		return 0 // first call after start, or counter reset
+	}
+
+	totalDelta := total - prev.total
+	idleDelta := idle - prev.idle
+	if idleDelta > totalDelta {
+		idleDelta = totalDelta
+	}
+	if totalDelta == 0 {
+		return 0
+	}
+	pct := int(100 * (totalDelta - idleDelta) / totalDelta)
+	if pct < 0 {
+		pct = 0
+	} else if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
+// readMemInfo returns (total, available) in bytes. MemAvailable is the
+// kernel's own estimate of "memory you can allocate without swapping",
+// which is what we actually want for a "RAM in use" number — MemFree
+// alone is misleading because Linux aggressively uses free RAM for
+// page cache.
+func readMemInfo() (total, available uint64) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		v, perr := strconv.ParseUint(fields[1], 10, 64)
+		if perr != nil {
+			continue
+		}
+		v *= 1024 // /proc/meminfo values are in KB
+		switch fields[0] {
+		case "MemTotal:":
+			total = v
+		case "MemAvailable:":
+			available = v
+		}
+	}
+	return total, available
+}
+
+func getSystemLoad() SystemLoad {
+	sl := SystemLoad{CPUCores: runtime.NumCPU()}
+	sl.CPUPercent = getCPUUtilization()
+
+	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
+		fields := strings.Fields(string(data))
+		if len(fields) >= 3 {
+			sl.LoadAvg1, _ = strconv.ParseFloat(fields[0], 64)
+			sl.LoadAvg5, _ = strconv.ParseFloat(fields[1], 64)
+			sl.LoadAvg15, _ = strconv.ParseFloat(fields[2], 64)
+		}
+	}
+
+	total, available := readMemInfo()
+	sl.MemTotalBytes = total
+	if total > 0 {
+		var used uint64
+		if available < total {
+			used = total - available
+		}
+		sl.MemUsedBytes = used
+		sl.MemPercent = int(100 * used / total)
+	}
+
+	return sl
 }
 
 // --- Claude status ---
@@ -1850,6 +2008,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 		"services":      getServicesStatus(),
 		"dotfiles":      getDotfilesStatus(),
 		"domain_expiry": getDomainExpiry(),
+		"system_load":   getSystemLoad(),
 	})
 }
 

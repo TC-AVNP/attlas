@@ -182,6 +182,84 @@ function ServiceRow({ svc, busy, onInstall, onUninstall }) {
   )
 }
 
+// ── System load card ──────────────────────────────────────────────────
+// Shown first on the dashboard — CPU and memory are the two numbers
+// you want to glance at before anything else. Headline percentages
+// are big and color-coded by threshold; the sub-line gives context
+// (load average vs cores for CPU, absolute GB for memory) so the %
+// isn't hanging on its own.
+
+function bytesToGB(b) {
+  if (!b) return '0'
+  return (b / 1024 / 1024 / 1024).toFixed(1)
+}
+
+function loadColor(pct) {
+  if (pct >= 90) return 'var(--danger)'
+  if (pct >= 70) return 'var(--warning)'
+  return 'var(--brand)'
+}
+
+function LoadBar({ pct }) {
+  return (
+    <div className="load-bar" aria-hidden="true">
+      <div
+        className="load-bar-fill"
+        style={{
+          width: `${Math.max(2, Math.min(100, pct))}%`,
+          background: loadColor(pct),
+        }}
+      />
+    </div>
+  )
+}
+
+function SystemLoadCard({ load }) {
+  if (!load) {
+    return (
+      <Card label="system load · live" className="full">
+        <div className="muted">loading…</div>
+      </Card>
+    )
+  }
+  const cpuPct = load.cpu_percent ?? 0
+  const memPct = load.mem_percent ?? 0
+  const cores = load.cpu_cores || 1
+  const load1 = (load.load_avg_1 ?? 0).toFixed(2)
+  const load5 = (load.load_avg_5 ?? 0).toFixed(2)
+  const load15 = (load.load_avg_15 ?? 0).toFixed(2)
+  const memUsed = bytesToGB(load.mem_used_bytes)
+  const memTotal = bytesToGB(load.mem_total_bytes)
+
+  return (
+    <Card label="system load · live" className="full">
+      <div className="load-split">
+        <div className="load-col">
+          <div className="load-headline" style={{ color: loadColor(cpuPct) }}>
+            {cpuPct}%
+          </div>
+          <div className="load-lbl">cpu</div>
+          <LoadBar pct={cpuPct} />
+          <div className="load-meta">
+            load {load1} · {load5} · {load15}
+            <span className="muted"> / {cores} cores</span>
+          </div>
+        </div>
+        <div className="load-col">
+          <div className="load-headline" style={{ color: loadColor(memPct) }}>
+            {memPct}%
+          </div>
+          <div className="load-lbl">memory</div>
+          <LoadBar pct={memPct} />
+          <div className="load-meta">
+            {memUsed} / {memTotal} GB used
+          </div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 // ── Cloud spend card (combined total) ────────────────────────────────
 
 function CloudSpendCard() {
@@ -269,7 +347,7 @@ export default function Dashboard() {
   }
 
   const hero = heroStatus(status)
-  const { vm, user, claude, services, dotfiles, domain_expiry } = status
+  const { vm, user, claude, services, dotfiles, domain_expiry, system_load } = status
 
   const installService = async (id) => {
     if (!confirm(`Install ${id}?`)) return
@@ -387,6 +465,10 @@ export default function Dashboard() {
 
       {/* Card grid */}
       <div className="card-grid">
+        {/* System load — first and full width, this is what the user
+            wants to see before anything else on the home page. */}
+        <SystemLoadCard load={system_load} />
+
         {/* Cloud spend — full width */}
         <CloudSpendCard />
 

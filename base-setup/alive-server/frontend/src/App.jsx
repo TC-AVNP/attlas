@@ -38,7 +38,15 @@ function StatusProvider({ children }) {
     }
   }, [])
 
-  useEffect(() => { fetchStatus() }, [fetchStatus])
+  // Poll /api/status every 10s so the live CPU/memory card and the
+  // hero status stay current without the user having to refresh.
+  // /api/status is cheap (all local /proc reads + already-cached
+  // systemctl calls) so this is not a rate-limit concern.
+  useEffect(() => {
+    fetchStatus()
+    const t = setInterval(fetchStatus, 10000)
+    return () => clearInterval(t)
+  }, [fetchStatus])
 
   return (
     <StatusContext.Provider value={{ status, refresh: fetchStatus, showToast }}>
