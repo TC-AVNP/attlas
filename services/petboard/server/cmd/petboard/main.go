@@ -9,9 +9,17 @@
 // Configuration is entirely via environment variables so the systemd
 // unit can own it without a config file:
 //
-//   PETBOARD_DB          path to the sqlite database file
-//   PETBOARD_PORT        TCP port to bind on 127.0.0.1
-//   PETBOARD_STATIC_DIR  directory served at /petboard/ (vite dist/)
+//   PETBOARD_DB             path to the sqlite database file
+//   PETBOARD_PORT           TCP port to bind on 127.0.0.1
+//   PETBOARD_STATIC_DIR     directory served at /petboard/ (vite dist/)
+//   PETBOARD_ISSUER         canonical https://attlas.uk/petboard URL used by
+//                           the OAuth metadata endpoints
+//   PETBOARD_LOCAL_BYPASS   when set to "1", requests that arrive on the
+//                           loopback interface without an X-Forwarded-For
+//                           header skip the bearer check and run with a
+//                           synthetic local-bypass identity. Public-internet
+//                           requests always have X-Forwarded-For set by Caddy
+//                           so this can never weaken the real auth gate.
 //
 // See services/petboard/PLAN.md for the full design.
 package main
@@ -33,6 +41,9 @@ import (
 
 	"petboard/api"
 	"petboard/db"
+	"petboard/events"
+	"petboard/mcp"
+	"petboard/oauth"
 	"petboard/service"
 )
 
@@ -65,6 +76,8 @@ func runServe(args []string) {
 	port := fs.Int("port", envInt("PETBOARD_PORT", 7690), "HTTP listen port (bound to 127.0.0.1)")
 	dbPath := fs.String("db", envString("PETBOARD_DB", "/var/lib/petboard/petboard.db"), "SQLite path")
 	staticDir := fs.String("static", envString("PETBOARD_STATIC_DIR", defaultStaticDir()), "React build directory (Vite dist/)")
+	issuer := fs.String("issuer", envString("PETBOARD_ISSUER", "https://attlas.uk/petboard"), "OAuth issuer / canonical base URL")
+	localBypass := fs.Bool("local-bypass", envString("PETBOARD_LOCAL_BYPASS", "") == "1", "skip OAuth on direct-loopback requests (debug only)")
 	_ = fs.Parse(args)
 
 	conn, err := db.Open(*dbPath)
@@ -74,12 +87,22 @@ func runServe(args []string) {
 	defer conn.Close()
 
 	svc := service.New(conn)
-	apiHandler := &api.API{Svc: svc}
+	broker := events.New()
+	apiHandler := &api.API{Svc: svc, Events: broker}
+	oauthSrv := oauth.New(conn, *issuer, *localBypass)
+	mcpHandler := &mcp.Handler{Svc: svc, Events: broker}
+	if *localBypass {
+		log.Printf("petboard: WARNING — PETBOARD_LOCAL_BYPASS enabled; loopback MCP requests skip OAuth")
+	}
 
 	// Inner mux: routes as the downstream sees them AFTER we strip the
 	// /petboard/ prefix.
 	inner := http.NewServeMux()
 	apiHandler.Register(inner)
+	oauthSrv.Register(inner)
+	// MCP is bearer-protected; everything in /petboard/mcp is in the
+	// public-paths registry so alive-server lets it through to us.
+	inner.Handle("POST /mcp", oauthSrv.BearerMiddleware(mcpHandler))
 	inner.Handle("/", spaFileServer(*staticDir))
 
 	// Outer mux: Caddy proxies /petboard/* to us. Strip the prefix so
@@ -90,11 +113,13 @@ func runServe(args []string) {
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      loggingMiddleware(outer),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  90 * time.Second,
+		Addr:    addr,
+		Handler: loggingMiddleware(outer),
+		// SSE connections live forever; ReadHeaderTimeout still
+		// protects against slowloris on the request side. WriteTimeout
+		// is unset because the /api/events handler streams indefinitely.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start the server in a goroutine so main can handle signals.
@@ -241,6 +266,15 @@ type loggingResponseWriter struct {
 func (w *loggingResponseWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// Flush proxies to the underlying writer so SSE handlers can flush
+// chunks. http.ResponseWriter does NOT inherit Flusher via embedding
+// because the type assertion checks the concrete type.
+func (w *loggingResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // --- env helpers -------------------------------------------------------

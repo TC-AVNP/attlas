@@ -1,18 +1,21 @@
-// Universe is the placeholder list view for /petboard/. The real
-// react-konva canvas comes in task #8. For now, this is the smoke test
-// that proves the frontend ↔ backend round-trip works through the
-// Caddy + alive-server auth gate. It's intentionally ugly.
+// Universe is the / page. It has two view modes:
+//   - canvas: react-konva infinite-zoom universe (the "real" UI)
+//   - list:   plain rows for accessibility / debugging
+//
+// The canvas needs feature data per project, so we fan out to
+// /api/projects/:slug for each project after the list loads. react-query
+// caches both queries so /p/:slug navigations reuse the data.
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { Project, Status } from "../api/types";
+import type { Project, ProjectDetail, Status } from "../api/types";
+import PriorityPill from "../components/PriorityPill";
+import { formatHours } from "../lib/format";
+import CanvasUniverse from "../canvas/CanvasUniverse";
 
-const PRIORITY_STYLES: Record<string, string> = {
-  high: "bg-red-500/20 text-red-300 border-red-500/40",
-  medium: "bg-amber-500/20 text-amber-300 border-amber-500/40",
-  low: "bg-sky-500/20 text-sky-300 border-sky-500/40",
-};
+type ViewMode = "canvas" | "list";
 
 function totalsFor(p: Project): { done: number; total: number } {
   const counts = p.feature_counts ?? {};
@@ -24,81 +27,184 @@ function totalsFor(p: Project): { done: number; total: number } {
   return { done, total };
 }
 
-function formatHours(minutes: number): string {
-  if (minutes < 60) return `${minutes}m`;
-  const hours = minutes / 60;
-  return hours >= 10 ? `${Math.round(hours)}h` : `${hours.toFixed(1)}h`;
-}
-
 export default function Universe() {
+  const [view, setView] = useState<ViewMode>("canvas");
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["projects"],
     queryFn: () => api.listProjects(),
   });
 
+  // Fan out to per-project detail queries so the canvas can render orbs.
+  // useQueries with `enabled` only fires once we have the project list.
+  const projects = data?.projects ?? [];
+  const detailQueries = useQueries({
+    queries: projects.map((p) => ({
+      queryKey: ["project", p.slug],
+      queryFn: () => api.getProject(p.slug),
+      staleTime: 30_000,
+    })),
+  });
+  const details: Record<string, ProjectDetail> = {};
+  detailQueries.forEach((q, i) => {
+    if (q.data) details[projects[i].slug] = q.data;
+  });
+
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 p-8">
-      <header className="mb-8">
-        <h1 className="text-3xl font-semibold tracking-tight">petboard</h1>
-        <p className="mt-1 text-sm text-neutral-400">
-          the universe — list view (canvas comes in task #8)
-        </p>
+    <main className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col">
+      <header className="flex items-center justify-between p-4 border-b border-neutral-900">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">petboard</h1>
+          <p className="text-xs text-neutral-500">the universe</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setView("canvas")}
+            className={`px-3 py-1 rounded border ${
+              view === "canvas"
+                ? "border-neutral-500 bg-neutral-800 text-neutral-100"
+                : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            canvas
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("list")}
+            className={`px-3 py-1 rounded border ${
+              view === "list"
+                ? "border-neutral-500 bg-neutral-800 text-neutral-100"
+                : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200"
+            }`}
+          >
+            list
+          </button>
+        </div>
       </header>
 
-      {isLoading && <p className="text-neutral-400">loading…</p>}
-
+      {isLoading && (
+        <div className="p-8 space-y-3 max-w-4xl">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-20 rounded-lg border border-neutral-900 bg-neutral-900/30 animate-pulse"
+            />
+          ))}
+        </div>
+      )}
       {error && (
-        <div className="rounded border border-red-500/40 bg-red-500/10 p-4 text-red-300">
+        <div className="m-4 rounded border border-red-500/40 bg-red-500/10 p-4 text-red-300">
           failed to load projects: {(error as Error).message}
         </div>
       )}
 
-      {data && data.projects.length === 0 && (
-        <p className="text-neutral-400">no projects yet.</p>
+      {data && view === "canvas" && (
+        <CanvasArea projects={data.projects} details={details} />
       )}
 
-      {data && data.projects.length > 0 && (
-        <ul className="space-y-3">
-          {data.projects.map((p) => {
-            const { done, total } = totalsFor(p);
-            const priorityClass =
-              PRIORITY_STYLES[p.priority] ?? PRIORITY_STYLES.medium;
-            return (
-              <li key={p.id}>
-                <Link
-                  to={`/p/${p.slug}`}
-                  className="block rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-700 hover:bg-neutral-900 transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <span
-                      className="h-3 w-3 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: p.color }}
-                      aria-hidden
-                    />
-                    <h2 className="text-lg font-medium flex-1">{p.name}</h2>
-                    <span
-                      className={`px-2 py-0.5 text-xs uppercase tracking-wide rounded border ${priorityClass}`}
-                    >
-                      {p.priority}
-                    </span>
-                    <span className="text-sm text-neutral-400 tabular-nums">
-                      {done}/{total}
-                    </span>
-                    <span className="text-sm text-neutral-400 tabular-nums">
-                      {formatHours(p.total_minutes)}
-                    </span>
-                  </div>
-                  {p.problem && (
-                    <p className="mt-2 text-sm text-neutral-500 line-clamp-2">
-                      {p.problem}
-                    </p>
-                  )}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+      {data && view === "list" && (
+        <ListView projects={data.projects} />
       )}
     </main>
+  );
+}
+
+// ----- subviews ----------------------------------------------------------
+
+function CanvasArea({
+  projects,
+  details,
+}: {
+  projects: Project[];
+  details: Record<string, ProjectDetail>;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 800, height: 600 });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setSize({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <div ref={ref} className="flex-1 min-h-0 overflow-hidden">
+      {projects.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <CanvasUniverse
+          data={{ projects, details }}
+          width={size.width}
+          height={size.height}
+        />
+      )}
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <div className="max-w-md text-center">
+        <div className="mx-auto mb-4 h-12 w-12 rounded-full border border-neutral-800 flex items-center justify-center text-neutral-600">
+          ✦
+        </div>
+        <h2 className="text-lg font-medium text-neutral-200">
+          the universe is empty
+        </h2>
+        <p className="mt-2 text-sm text-neutral-500 leading-relaxed">
+          Pet projects show up here as glowing threads on a calendar. Talk to
+          Claude Code (the petboard skill is wired to MCP) about a new pet
+          project, and it will land on the canvas in real time.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ListView({ projects }: { projects: Project[] }) {
+  if (projects.length === 0) {
+    return <p className="p-8 text-neutral-400">no projects yet.</p>;
+  }
+  return (
+    <ul className="space-y-3 max-w-4xl p-6">
+      {projects.map((p) => {
+        const { done, total } = totalsFor(p);
+        return (
+          <li key={p.id}>
+            <Link
+              to={`/p/${p.slug}`}
+              className="block rounded-lg border border-neutral-800 bg-neutral-900/50 p-4 hover:border-neutral-700 hover:bg-neutral-900 transition-colors"
+            >
+              <div className="flex items-center gap-4">
+                <span
+                  className="h-3 w-3 rounded-full flex-shrink-0"
+                  style={{ backgroundColor: p.color }}
+                  aria-hidden
+                />
+                <h2 className="text-lg font-medium flex-1">{p.name}</h2>
+                <PriorityPill priority={p.priority} />
+                <span className="text-sm text-neutral-400 tabular-nums">
+                  {done}/{total}
+                </span>
+                <span className="text-sm text-neutral-400 tabular-nums">
+                  {formatHours(p.total_minutes)}
+                </span>
+              </div>
+              {p.problem && (
+                <p className="mt-2 text-sm text-neutral-500 line-clamp-2">
+                  {p.problem}
+                </p>
+              )}
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

@@ -12,12 +12,22 @@ import (
 	"strconv"
 	"strings"
 
+	"petboard/events"
 	"petboard/service"
 )
 
 // API bundles the dependencies every handler needs.
 type API struct {
-	Svc *service.Service
+	Svc    *service.Service
+	Events *events.Broker // optional — handlers nil-check before publishing
+}
+
+// publish is a small helper so handlers can fire events without nil checks.
+func (a *API) publish(eventType string, payload any) {
+	if a.Events == nil {
+		return
+	}
+	a.Events.Publish(events.Event{Type: eventType, Payload: payload})
 }
 
 // Register attaches every petboard REST route to the given mux under
@@ -39,6 +49,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Features
 	mux.HandleFunc("PATCH /api/features/{id}", a.updateFeature)
 	mux.HandleFunc("DELETE /api/features/{id}", a.deleteFeature)
+
+	// SSE live updates — only registered if a broker is wired up.
+	if a.Events != nil {
+		mux.Handle("GET /api/events", a.Events.Handler())
+	}
 }
 
 // --- shared helpers ----------------------------------------------------
