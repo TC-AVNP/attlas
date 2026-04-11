@@ -1,14 +1,16 @@
-// App is the scaffold placeholder. Real routing, canvas, and data
-// fetching come in tasks 6–12.
+// App owns routing only. Each route maps to a page component under
+// src/pages/. The basename is /petboard so all <Link to="/p/foo">
+// resolve to /petboard/p/foo, matching how Caddy serves the SPA.
+
+import { Routes, Route } from "react-router-dom";
+import Universe from "./pages/Universe";
+import ProjectDetail from "./pages/ProjectDetail";
+
 export default function App() {
   return (
-    <main className="min-h-screen flex items-center justify-center">
-      <div className="text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">petboard</h1>
-        <p className="mt-2 text-sm text-neutral-400">
-          scaffold — the universe will live here
-        </p>
-      </div>
-    </main>
+    <Routes>
+      <Route path="/" element={<Universe />} />
+      <Route path="/p/:slug" element={<ProjectDetail />} />
+    </Routes>
   );
 }
