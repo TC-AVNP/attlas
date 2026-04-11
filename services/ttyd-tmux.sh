@@ -18,5 +18,16 @@ if [[ -z "$SESSION" ]]; then
   SESSION="main"
 fi
 
+# IAPETUS_TTYD is picked up by the `if-shell` guard in tmux.conf to
+# force `mouse off` on this server only. Without it, xterm.js in the
+# browser (ttyd 1.7.7 → xterm.js 5.4.0) can't do native drag-select +
+# Cmd+C copy because tmux intercepts the drag events and has no
+# working clipboard path out of the browser. Local laptop tmux
+# servers never set this var, so their mouse-on behavior is
+# unchanged. The env var only matters on the very first wrapper
+# invocation after a server restart (when tmux.conf is sourced);
+# later invocations inherit the already-applied setting.
+export IAPETUS_TTYD=1
+
 # new-session -A: attach if it exists, create if it doesn't.
 exec /usr/bin/tmux -L attlas new-session -A -s "$SESSION"
