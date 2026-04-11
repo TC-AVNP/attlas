@@ -138,6 +138,7 @@ function ClaudeLogin({ onDone }) {
 
 const DETAIL_ROUTES = {
   openclaw: '/services/details/openclaw',
+  terminal: '/services/details/terminal',
 }
 
 function ServiceRow({ svc, busy, onInstall, onUninstall }) {
