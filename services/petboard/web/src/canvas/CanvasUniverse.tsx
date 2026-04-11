@@ -32,6 +32,12 @@ import type {
   Status,
 } from "../api/types";
 import { formatDate, formatRelative } from "../lib/format";
+import { exportUniverseSVG, downloadSVG } from "./svgExport";
+
+// A high-priority project counts as "stale" once this many seconds
+// have passed without any logged effort. The canvas draws a pulsing
+// dashed ring around the label when this threshold is crossed.
+const STALE_HIGH_PRIORITY_SECS = 14 * 86400; // 14 days
 
 // ----- layout constants ---------------------------------------------------
 
@@ -86,6 +92,22 @@ export default function CanvasUniverse({ data, width, height }: Props) {
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now() / 1000), 60_000);
     return () => clearInterval(id);
+  }, []);
+
+  // Pulse phase for stale-project nudge — 0..1, ticks 30 times/sec
+  // while the canvas is mounted. Cheap; React only re-renders when the
+  // value crosses a threshold so this doesn't thrash.
+  const [pulse, setPulse] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const start = performance.now();
+    const tick = (t: number) => {
+      // 1.5s pulse period
+      setPulse(((t - start) / 1500) % 1);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   // filters
@@ -245,6 +267,23 @@ export default function CanvasUniverse({ data, width, height }: Props) {
   const showProjectLabels = scale >= 0.4;
   const showFeatureLabels = scale >= 1.5;
 
+  // ----- stale-project detection ----------------------------------------
+
+  // A high-priority project is "stale" if it has gone STALE_HIGH_PRIORITY_SECS
+  // without any logged effort. We compute the latest effort timestamp
+  // per project from the loaded detail bundles.
+  const isStale = (project: Project): boolean => {
+    if (project.priority !== "high") return false;
+    const detail = data.details?.[project.slug];
+    if (!detail) return false;
+    let latest = 0;
+    for (const e of detail.effort) {
+      if (e.logged_at > latest) latest = e.logged_at;
+    }
+    if (latest === 0) return now - project.created_at > STALE_HIGH_PRIORITY_SECS;
+    return now - latest > STALE_HIGH_PRIORITY_SECS;
+  };
+
   // ----- time window opacity --------------------------------------------
 
   const featureOpacity = (f: Feature): number => {
@@ -296,6 +335,8 @@ export default function CanvasUniverse({ data, width, height }: Props) {
               scale={scale}
               enabledStatuses={enabledStatuses}
               featureOpacity={featureOpacity}
+              stale={isStale(project)}
+              pulse={pulse}
               onLabelClick={() => navigate(`/p/${project.slug}`)}
               onLabelDragEnd={(newY) =>
                 updateY.mutate({ slug: project.slug, y: newY })
@@ -330,8 +371,25 @@ export default function CanvasUniverse({ data, width, height }: Props) {
       {/* Top-center time window slider */}
       <TimeWindowSlider value={windowDays} onChange={setWindowDays} />
 
-      {/* Top-right zoom controls */}
+      {/* Top-right zoom controls + export */}
       <div className="absolute top-3 right-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            const svg = exportUniverseSVG({
+              projects: data.projects,
+              details: data.details ?? {},
+              width: Math.max(width, 800),
+              height: Math.max(height, 400),
+            });
+            const stamp = new Date().toISOString().slice(0, 10);
+            downloadSVG(svg, `petboard-universe-${stamp}.svg`);
+          }}
+          className="px-3 py-1 text-xs rounded border border-neutral-700 bg-neutral-900/80 backdrop-blur hover:bg-neutral-800"
+          title="export current universe as SVG (for diary embeds)"
+        >
+          svg
+        </button>
         <button
           type="button"
           onClick={fitAll}
@@ -393,6 +451,8 @@ function ProjectThread({
   scale,
   enabledStatuses,
   featureOpacity,
+  stale,
+  pulse,
   onLabelClick,
   onLabelDragEnd,
   onOrbClick,
@@ -407,6 +467,8 @@ function ProjectThread({
   scale: number;
   enabledStatuses: Set<Status>;
   featureOpacity: (f: Feature) => number;
+  stale: boolean;
+  pulse: number;
   onLabelClick: () => void;
   onLabelDragEnd: (newY: number) => void;
   onOrbClick: (f: Feature) => void;
@@ -487,6 +549,24 @@ function ProjectThread({
             cornerRadius={3}
             opacity={0.92}
           />
+          {/* Stale-project nudge: pulsing dashed outer ring around the
+              label when this is a high-priority project that has not
+              seen logged effort recently. */}
+          {stale && (
+            <Rect
+              x={-7}
+              y={-5}
+              width={Math.max(project.name.length * 8 + 12, 60) + 6}
+              height={26}
+              fill="transparent"
+              stroke="#fbbf24"
+              strokeWidth={1.5}
+              dash={[4, 3]}
+              cornerRadius={5}
+              opacity={0.4 + 0.55 * Math.abs(Math.sin(pulse * Math.PI))}
+              listening={false}
+            />
+          )}
           <Text
             text={project.name}
             x={4}

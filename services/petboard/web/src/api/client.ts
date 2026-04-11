@@ -10,10 +10,12 @@ import type {
   EffortLog,
   Feature,
   ListProjectsResponse,
+  ListTodosResponse,
   Priority,
   Project,
   ProjectDetail,
   Status,
+  Todo,
 } from "./types";
 
 const API_PREFIX = "/petboard/api";
@@ -121,4 +123,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // Standalone todos (not tied to any project)
+  listTodos: (includeCompleted = false) =>
+    request<ListTodosResponse>(
+      `/todos${includeCompleted ? "?include_completed=1" : ""}`,
+    ),
+  createTodo: (text: string) =>
+    request<Todo>("/todos", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
+  updateTodo: (id: number, body: { text?: string; completed?: boolean }) =>
+    request<Todo>(`/todos/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteTodo: (id: number) =>
+    request<void>(`/todos/${id}`, { method: "DELETE" }),
 };

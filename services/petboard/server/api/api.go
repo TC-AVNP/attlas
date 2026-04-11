@@ -50,6 +50,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/features/{id}", a.updateFeature)
 	mux.HandleFunc("DELETE /api/features/{id}", a.deleteFeature)
 
+	// Standalone todos (not tied to any project)
+	mux.HandleFunc("GET /api/todos", a.listTodos)
+	mux.HandleFunc("POST /api/todos", a.createTodo)
+	mux.HandleFunc("PATCH /api/todos/{id}", a.updateTodo)
+	mux.HandleFunc("DELETE /api/todos/{id}", a.deleteTodo)
+
 	// SSE live updates — only registered if a broker is wired up.
 	if a.Events != nil {
 		mux.Handle("GET /api/events", a.Events.Handler())

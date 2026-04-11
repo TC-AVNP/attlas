@@ -2,7 +2,7 @@
 //
 // One binary, three subcommands:
 //
-//   petboard serve    — run the HTTP server (REST + static SPA + later MCP)
+//   petboard serve    — run the HTTP server (REST + static SPA + MCP)
 //   petboard migrate  — apply SQLite schema migrations and exit
 //   petboard version  — print the version string and exit
 //
