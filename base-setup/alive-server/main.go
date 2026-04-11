@@ -832,46 +832,81 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 		since.UTC().Format(time.RFC3339),
 	)
 
-	body := map[string]interface{}{
-		"resourceNames": []string{"projects/" + projectID},
-		"filter":        filter,
-		"pageSize":      1000,
-		"orderBy":       "timestamp asc",
-	}
-	bodyJSON, _ := json.Marshal(body)
-
-	req, _ := http.NewRequest("POST", "https://logging.googleapis.com/v2/entries:list", bytes.NewReader(bodyJSON))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
+	// Cloud Logging's entries:list API can legitimately return empty
+	// pages in the middle of a multi-page result — it scans log
+	// buckets in time windows and some windows are empty even when
+	// later ones contain data. Walking pages until nextPageToken is
+	// empty is required, NOT optional. We saw this in practice:
+	// page 1 had 2 old insert events, pages 2-4 were empty with
+	// live cursors, and page 5 had the 37 events we actually cared
+	// about. Stopping at the first non-empty page lost 95% of data.
+	//
+	// Hard cap at 50 pages so a pathological filter can't stall the
+	// dashboard for minutes. With pageSize=1000 that's up to 50k
+	// entries, comfortably more than we'll ever have in a month.
+	const maxPages = 50
 	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("logging request: %v", err)
-	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("logging %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	type logEntry struct {
+		Timestamp    string `json:"timestamp"`
+		ProtoPayload struct {
+			MethodName string `json:"methodName"`
+		} `json:"protoPayload"`
 	}
-
-	var result struct {
-		Entries []struct {
-			Timestamp    string `json:"timestamp"`
-			ProtoPayload struct {
-				MethodName string `json:"methodName"`
-			} `json:"protoPayload"`
-		} `json:"entries"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode logging: %v", err)
+	type logResponse struct {
+		Entries       []logEntry `json:"entries"`
+		NextPageToken string     `json:"nextPageToken"`
 	}
 
-	events := make([]instanceEvent, 0, len(result.Entries))
+	var allRaw []logEntry
+	var pageToken string
+	pagesFetched := 0
+	for pagesFetched < maxPages {
+		body := map[string]interface{}{
+			"resourceNames": []string{"projects/" + projectID},
+			"filter":        filter,
+			"pageSize":      1000,
+			"orderBy":       "timestamp asc",
+		}
+		if pageToken != "" {
+			body["pageToken"] = pageToken
+		}
+		bodyJSON, _ := json.Marshal(body)
+
+		req, _ := http.NewRequest("POST", "https://logging.googleapis.com/v2/entries:list", bytes.NewReader(bodyJSON))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("logging request page %d: %v", pagesFetched+1, err)
+		}
+		if resp.StatusCode >= 400 {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			return nil, fmt.Errorf("logging %d on page %d: %s", resp.StatusCode, pagesFetched+1, strings.TrimSpace(string(raw)))
+		}
+
+		var page logResponse
+		if derr := json.NewDecoder(resp.Body).Decode(&page); derr != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("decode logging page %d: %v", pagesFetched+1, derr)
+		}
+		resp.Body.Close()
+
+		allRaw = append(allRaw, page.Entries...)
+		pagesFetched++
+
+		if page.NextPageToken == "" {
+			break
+		}
+		pageToken = page.NextPageToken
+	}
+
+	events := make([]instanceEvent, 0, len(allRaw))
 	var parseFailures int
 	var lastParseErr string
-	for _, e := range result.Entries {
+	for _, e := range allRaw {
 		t, err := parseLoggingTimestamp(e.Timestamp)
 		if err != nil {
 			parseFailures++
@@ -896,8 +931,8 @@ func fetchInstanceEvents(since time.Time) ([]instanceEvent, error) {
 	sort.Slice(events, func(i, j int) bool {
 		return events[i].timestamp.Before(events[j].timestamp)
 	})
-	log.Printf("infra: fetched %d raw entries, parsed %d events, %d parse failures (last err: %q)",
-		len(result.Entries), len(events), parseFailures, lastParseErr)
+	log.Printf("infra: fetched %d raw entries over %d pages, parsed %d events, %d parse failures (last err: %q)",
+		len(allRaw), pagesFetched, len(events), parseFailures, lastParseErr)
 	return events, nil
 }
 
