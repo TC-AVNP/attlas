@@ -40,19 +40,25 @@ install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${STATE_DIR}"
 # 3. Build the React frontend as BUILD_USER so node_modules and dist
 #    end up owned by the same user that owns the source tree. node + npm
 #    come from the base-setup install.
+#
+# PATH note: sudo -u ... bash -c runs a non-login shell so /etc/profile.d
+# files (where go and node land on the attlas VM) are not sourced. We
+# prepend the known install locations explicitly so the build never
+# depends on the caller's environment.
+BUILD_PATH="/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+
 echo "Building petboard web frontend..."
-sudo -u "${BUILD_USER}" -H bash -c "
+sudo -u "${BUILD_USER}" -H env PATH="${BUILD_PATH}" bash -c "
   cd '${PETBOARD_DIR}/web' && \
-  npm ci --no-audit --no-fund --prefer-offline 2>/dev/null || \
-  npm install --no-audit --no-fund
+  (npm ci --no-audit --no-fund --prefer-offline 2>/dev/null || npm install --no-audit --no-fund)
 "
-sudo -u "${BUILD_USER}" -H bash -c "cd '${PETBOARD_DIR}/web' && npm run build"
+sudo -u "${BUILD_USER}" -H env PATH="${BUILD_PATH}" bash -c "cd '${PETBOARD_DIR}/web' && npm run build"
 
 # 4. Build the Go binary as BUILD_USER. `go mod tidy` populates go.sum
 #    from the single direct require in go.mod on first install (and is a
 #    no-op on subsequent runs).
 echo "Building petboard Go binary..."
-sudo -u "${BUILD_USER}" -H bash -c "
+sudo -u "${BUILD_USER}" -H env PATH="${BUILD_PATH}" bash -c "
   cd '${PETBOARD_DIR}/server' && \
   go mod tidy && \
   go build -o /tmp/petboard-build ./cmd/petboard
