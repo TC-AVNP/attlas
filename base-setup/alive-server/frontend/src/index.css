@@ -671,6 +671,100 @@ a:hover { text-decoration: underline; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 0.8rem; }
 }
 
+/* ── Chart tooltip + legend (stacked uptime chart) ──────────────────── */
+/*
+ * The tooltip is a React-rendered absolutely-positioned div, NOT a
+ * native SVG <title>. Native titles take ~2 seconds to appear and
+ * can't render per-VM swatches, which makes a stacked chart almost
+ * unusable. `.chart-wrap` is the positioning anchor.
+ */
+.chart-wrap {
+  position: relative;
+}
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+  min-width: 10rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  font-size: 0.82rem;
+}
+.chart-tooltip-date {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+}
+.chart-tooltip-swatch {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.chart-tooltip-name {
+  flex: 1;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chart-tooltip-val {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.chart-tooltip-total {
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-align: right;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.2rem;
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.chart-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.chart-legend-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+.chart-legend-name {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+.chart-legend-val {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
 /* ── SVG bar chart ──────────────────────────────────────────────────── */
 
 .bar-chart {
