@@ -7,3 +7,12 @@
 # Secrets
 *.pem
 *.key
+
+# Go build artifacts
+/base-setup/alive-server/alive-server
+/base-setup/alive-server/attlas-server
+/services/alive-server/alive-server
+/services/alive-server/attlas-server
+/services/*/cmd/*/main
+/services/splitsies/server/splitsies
+/services/splitsies-gateway/splitsies-gateway
