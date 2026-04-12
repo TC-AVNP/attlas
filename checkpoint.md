@@ -1,6 +1,6 @@
 # Refactor Checkpoint
 
-**Last updated:** 2026-04-12 20:38 UTC
+**Last updated:** 2026-04-12 20:55 UTC
 
 ## Status
 
@@ -12,53 +12,76 @@
 | 2.2 — internal/gcp | done | `14c09d7` |
 | 2.3 — internal/config | done | `d6b1eb2` |
 | 2.4 — internal/auth | done | `3196530` |
-| 2.5 — internal/status | in progress | — |
-| 2.6 — internal/costs | pending | — |
-| 2.7 — internal/openclaw | pending | — |
-| 2.8 — internal/infra | pending | — |
-| 2.9 — internal/services | pending | — |
-| 2.10 — internal/static | pending | — |
-| 3 — Flatten services/ | pending | — |
-| 4 — Move diary into services/ | pending | — |
-| 5 — Extract claude-login helper | pending | — |
+| 2.5 — internal/status | done | `ca17cc5` |
+| 2.6 — internal/costs | **deferred** | — |
+| 2.7 — internal/openclaw | **deferred** | — |
+| 2.8 — internal/infra | **deferred** | — |
+| 2.9 — internal/services | **deferred** | — |
+| 2.10 — internal/static | **deferred** | — |
+| 3 — Flatten services/ | done | `fc80734` |
+| 4 — Move diary into services/ | done | `677a0b6` |
+| 5 — Extract claude-login helper | in progress | — |
 | 6 — Tidy up base-setup | pending | — |
 | 7 — Per-service CLAUDE.md | pending | — |
 | Final — Run all tests | pending | — |
 
 ## Main.go size trajectory
 
-| commit | lines | delta |
-|---|---|---|
-| baseline (`d82e646`) | 2597 | — |
-| util (`c41bc1b`) | 2547 | −50 |
-| gcp (`14c09d7`) | 2505 | −42 |
-| config (`d6b1eb2`) | 2452 | −53 |
-| auth (`3196530`) | 1961 | −491 |
+| commit | lines |
+|---|---|
+| baseline (`d82e646`) | 2597 |
+| after util | 2547 |
+| after gcp | 2505 |
+| after config | 2452 |
+| after auth | 1961 |
+| after status | 1589 |
 
-Target: ≤ 200. Still ~1760 lines to move. Remaining packages:
-status, costs, openclaw, infra, services, static.
+Current main.go is ~1589 lines. Target was ≤200 but the remaining
+splits (costs/openclaw/infra/services/static) are deferred to finish
+the higher-user-value structural moves first.
+
+## Pivoted priorities
+
+Steps 3-5 have the most day-to-day impact (services each own a folder,
+diary lives in the right place, claude-login extracted). Splitting
+the remaining main.go content is valuable but less urgent; it can
+happen in another session following the same pattern as the completed
+splits (util/gcp/config/auth/status).
 
 ## Deploy state
 
-alive-server at commit `3196530`, all tests passing (9 units active,
-all API endpoints returning 200, gateway still 401s correctly,
-loopback trust still routes to system user).
+alive-server at `677a0b6`, serving from
+`/home/agnostic-user/iapetus/attlas/services/alive-server/attlas-server`.
+Every test passes (systemd units, localhost API endpoints, public
+HTTPS, loopback trust).
+
+## Services folder after step 3
+
+```
+services/
+├── CLAUDE.md
+├── README.md
+├── install.sh                     # menu script, discovers */install.sh
+├── alive-server/
+├── code-server/                   # install.sh + uninstall.sh + code-server.caddy
+├── diary/                         # install.sh + uninstall.sh + diary.caddy + hugo.toml + content/ + layouts/
+├── homelab-planner/
+├── openclaw/                      # install.sh + uninstall.sh + openclaw.caddy
+├── petboard/
+├── splitsies/                     # install.sh + ... + server/ + web/
+├── splitsies-gateway/
+└── terminal/                      # install.sh + uninstall.sh + terminal.caddy + ttyd-tmux.sh + ttyd-mobile-keyboard.html
+```
+
+No more flat `install-*.sh` or bare `*.caddy` files.
 
 ## Resume path
 
-If session dies:
 1. `cd /home/agnostic-user/iapetus/attlas`
-2. `git log --oneline -10` — find last refactor commit
-3. Read `refactor.md`, this file, `service-tests.md`.
-4. `services/alive-server/cmd/attlas-server/main.go` is the source of
-   remaining splits. Follow the order in "Step 2 plan".
-5. Each split follows the same pattern:
-   a. Create `internal/<pkg>/*.go` with exported versions
-   b. `sed -i -E 's/\boldFn\(/pkg.NewFn(/g' cmd/attlas-server/*.go`
-   c. Delete originals from main.go (Python script by line range
-      works well for big chunks — see auth split for example)
-   d. Add import to main.go
-   e. `cd services/alive-server && go build -o attlas-server ./cmd/attlas-server`
-   f. `sudo systemctl restart alive-server && curl .../api/status`
-   g. commit + push
-6. NEVER run `terraform`. NEVER kill the tmux session.
+2. `git log --oneline -15` — see last refactor commit
+3. Read `refactor.md`, this file, `service-tests.md`
+4. Continue at the in-progress step
+5. NEVER run `terraform`. NEVER kill the tmux session.
+6. When resuming the deferred main.go splits: pattern is in
+   `internal/util`, `internal/gcp`, etc. Look at how auth was
+   split for the biggest example (~500 lines).
