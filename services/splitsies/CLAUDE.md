@@ -21,7 +21,7 @@ Internet
  splitsies-gateway  (Go, 127.0.0.1:7700)
    │  reads routes from /etc/splitsies-gateway.d/*.conf, longest-prefix wins
    ▼
- splitsies backend  (Go, 127.0.0.1:7691)
+ splitsies backend  (Go, 127.0.0.1:7692)
    │
    ▼
  SQLite (/var/lib/splitsies/splitsies.db)
@@ -43,7 +43,7 @@ services/splitsies/
 │   ├── db/                  # SQLite migrations
 │   └── events/              # SSE pub/sub broker
 ├── web/                     # React + Vite + Tailwind frontend
-├── splitsies.route          # registers /→:7691 with splitsies-gateway
+├── splitsies.route          # registers /→:7692 with splitsies-gateway
 └── CLAUDE.md                # this file
 ```
 
@@ -65,18 +65,18 @@ SPLITSIES_LOCAL_BYPASS=1 \
   /tmp/splitsies serve
 ```
 
-Then visit http://localhost:7691/
+Then visit http://localhost:7692/
 
 ## Environment Variables
 
 | Variable                   | Default                             | Purpose |
 |----------------------------|-------------------------------------|---------|
 | `SPLITSIES_DB`             | `/var/lib/splitsies/splitsies.db`   | SQLite path |
-| `SPLITSIES_PORT`           | `7691`                              | HTTP listen port (bound to 127.0.0.1) |
+| `SPLITSIES_PORT`           | `7692`                              | HTTP listen port (bound to 127.0.0.1) |
 | `SPLITSIES_STATIC_DIR`     | auto-discovered                     | React `dist/` directory |
 | `SPLITSIES_GOOGLE_CLIENT_ID` | (empty)                           | Google OAuth client ID |
 | `SPLITSIES_GOOGLE_SECRET`  | (empty)                             | Google OAuth client secret |
-| `SPLITSIES_BASE_URL`       | `http://localhost:7691`             | Canonical base URL for OAuth redirects |
+| `SPLITSIES_BASE_URL`       | `http://localhost:7692`             | Canonical base URL for OAuth redirects |
 | `SPLITSIES_INITIAL_ADMIN`  | (empty)                             | Email seeded as first admin if no admin exists |
 | `SPLITSIES_LOCAL_BYPASS`   | (empty)                             | Set to `1` to auto-login as dev user |
 

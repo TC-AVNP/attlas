@@ -17,7 +17,7 @@ SERVICE_USER="${SERVICE_USER:-splitsies-svc}"
 STATE_DIR="/var/lib/splitsies"
 STATIC_DEST="/usr/local/share/splitsies/dist"
 BIN_DEST="/usr/local/bin/splitsies"
-SPLITSIES_PORT="${SPLITSIES_PORT:-7691}"
+SPLITSIES_PORT="${SPLITSIES_PORT:-7692}"
 GATEWAY_ROUTES_DIR="/etc/splitsies-gateway.d"
 BASE_URL="${SPLITSIES_BASE_URL:-https://splitsies.attlas.uk}"
 

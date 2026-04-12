@@ -62,12 +62,12 @@ func main() {
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	port := fs.Int("port", envInt("SPLITSIES_PORT", 7691), "HTTP listen port")
+	port := fs.Int("port", envInt("SPLITSIES_PORT", 7692), "HTTP listen port")
 	dbPath := fs.String("db", envString("SPLITSIES_DB", "/var/lib/splitsies/splitsies.db"), "SQLite path")
 	staticDir := fs.String("static", envString("SPLITSIES_STATIC_DIR", defaultStaticDir()), "React build directory")
 	googleClientID := fs.String("google-client-id", envString("SPLITSIES_GOOGLE_CLIENT_ID", ""), "Google OAuth client ID")
 	googleSecret := fs.String("google-secret", envString("SPLITSIES_GOOGLE_SECRET", ""), "Google OAuth client secret")
-	baseURL := fs.String("base-url", envString("SPLITSIES_BASE_URL", "http://localhost:7691"), "Canonical base URL")
+	baseURL := fs.String("base-url", envString("SPLITSIES_BASE_URL", "http://localhost:7692"), "Canonical base URL")
 	localBypass := fs.Bool("local-bypass", envString("SPLITSIES_LOCAL_BYPASS", "") == "1", "skip auth on loopback (dev)")
 	initialAdmin := fs.String("initial-admin", envString("SPLITSIES_INITIAL_ADMIN", ""), "email to bootstrap as the first admin if no admin exists yet")
 	_ = fs.Parse(args)

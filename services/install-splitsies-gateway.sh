@@ -74,6 +74,26 @@ UNIT
 install -d -m 755 /etc/caddy/sites.d
 cp "${GATEWAY_DIR}/splitsies-gateway.caddy" /etc/caddy/sites.d/
 
+# 5b. Ensure /etc/caddy/Caddyfile imports sites.d at the top level. The
+#     repo's base-setup/Caddyfile already has this, but setup.sh only
+#     copies it on full base-setup runs — so a VM provisioned before
+#     the sites.d import was added wouldn't pick it up. Idempotent check
+#     + surgical prepend, safe to re-run on any version of the file.
+if ! grep -q '^import /etc/caddy/sites.d' /etc/caddy/Caddyfile; then
+  echo "Patching /etc/caddy/Caddyfile to import /etc/caddy/sites.d/*.caddy"
+  # Back up the current Caddyfile before rewriting.
+  cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%Y%m%d-%H%M%S)
+  TMP_CADDYFILE=$(mktemp)
+  {
+    echo "# Subdomain site blocks (added by install-splitsies-gateway.sh)."
+    echo "import /etc/caddy/sites.d/*.caddy"
+    echo ""
+    cat /etc/caddy/Caddyfile
+  } > "$TMP_CADDYFILE"
+  install -m 644 "$TMP_CADDYFILE" /etc/caddy/Caddyfile
+  rm -f "$TMP_CADDYFILE"
+fi
+
 # 6. Ensure Cloudflare A record for splitsies.attlas.uk points to this VM.
 #    The gateway owns this subdomain's routing, so it also owns the DNS
 #    record lifecycle. Idempotent: creates if missing, updates if stale.

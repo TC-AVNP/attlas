@@ -1,4 +1,4 @@
 # Splitsies route: register the splitsies backend with splitsies-gateway.
 # Dropped into /etc/splitsies-gateway.d/ by install-splitsies.sh.
 # Format: <path_prefix> <backend_url>
-/ http://127.0.0.1:7691
+/ http://127.0.0.1:7692
