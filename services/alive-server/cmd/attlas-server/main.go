@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"attlas-server/internal/config"
 	"attlas-server/internal/gcp"
 	"attlas-server/internal/util"
 )
@@ -41,16 +42,8 @@ var (
 	sessionSecret []byte
 	distDir       string
 	attlasDir     string
-	oauthConfig   *OAuthConfig
+	oauthConfig   *config.OAuthConfig
 )
-
-// OAuth2 config loaded from ~/.attlas-server-config.json
-type OAuthConfig struct {
-	ClientID          string   `json:"google_oauth_client_id"`
-	ClientSecret      string   `json:"google_oauth_client_secret"`
-	AllowedEmails     []string `json:"allowed_emails"`
-	AnthropicAdminKey string   `json:"anthropic_admin_key"` // F2: Anthropic cost_report API
-}
 
 // Known services
 var knownServices = []Service{
@@ -265,48 +258,6 @@ func isSafeRelativePath(p string) bool {
 }
 
 // --- Session ---
-
-func loadOrCreateSecret() []byte {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".attlas-session-secret")
-
-	data, err := os.ReadFile(path)
-	if err == nil && len(data) >= 32 {
-		return data
-	}
-
-	// Generate new secret
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	encoded := []byte(hex.EncodeToString(secret))
-	os.WriteFile(path, encoded, 0600)
-	return encoded
-}
-
-func loadOAuthConfig() *OAuthConfig {
-	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".attlas-server-config.json")
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		log.Printf("WARNING: OAuth config not found at %s: %v", path, err)
-		return nil
-	}
-
-	var config OAuthConfig
-	if err := json.Unmarshal(data, &config); err != nil {
-		log.Printf("WARNING: Failed to parse OAuth config: %v", err)
-		return nil
-	}
-
-	if config.ClientID == "" || config.ClientSecret == "" {
-		log.Printf("WARNING: OAuth config missing client_id or client_secret")
-		return nil
-	}
-
-	log.Printf("OAuth2 configured with %d allowed email(s)", len(config.AllowedEmails))
-	return &config
-}
 
 func makeSessionToken(email string) string {
 	payload := fmt.Sprintf("%s:%d", email, time.Now().Unix())
@@ -2429,8 +2380,8 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 // --- Main ---
 
 func main() {
-	sessionSecret = loadOrCreateSecret()
-	oauthConfig = loadOAuthConfig()
+	sessionSecret = config.LoadOrCreateSecret()
+	oauthConfig = config.Load()
 
 	// Initial load of the public-path registry and a SIGHUP-triggered
 	// reloader so services can `systemctl kill --signal=SIGHUP alive-server`
