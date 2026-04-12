@@ -263,18 +263,29 @@ function SystemLoadCard({ load }) {
 
 // ── Cloud spend card (combined total) ────────────────────────────────
 
+// GCP on-demand hourly rate for e2-standard-4 in europe-west1.
+const E2_STD4_HOURLY_USD = 0.1493
+
 function CloudSpendCard() {
   const [data, setData] = useState(null)
+  const [infra, setInfra] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch('/api/cloud-spend')
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const json = await res.json()
-        if (!cancelled) setData(json)
+        const [spendRes, infraRes] = await Promise.all([
+          fetch('/api/cloud-spend'),
+          fetch('/api/services/infrastructure'),
+        ])
+        if (!spendRes.ok) throw new Error(`HTTP ${spendRes.status}`)
+        const spendJson = await spendRes.json()
+        const infraJson = infraRes.ok ? await infraRes.json() : null
+        if (!cancelled) {
+          setData(spendJson)
+          setInfra(infraJson)
+        }
       } catch (e) {
         if (!cancelled) setError(e.message)
       }
@@ -284,6 +295,14 @@ function CloudSpendCard() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
 
+  const gcpBilled = data?.gcp_mtd_usd ?? 0
+  const hasBillingData = gcpBilled > 0 && !data?.gcp_error
+  const totalHours = (infra?.total_seconds_month ?? 0) / 3600
+  const gcpEstimate = totalHours * E2_STD4_HOURLY_USD
+  const gcpDisplay = hasBillingData ? gcpBilled : gcpEstimate
+  const anthropic = data?.anthropic_mtd_usd ?? 0
+  const total = gcpDisplay + anthropic
+
   return (
     <Card label="this month · cloud spend" className="full">
       {!data && !error && (
@@ -291,32 +310,28 @@ function CloudSpendCard() {
       )}
       {data && (
         <>
-          <div className="card-headline">${(data.total_mtd_usd ?? 0).toFixed(2)}</div>
+          <div className="card-headline">{hasBillingData ? '' : '~'}${total.toFixed(2)}</div>
           <div className="card-headline-sub">
             month-to-date · google cloud + anthropic api
           </div>
           <div className="spend-split">
             <div className="spend-col">
-              <div className="spend-amt">${(data.gcp_mtd_usd ?? 0).toFixed(2)}</div>
+              <div className="spend-amt">{hasBillingData ? '' : '~'}${gcpDisplay.toFixed(2)}</div>
               <div className="spend-lbl">google cloud</div>
-              {data.gcp_error && (
-                <div className="spend-err" title={data.gcp_error}>
-                  data unavailable — {data.gcp_error.length > 70 ? 'see logs' : data.gcp_error}
-                </div>
-              )}
-              {!data.gcp_error && (
+              {hasBillingData ? (
                 <div className="spend-meta">source: bigquery billing export</div>
+              ) : (
+                <div className="spend-meta">estimated from {totalHours.toFixed(0)}h vm runtime</div>
               )}
             </div>
             <div className="spend-col">
-              <div className="spend-amt">${(data.anthropic_mtd_usd ?? 0).toFixed(2)}</div>
+              <div className="spend-amt">${anthropic.toFixed(2)}</div>
               <div className="spend-lbl">anthropic api</div>
-              {data.anthropic_error && (
+              {data.anthropic_error ? (
                 <div className="spend-err" title={data.anthropic_error}>
                   data unavailable
                 </div>
-              )}
-              {!data.anthropic_error && (
+              ) : (
                 <div className="spend-meta">source: cost_report api</div>
               )}
             </div>
