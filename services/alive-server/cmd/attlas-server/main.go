@@ -1568,7 +1568,7 @@ func main() {
 	mux.HandleFunc("POST /api/vm/stop", handleStopVM)
 
 	// Diary (Hugo static site)
-	diaryDir := filepath.Join(attlasDir, "diary", "public")
+	diaryDir := filepath.Join(attlasDir, "services", "diary", "public")
 	mux.Handle("/diary/", http.StripPrefix("/diary/", http.FileServer(http.Dir(diaryDir))))
 
 	// Static files (catch-all)

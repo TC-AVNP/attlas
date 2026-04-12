@@ -14,7 +14,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_USER="${SERVICE_USER:-agnostic-user}"
 SERVICE_HOME="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)"
-DIARY_DIR="${SERVICE_HOME}/iapetus/attlas/diary"
+DIARY_DIR="${SERVICE_HOME}/iapetus/attlas/services/diary"
 
 # Install Hugo
 if ! command -v hugo &>/dev/null; then
