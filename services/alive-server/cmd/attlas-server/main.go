@@ -3,10 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,22 +23,17 @@ import (
 	"syscall"
 	"time"
 
+	"attlas-server/internal/auth"
 	"attlas-server/internal/config"
 	"attlas-server/internal/gcp"
 	"attlas-server/internal/util"
 )
 
-const (
-	port         = 3000
-	cookieName   = "attlas_session"
-	cookieMaxAge = 86400 * 7 // 7 days
-)
+const port = 3000
 
 var (
-	sessionSecret []byte
-	distDir       string
-	attlasDir     string
-	oauthConfig   *config.OAuthConfig
+	distDir   string
+	attlasDir string
 )
 
 // Known services
@@ -77,235 +68,6 @@ type Service struct {
 	CheckProcess string `json:"check_process,omitempty"`
 	Installed    bool   `json:"installed"`
 	Running      bool   `json:"running"`
-}
-
-// --- OAuth2 state tokens ---
-
-// A state entry holds both the creation time (for expiry) and an optional
-// return URL captured at /oauth2/login time. The callback handler uses the
-// return URL to send the user back to the page they originally tried to
-// visit — critical for flows like petboard's MCP /authorize, which must
-// land back on a specific URL with its query params intact.
-type stateEntry struct {
-	createdAt time.Time
-	returnTo  string
-}
-
-type stateStore struct {
-	mu     sync.Mutex
-	states map[string]stateEntry
-}
-
-var oauthStates = &stateStore{
-	states: make(map[string]stateEntry),
-}
-
-func (ss *stateStore) generate(returnTo string) string {
-	b := make([]byte, 32)
-	rand.Read(b)
-	state := hex.EncodeToString(b)
-
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-
-	// Clean expired states
-	now := time.Now()
-	for k, v := range ss.states {
-		if now.Sub(v.createdAt) > 10*time.Minute {
-			delete(ss.states, k)
-		}
-	}
-
-	ss.states[state] = stateEntry{createdAt: now, returnTo: returnTo}
-	return state
-}
-
-// validate consumes the state token and returns (returnTo, ok). The entry
-// is single-use — it is deleted from the store regardless of whether the
-// caller ends up redirecting to the return URL.
-func (ss *stateStore) validate(state string) (string, bool) {
-	ss.mu.Lock()
-	defer ss.mu.Unlock()
-
-	if entry, ok := ss.states[state]; ok {
-		delete(ss.states, state)
-		if time.Since(entry.createdAt) < 10*time.Minute {
-			return entry.returnTo, true
-		}
-	}
-	return "", false
-}
-
-// --- Public-path registry ---
-//
-// Any service that needs a subset of its paths to bypass alive-server's
-// Google-OAuth gate drops a file into /etc/attlas-public-paths.d/. Each
-// file is a newline-separated list of path prefixes; '#' starts a comment,
-// blank lines are ignored. On startup and on SIGHUP the directory is
-// re-read and an in-memory prefix list is atomically swapped in. The
-// handleAuthVerify handler consults this list before doing any session
-// check, returning 200 OK for matches so Caddy forward_auth lets the
-// request through to the downstream service.
-//
-// This exists so services can implement their own auth for specific
-// endpoints (e.g. petboard's MCP OAuth 2.1 flow, which needs the
-// /.well-known/*, /token, /register, and /mcp paths to be reachable
-// without a browser session) without having to modify the base Caddyfile.
-
-const defaultPublicPathsDir = "/etc/attlas-public-paths.d"
-
-type pathRegistry struct {
-	mu       sync.RWMutex
-	prefixes []string
-}
-
-var publicPathRegistry = &pathRegistry{}
-
-func publicPathsDir() string {
-	if dir := os.Getenv("ATTLAS_PUBLIC_PATHS_DIR"); dir != "" {
-		return dir
-	}
-	return defaultPublicPathsDir
-}
-
-// load reads every *.conf file in the configured directory and rebuilds
-// the in-memory prefix list. Called at startup and on SIGHUP. Safe to
-// call concurrently with matches().
-func (r *pathRegistry) load() {
-	dir := publicPathsDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		// Not an error — the directory may not exist yet if no service
-		// has registered paths. Clear the list and move on.
-		r.mu.Lock()
-		r.prefixes = nil
-		r.mu.Unlock()
-		if !os.IsNotExist(err) {
-			log.Printf("public-paths: read %s: %v", dir, err)
-		}
-		return
-	}
-
-	var prefixes []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".conf") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			log.Printf("public-paths: read %s: %v", path, err)
-			continue
-		}
-		for _, line := range strings.Split(string(data), "\n") {
-			// Strip '#' comments from anywhere on the line, then trim.
-			if i := strings.Index(line, "#"); i >= 0 {
-				line = line[:i]
-			}
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			// Require prefixes to be absolute paths so an accidental
-			// empty or relative entry can't match everything.
-			if !strings.HasPrefix(line, "/") {
-				log.Printf("public-paths: ignoring non-absolute prefix %q in %s", line, path)
-				continue
-			}
-			prefixes = append(prefixes, line)
-		}
-	}
-
-	r.mu.Lock()
-	r.prefixes = prefixes
-	r.mu.Unlock()
-	log.Printf("public-paths: loaded %d prefix(es) from %s", len(prefixes), dir)
-}
-
-// matches reports whether the given path starts with any registered
-// public prefix.
-func (r *pathRegistry) matches(path string) bool {
-	if path == "" {
-		return false
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, p := range r.prefixes {
-		if strings.HasPrefix(path, p) {
-			return true
-		}
-	}
-	return false
-}
-
-// isSafeRelativePath reports whether a candidate return URL can safely be
-// used as a redirect target. We only accept same-origin relative paths:
-// must start with '/', must not start with '//' (protocol-relative), and
-// must parse with an empty scheme and empty host. This prevents open
-// redirects via a crafted return_to query param.
-func isSafeRelativePath(p string) bool {
-	if p == "" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
-		return false
-	}
-	if strings.ContainsAny(p, "\\\r\n") {
-		return false
-	}
-	u, err := url.Parse(p)
-	if err != nil {
-		return false
-	}
-	return u.Scheme == "" && u.Host == ""
-}
-
-// --- Session ---
-
-func makeSessionToken(email string) string {
-	payload := fmt.Sprintf("%s:%d", email, time.Now().Unix())
-	mac := hmac.New(sha256.New, sessionSecret)
-	mac.Write([]byte(payload))
-	sig := hex.EncodeToString(mac.Sum(nil))[:32]
-	return fmt.Sprintf("%s:%s", payload, sig)
-}
-
-func verifySessionToken(token string) bool {
-	lastColon := strings.LastIndex(token, ":")
-	if lastColon < 0 {
-		return false
-	}
-	payload := token[:lastColon]
-	sig := token[lastColon+1:]
-
-	mac := hmac.New(sha256.New, sessionSecret)
-	mac.Write([]byte(payload))
-	expected := hex.EncodeToString(mac.Sum(nil))[:32]
-
-	if !hmac.Equal([]byte(sig), []byte(expected)) {
-		return false
-	}
-
-	// Check expiry
-	parts := strings.SplitN(payload, ":", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	ts, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return false
-	}
-	return time.Now().Unix()-ts <= cookieMaxAge
-}
-
-func getSessionCookie(r *http.Request) string {
-	c, err := r.Cookie(cookieName)
-	if err != nil {
-		return ""
-	}
-	return c.Value
-}
-
-func isAuthenticated(r *http.Request) bool {
-	token := getSessionCookie(r)
-	return token != "" && verifySessionToken(token)
 }
 
 // --- VM info ---
@@ -782,8 +544,8 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Anthropic cost_report API (last 30 days to match the console).
-	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
-		spend30, daily, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, time.Now().UTC().AddDate(0, 0, -30))
+	if auth.AnthropicAdminKey() != "" {
+		spend30, daily, err := fetchAnthropicSpend(auth.AnthropicAdminKey(), time.Now().UTC().AddDate(0, 0, -30))
 		if err != nil {
 			detail.BillingError = err.Error()
 		} else {
@@ -1276,8 +1038,8 @@ func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
 	// Anthropic MTD — deliberately NOT reusing the openclaw detail
 	// cache because that one is scoped to Last 30 days to match the
 	// console, while the combined card wants strict month-to-date.
-	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
-		spend, _, err := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, monthStart)
+	if auth.AnthropicAdminKey() != "" {
+		spend, _, err := fetchAnthropicSpend(auth.AnthropicAdminKey(), monthStart)
 		if err != nil {
 			cs.AnthropicError = err.Error()
 		} else {
@@ -1488,8 +1250,8 @@ func handleCostsBreakdown(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if oauthConfig != nil && oauthConfig.AnthropicAdminKey != "" {
-		spend, _, aerr := fetchAnthropicSpend(oauthConfig.AnthropicAdminKey, windowStart)
+	if auth.AnthropicAdminKey() != "" {
+		spend, _, aerr := fetchAnthropicSpend(auth.AnthropicAdminKey(), windowStart)
 		if aerr != nil {
 			cb.AnthropicError = aerr.Error()
 		} else {
@@ -1890,274 +1652,13 @@ func getServicesStatus() []Service {
 	return results
 }
 
-// --- Error page ---
-
-const errorPageTemplate = `<!DOCTYPE html>
-<html>
-<head>
-    <title>Attlas — Access Denied</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #eee;
-               display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .box { max-width: 400px; width: 100%%; padding: 2rem; text-align: center; }
-        h1 { color: #fc8181; font-size: 1.5rem; margin-bottom: 1rem; }
-        p { color: #888; line-height: 1.6; }
-        a { color: #5a67d8; }
-    </style>
-</head>
-<body>
-    <div class="box">
-        <h1>Access Denied</h1>
-        <p>%s</p>
-        <p style="margin-top: 1.5rem;"><a href="/oauth2/login">Try again</a></p>
-    </div>
-</body>
-</html>`
-
-const accessDeniedPage = `<!DOCTYPE html>
-<html>
-<head>
-    <title>KEEP AWAY</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, sans-serif; background: #0a0a0a; color: #ff0000;
-               display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0;
-               overflow: hidden; }
-        .container { text-align: center; animation: pulse 1.5s ease-in-out infinite; }
-        .icon { font-size: 8rem; margin-bottom: 1rem; filter: drop-shadow(0 0 30px #ff0000); }
-        h1 { font-size: 4rem; font-weight: 900; letter-spacing: 0.3rem; text-transform: uppercase;
-             text-shadow: 0 0 20px #ff0000, 0 0 40px #ff4444, 0 0 80px #ff0000; margin: 0.5rem 0; }
-        .sub { font-size: 1.2rem; color: #ff4444; letter-spacing: 0.5rem; text-transform: uppercase; }
-        .bar { height: 4px; background: repeating-linear-gradient(90deg, #ff0000 0px, #ff0000 20px, #000 20px, #000 40px);
-               margin: 2rem auto; width: 80%%; max-width: 500px; }
-        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="icon">&#9889;</div>
-        <div class="bar"></div>
-        <h1>KEEP AWAY</h1>
-        <div class="bar"></div>
-        <div class="sub">unauthorized access</div>
-    </div>
-</body>
-</html>`
-
-// --- Handlers ---
-
-func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
-	// Caddy forward_auth sends the original request URI in X-Forwarded-Uri.
-	// Consult the public-path registry first: services register path
-	// prefixes they want to handle with their own auth (or no auth), and
-	// we wave those through without a session check.
-	origURI := r.Header.Get("X-Forwarded-Uri")
-	if publicPathRegistry.matches(origURI) {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// RFC 8414: when an OAuth issuer has a path component (e.g.
-	// https://attlas.uk/petboard), clients construct the well-known
-	// metadata URL as /.well-known/oauth-authorization-server/<path>.
-	// That path is NOT under /petboard/* so Caddy won't route it to
-	// petboard. We handle it here by redirecting to the service's
-	// actual well-known endpoint. This makes Claude Code's MCP OAuth
-	// discovery work for any subpath-based issuer without Caddy changes.
-	if strings.HasPrefix(origURI, "/.well-known/oauth-authorization-server/") {
-		svcPath := strings.TrimPrefix(origURI, "/.well-known/oauth-authorization-server")
-		redirect := svcPath + "/.well-known/oauth-authorization-server"
-		http.Redirect(w, r, redirect, http.StatusFound)
-		return
-	}
-	if isAuthenticated(r) {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	// Preserve the original URL across the OAuth round-trip so the user
-	// lands back on the page they tried to visit instead of on /.
-	loginURL := "/oauth2/login"
-	if isSafeRelativePath(origURI) {
-		loginURL += "?return_to=" + url.QueryEscape(origURI)
-	}
-	http.Redirect(w, r, loginURL, http.StatusFound)
-}
-
-func handleOAuth2Login(w http.ResponseWriter, r *http.Request) {
-	if oauthConfig == nil {
-		http.Error(w, "OAuth2 not configured", http.StatusInternalServerError)
-		return
-	}
-
-	// Capture the return URL from the ?return_to query param. Rejected
-	// unless it's a safe same-origin relative path.
-	returnTo := r.URL.Query().Get("return_to")
-	if !isSafeRelativePath(returnTo) {
-		returnTo = ""
-	}
-
-	state := oauthStates.generate(returnTo)
-	authURL := fmt.Sprintf(
-		"https://accounts.google.com/o/oauth2/v2/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&state=%s&access_type=online&prompt=select_account",
-		url.QueryEscape(oauthConfig.ClientID),
-		url.QueryEscape("https://attlas.uk/oauth2/callback"),
-		url.QueryEscape("openid email"),
-		url.QueryEscape(state),
-	)
-	http.Redirect(w, r, authURL, http.StatusFound)
-}
-
-func handleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
-	if oauthConfig == nil {
-		http.Error(w, "OAuth2 not configured", http.StatusInternalServerError)
-		return
-	}
-
-	// Validate state and recover the captured return URL in one step.
-	state := r.URL.Query().Get("state")
-	returnTo, ok := oauthStates.validate(state)
-	if !ok {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Invalid or expired login request. Please try again.")
-		return
-	}
-
-	// Check for error from Google
-	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Google sign-in was cancelled or failed.")
-		return
-	}
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "No authorization code received from Google.")
-		return
-	}
-
-	// Exchange code for token
-	tokenResp, err := http.PostForm("https://oauth2.googleapis.com/token", url.Values{
-		"code":          {code},
-		"client_id":     {oauthConfig.ClientID},
-		"client_secret": {oauthConfig.ClientSecret},
-		"redirect_uri":  {"https://attlas.uk/oauth2/callback"},
-		"grant_type":    {"authorization_code"},
-	})
-	if err != nil {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Failed to contact Google. Please try again.")
-		return
-	}
-	defer tokenResp.Body.Close()
-
-	var tokenData struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
-	json.NewDecoder(tokenResp.Body).Decode(&tokenData)
-	if tokenData.AccessToken == "" {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Failed to authenticate with Google.")
-		return
-	}
-
-	// Get user info
-	userReq, _ := http.NewRequest("GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
-	userReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
-	userResp, err := http.DefaultClient.Do(userReq)
-	if err != nil {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Failed to get user info from Google.")
-		return
-	}
-	defer userResp.Body.Close()
-
-	var userInfo struct {
-		Email         string `json:"email"`
-		VerifiedEmail bool   `json:"verified_email"`
-	}
-	json.NewDecoder(userResp.Body).Decode(&userInfo)
-
-	if userInfo.Email == "" || !userInfo.VerifiedEmail {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, errorPageTemplate, "Could not verify your email address.")
-		return
-	}
-
-	// Check against allowed emails
-	allowed := false
-	for _, e := range oauthConfig.AllowedEmails {
-		if strings.EqualFold(e, userInfo.Email) {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, accessDeniedPage)
-		return
-	}
-
-	// Create session
-	sessionToken := makeSessionToken(userInfo.Email)
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    sessionToken,
-		Path:     "/",
-		MaxAge:   cookieMaxAge,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		Secure:   true,
-	})
-
-	// Prefer the captured return URL, falling back to / if missing or
-	// unsafe (validated defensively here even though generate() also
-	// screens it).
-	dest := "/"
-	if isSafeRelativePath(returnTo) {
-		dest = returnTo
-	}
-	http.Redirect(w, r, dest, http.StatusFound)
-}
-
-func handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{
-		Name:   cookieName,
-		Value:  "",
-		Path:   "/",
-		MaxAge: -1,
-	})
-	http.Redirect(w, r, "/oauth2/login", http.StatusFound)
-}
-
-func getSessionEmail(r *http.Request) string {
-	token := getSessionCookie(r)
-	if token == "" {
-		return ""
-	}
-	lastColon := strings.LastIndex(token, ":")
-	if lastColon < 0 {
-		return ""
-	}
-	payload := token[:lastColon]
-	parts := strings.SplitN(payload, ":", 2)
-	if len(parts) != 2 {
-		return ""
-	}
-	return parts[0]
-}
 
 func handleStatus(w http.ResponseWriter, r *http.Request) {
-	var allowedEmails []string
-	if oauthConfig != nil {
-		allowedEmails = oauthConfig.AllowedEmails
-	}
+	allowedEmails := auth.AllowedEmails()
 	util.SendJSON(w, map[string]interface{}{
 		"vm": getVMInfo(),
 		"user": map[string]interface{}{
-			"email":          getSessionEmail(r),
+			"email":          auth.GetSessionEmail(r),
 			"allowed_emails": allowedEmails,
 		},
 		"claude": map[string]bool{
@@ -2380,20 +1881,19 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 // --- Main ---
 
 func main() {
-	sessionSecret = config.LoadOrCreateSecret()
-	oauthConfig = config.Load()
+	auth.Init(config.LoadOrCreateSecret(), config.Load())
 
 	// Initial load of the public-path registry and a SIGHUP-triggered
 	// reloader so services can `systemctl kill --signal=SIGHUP alive-server`
 	// after installing or uninstalling to pick up their changes without
 	// dropping existing sessions.
-	publicPathRegistry.load()
+	auth.ReloadPublicPaths()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGHUP)
 	go func() {
 		for range sigCh {
 			log.Printf("SIGHUP received — reloading public-path registry")
-			publicPathRegistry.load()
+			auth.ReloadPublicPaths()
 		}
 	}()
 
@@ -2415,10 +1915,10 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Auth
-	mux.HandleFunc("/api/auth/verify", handleAuthVerify)
-	mux.HandleFunc("GET /oauth2/login", handleOAuth2Login)
-	mux.HandleFunc("GET /oauth2/callback", handleOAuth2Callback)
-	mux.HandleFunc("/logout", handleLogout)
+	mux.HandleFunc("/api/auth/verify", auth.HandleAuthVerify)
+	mux.HandleFunc("GET /oauth2/login", auth.HandleOAuth2Login)
+	mux.HandleFunc("GET /oauth2/callback", auth.HandleOAuth2Callback)
+	mux.HandleFunc("/logout", auth.HandleLogout)
 
 	// API
 	mux.HandleFunc("/api/status", handleStatus)
