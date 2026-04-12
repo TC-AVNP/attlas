@@ -102,7 +102,12 @@ func runServe(args []string) {
 	oauthSrv.Register(inner)
 	// MCP is bearer-protected; everything in /petboard/mcp is in the
 	// public-paths registry so alive-server lets it through to us.
-	inner.Handle("POST /mcp", oauthSrv.BearerMiddleware(mcpHandler))
+	// Register on all methods ("/mcp" without a method prefix) so GET
+	// requests from Claude Code's health checker hit the Bearer
+	// middleware and get a proper 401 with WWW-Authenticate — instead
+	// of falling through to the SPA and returning HTML, which makes
+	// Claude Code think the endpoint isn't an MCP server at all.
+	inner.Handle("/mcp", oauthSrv.BearerMiddleware(mcpHandler))
 	inner.Handle("/", spaFileServer(*staticDir))
 
 	// Outer mux: Caddy proxies /petboard/* to us. Strip the prefix so
