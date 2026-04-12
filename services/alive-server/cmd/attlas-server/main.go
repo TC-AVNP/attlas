@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"attlas-server/internal/auth"
 	"attlas-server/internal/config"
 	"attlas-server/internal/gcp"
+	"attlas-server/internal/status"
 	"attlas-server/internal/util"
 )
 
@@ -70,207 +70,6 @@ type Service struct {
 	Running      bool   `json:"running"`
 }
 
-// --- VM info ---
-
-func getVMInfo() map[string]string {
-	ip := gcp.Meta("instance/network-interfaces/0/access-configs/0/external-ip")
-	zoneRaw := gcp.Meta("instance/zone")
-	zone := zoneRaw
-	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
-		zone = zoneRaw[i+1:]
-	}
-	name := gcp.Meta("instance/name")
-	mt := gcp.Meta("instance/machine-type")
-	if i := strings.LastIndex(mt, "/"); i >= 0 {
-		mt = mt[i+1:]
-	}
-	return map[string]string{
-		"name":         name,
-		"zone":         zone,
-		"external_ip":  ip,
-		"machine_type": mt,
-		"domain":       "attlas.uk",
-	}
-}
-
-// --- System load (live CPU + memory for the main dashboard) ---
-
-// SystemLoad is the /proc-sourced snapshot that the dashboard shows at
-// the top of the home page. Everything here is read from Linux
-// pseudo-files in microseconds, so no caching is needed and the poll
-// loop of /api/status can call getSystemLoad on every request.
-type SystemLoad struct {
-	CPUCores      int     `json:"cpu_cores"`
-	CPUPercent    int     `json:"cpu_percent"` // 0..100, delta-based from /proc/stat
-	LoadAvg1      float64 `json:"load_avg_1"`
-	LoadAvg5      float64 `json:"load_avg_5"`
-	LoadAvg15     float64 `json:"load_avg_15"`
-	MemTotalBytes uint64  `json:"mem_total_bytes"`
-	MemUsedBytes  uint64  `json:"mem_used_bytes"`
-	MemPercent    int     `json:"mem_percent"` // 0..100
-}
-
-// /proc/stat is a cumulative counter of jiffies since boot. Meaningful
-// CPU utilization requires two samples: we remember the last one in a
-// process-global and compute the delta vs "now". First call after
-// process start returns 0 because there's nothing to delta against;
-// every subsequent call covers the time since the previous call.
-type cpuStatSample struct {
-	total uint64
-	idle  uint64
-	at    time.Time
-}
-
-var (
-	cpuSampleMu sync.Mutex
-	cpuSample   cpuStatSample
-)
-
-// readCPUStat parses the aggregate "cpu" line from /proc/stat:
-//
-//	cpu  user nice system idle iowait irq softirq steal guest guest_nice
-//
-// Total = sum of all columns, idle = column 4 (index 3 after "cpu").
-// Per Linux convention the idle column includes both idle and iowait;
-// iowait is part of the 5th column and NOT counted as idle here, so
-// high iowait correctly shows up as "CPU busy" on the dashboard.
-func readCPUStat() (total, idle uint64, err error) {
-	data, rerr := os.ReadFile("/proc/stat")
-	if rerr != nil {
-		return 0, 0, rerr
-	}
-	firstNL := strings.IndexByte(string(data), '\n')
-	if firstNL < 0 {
-		return 0, 0, fmt.Errorf("unexpected /proc/stat layout")
-	}
-	fields := strings.Fields(string(data[:firstNL]))
-	if len(fields) < 5 || fields[0] != "cpu" {
-		return 0, 0, fmt.Errorf("unexpected /proc/stat header: %q", string(data[:firstNL]))
-	}
-	for i := 1; i < len(fields); i++ {
-		v, perr := strconv.ParseUint(fields[i], 10, 64)
-		if perr != nil {
-			return 0, 0, perr
-		}
-		total += v
-		if i == 4 { // idle column
-			idle = v
-		}
-	}
-	return total, idle, nil
-}
-
-func getCPUUtilization() int {
-	cpuSampleMu.Lock()
-	defer cpuSampleMu.Unlock()
-
-	total, idle, err := readCPUStat()
-	if err != nil {
-		return 0
-	}
-
-	prev := cpuSample
-	cpuSample = cpuStatSample{total: total, idle: idle, at: time.Now()}
-
-	if prev.at.IsZero() || total <= prev.total {
-		return 0 // first call after start, or counter reset
-	}
-
-	totalDelta := total - prev.total
-	idleDelta := idle - prev.idle
-	if idleDelta > totalDelta {
-		idleDelta = totalDelta
-	}
-	if totalDelta == 0 {
-		return 0
-	}
-	pct := int(100 * (totalDelta - idleDelta) / totalDelta)
-	if pct < 0 {
-		pct = 0
-	} else if pct > 100 {
-		pct = 100
-	}
-	return pct
-}
-
-// readMemInfo returns (total, available) in bytes. MemAvailable is the
-// kernel's own estimate of "memory you can allocate without swapping",
-// which is what we actually want for a "RAM in use" number — MemFree
-// alone is misleading because Linux aggressively uses free RAM for
-// page cache.
-func readMemInfo() (total, available uint64) {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 0, 0
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		v, perr := strconv.ParseUint(fields[1], 10, 64)
-		if perr != nil {
-			continue
-		}
-		v *= 1024 // /proc/meminfo values are in KB
-		switch fields[0] {
-		case "MemTotal:":
-			total = v
-		case "MemAvailable:":
-			available = v
-		}
-	}
-	return total, available
-}
-
-func getSystemLoad() SystemLoad {
-	sl := SystemLoad{CPUCores: runtime.NumCPU()}
-	sl.CPUPercent = getCPUUtilization()
-
-	if data, err := os.ReadFile("/proc/loadavg"); err == nil {
-		fields := strings.Fields(string(data))
-		if len(fields) >= 3 {
-			sl.LoadAvg1, _ = strconv.ParseFloat(fields[0], 64)
-			sl.LoadAvg5, _ = strconv.ParseFloat(fields[1], 64)
-			sl.LoadAvg15, _ = strconv.ParseFloat(fields[2], 64)
-		}
-	}
-
-	total, available := readMemInfo()
-	sl.MemTotalBytes = total
-	if total > 0 {
-		var used uint64
-		if available < total {
-			used = total - available
-		}
-		sl.MemUsedBytes = used
-		sl.MemPercent = int(100 * used / total)
-	}
-
-	return sl
-}
-
-// --- Claude status ---
-
-func isClaudeInstalled() bool {
-	_, err := exec.LookPath("claude")
-	return err == nil
-}
-
-// isClaudeLoggedIn asks the claude CLI itself, running as the interactive
-// login user via sudo, instead of trying to read the user's .claude.json
-// (which has 600 perms and lives in a different user's home). Requires
-// /etc/sudoers.d/alive-svc-claude to allow alive-svc to run claude as
-// agnostic-user without a password.
-func isClaudeLoggedIn() bool {
-	cmd := exec.Command("sudo", "-n", "-u", "agnostic-user", "-H", "claude", "auth", "status")
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), `"loggedIn": true`)
-}
-
 // --- Service status ---
 
 // loadInstalledServices is a live binary lookup, not a cached state file.
@@ -286,178 +85,6 @@ func loadInstalledServices() map[string]bool {
 		}
 	}
 	return state
-}
-
-// --- Dotfiles status (F1) ---
-
-// DotfilesStatus is what the dashboard shows for the `dotfiles` row.
-// Fields that can't be resolved (missing repo, systemd unit not installed,
-// never run) come back as zero values and the Status field degrades to
-// "unknown" — the frontend handles that.
-type DotfilesStatus struct {
-	LastSync        string `json:"last_sync"`         // ISO timestamp of last successful run
-	LastExitStatus  int    `json:"last_exit_status"`  // 0 = ok
-	HeadCommit      string `json:"head_commit"`       // short hash
-	HeadCommittedAt string `json:"head_committed_at"` // ISO
-	RemoteCommit    string `json:"remote_commit"`     // short hash
-	Behind          int    `json:"behind"`            // commit count HEAD..origin/<branch>
-	Status          string `json:"status"`            // "up-to-date" | "behind" | "error" | "unknown"
-}
-
-// dotfilesDir resolves the dotfiels repo relative to ATTLAS_DIR
-// (attlas lives at $WORKSPACE/attlas, dotfiels at $WORKSPACE/dotfiels).
-// The repo name retains the upstream "dotfiels" typo.
-func dotfilesDir() string {
-	return filepath.Join(filepath.Dir(attlasDir), "dotfiels")
-}
-
-func getDotfilesStatus() DotfilesStatus {
-	status := DotfilesStatus{Status: "unknown"}
-
-	dir := dotfilesDir()
-	if _, err := os.Stat(dir); err != nil {
-		return status
-	}
-
-	// systemctl show dotfiles-sync.service
-	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "show", "dotfiles-sync.service",
-		"-p", "ExecMainExitTimestamp", "-p", "ExecMainStatus"); ok {
-		for _, line := range strings.Split(out, "\n") {
-			if strings.HasPrefix(line, "ExecMainStatus=") {
-				if v, err := strconv.Atoi(strings.TrimPrefix(line, "ExecMainStatus=")); err == nil {
-					status.LastExitStatus = v
-				}
-			} else if strings.HasPrefix(line, "ExecMainExitTimestamp=") {
-				raw := strings.TrimPrefix(line, "ExecMainExitTimestamp=")
-				// systemd emits e.g. "Fri 2026-04-10 13:34:42 UTC"
-				if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil {
-					status.LastSync = t.UTC().Format(time.RFC3339)
-				}
-			}
-		}
-	}
-
-	// Detect branch (upstream is master — but derive rather than hardcode).
-	branch, _ := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "symbolic-ref", "--short", "HEAD")
-	if branch == "" {
-		branch = "master"
-	}
-
-	if head, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "HEAD"); ok {
-		status.HeadCommit = head
-	}
-	if committedAt, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "log", "-1", "--format=%cI", "HEAD"); ok {
-		status.HeadCommittedAt = committedAt
-	}
-	if remote, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "origin/"+branch); ok {
-		status.RemoteCommit = remote
-	}
-	if behindOut, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-list", "--count", "HEAD..origin/"+branch); ok {
-		if n, err := strconv.Atoi(behindOut); err == nil {
-			status.Behind = n
-		}
-	}
-
-	// Derive semantic status.
-	if status.LastExitStatus != 0 && status.LastSync != "" {
-		status.Status = "error"
-	} else if status.Behind > 0 {
-		status.Status = "behind"
-	} else if status.HeadCommit != "" {
-		status.Status = "up-to-date"
-	}
-
-	return status
-}
-
-func handleDotfilesSync(w http.ResponseWriter, r *http.Request) {
-	// Authorized via /etc/sudoers.d/alive-svc-dotfiles-sync.
-	cmd := exec.Command("sudo", "-n", "systemctl", "start", "dotfiles-sync.service")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		util.SendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
-		return
-	}
-	util.SendJSON(w, map[string]interface{}{"success": true})
-}
-
-// --- Domain expiry (F3) ---
-
-type DomainExpiry struct {
-	ExpiresAt     string `json:"expires_at"`     // ISO date
-	DaysRemaining int    `json:"days_remaining"` // whole days from now
-	Severity      string `json:"severity"`       // ok | warn | danger | unknown
-}
-
-var (
-	domainCacheMu      sync.Mutex
-	domainCacheValue   DomainExpiry
-	domainCacheExpires time.Time
-)
-
-var whoisExpiryRE = regexp.MustCompile(`(?i)^\s*Expiry date:\s*(.+)$`)
-
-func getDomainExpiry() DomainExpiry {
-	domainCacheMu.Lock()
-	defer domainCacheMu.Unlock()
-	if time.Now().Before(domainCacheExpires) {
-		// Refresh daysRemaining on every call even from cache — the underlying
-		// date is stable but the countdown should tick down.
-		v := domainCacheValue
-		if t, err := time.Parse("2006-01-02", v.ExpiresAt); err == nil {
-			v.DaysRemaining = int(time.Until(t).Hours() / 24)
-			v.Severity = domainSeverity(v.DaysRemaining)
-		}
-		return v
-	}
-
-	result := DomainExpiry{Severity: "unknown"}
-
-	// Tolerate `whois: command not found` on a fresh VM.
-	if _, err := exec.LookPath("whois"); err != nil {
-		domainCacheValue = result
-		domainCacheExpires = time.Now().Add(10 * time.Minute)
-		return result
-	}
-
-	out, ok := util.RunCmdCtx(10*time.Second, "whois", "attlas.uk")
-	if !ok {
-		domainCacheValue = result
-		domainCacheExpires = time.Now().Add(10 * time.Minute)
-		return result
-	}
-
-	for _, line := range strings.Split(out, "\n") {
-		m := whoisExpiryRE.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		raw := strings.TrimSpace(m[1])
-		// Nominet format: DD-Mon-YYYY
-		t, err := time.Parse("02-Jan-2006", raw)
-		if err != nil {
-			continue
-		}
-		result.ExpiresAt = t.Format("2006-01-02")
-		result.DaysRemaining = int(time.Until(t).Hours() / 24)
-		result.Severity = domainSeverity(result.DaysRemaining)
-		break
-	}
-
-	domainCacheValue = result
-	domainCacheExpires = time.Now().Add(6 * time.Hour)
-	return result
-}
-
-func domainSeverity(days int) string {
-	switch {
-	case days > 60:
-		return "ok"
-	case days >= 30:
-		return "warn"
-	default:
-		return "danger"
-	}
 }
 
 // --- Openclaw detail (F2) ---
@@ -1656,24 +1283,24 @@ func getServicesStatus() []Service {
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	allowedEmails := auth.AllowedEmails()
 	util.SendJSON(w, map[string]interface{}{
-		"vm": getVMInfo(),
+		"vm": status.VMInfo(),
 		"user": map[string]interface{}{
 			"email":          auth.GetSessionEmail(r),
 			"allowed_emails": allowedEmails,
 		},
 		"claude": map[string]bool{
-			"installed":     isClaudeInstalled(),
-			"authenticated": isClaudeLoggedIn(),
+			"installed":     status.IsClaudeInstalled(),
+			"authenticated": status.IsClaudeLoggedIn(),
 		},
 		"services":      getServicesStatus(),
-		"dotfiles":      getDotfilesStatus(),
-		"domain_expiry": getDomainExpiry(),
-		"system_load":   getSystemLoad(),
+		"dotfiles":      status.GetDotfilesStatus(),
+		"domain_expiry": status.GetDomainExpiry(),
+		"system_load":   status.GetSystemLoad(),
 	})
 }
 
 func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
-	if isClaudeLoggedIn() {
+	if status.IsClaudeLoggedIn() {
 		util.SendJSON(w, map[string]interface{}{"error": "Already logged in"})
 		return
 	}
@@ -1906,6 +1533,7 @@ func main() {
 		home, _ := os.UserHomeDir()
 		attlasDir = filepath.Join(home, "attlas")
 	}
+	status.SetAttlasDir(attlasDir)
 
 	if _, err := os.Stat(distDir); err != nil {
 		wd, _ := os.Getwd()
@@ -1926,7 +1554,7 @@ func main() {
 	mux.HandleFunc("POST /api/claude-login/code", handleClaudeCode)
 	mux.HandleFunc("POST /api/install-service", handleInstallService)
 	mux.HandleFunc("POST /api/uninstall-service", handleUninstallService)
-	mux.HandleFunc("POST /api/dotfiles/sync", handleDotfilesSync)
+	mux.HandleFunc("POST /api/dotfiles/sync", status.HandleDotfilesSync)
 	mux.HandleFunc("GET /api/services/openclaw", handleOpenclawDetail)
 	mux.HandleFunc("GET /api/services/terminal", handleTerminalDetail)
 	mux.HandleFunc("POST /api/services/terminal/kill", handleTerminalKill)
