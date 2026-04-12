@@ -114,6 +114,7 @@ cat > /etc/attlas-public-paths.d/petboard.conf <<PATHS
 /petboard/.well-known/
 /petboard/oauth/register
 /petboard/oauth/token
+/petboard/oauth/device/code
 /petboard/mcp
 PATHS
 
