@@ -38,6 +38,7 @@ type Project struct {
 	Color       string   `json:"color"`
 	CreatedAt   int64    `json:"created_at"`
 	ArchivedAt  *int64   `json:"archived_at,omitempty"`
+	RepoPath    *string  `json:"repo_path,omitempty"`
 	CanvasX     *float64 `json:"canvas_x,omitempty"`
 	CanvasY     *float64 `json:"canvas_y,omitempty"`
 
@@ -102,6 +103,7 @@ type CreateProjectInput struct {
 	Priority    Priority
 	Description *string
 	Color       *string // optional override; derived from slug if empty
+	RepoPath    *string
 }
 
 // UpdateProjectInput holds the nullable fields accepted by PATCH. Only
@@ -112,6 +114,7 @@ type UpdateProjectInput struct {
 	Description *string
 	Priority    *Priority
 	Color       *string
+	RepoPath    *string
 	CanvasX     *float64
 	CanvasY     *float64
 	Archived    *bool

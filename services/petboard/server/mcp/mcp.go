@@ -147,6 +147,7 @@ func toolDefinitions() []map[string]any {
 					"priority":    map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"description": map[string]any{"type": "string"},
 					"color":       map[string]any{"type": "string"},
+					"repo_path":   map[string]any{"type": "string"},
 				},
 			},
 		},
@@ -163,6 +164,7 @@ func toolDefinitions() []map[string]any {
 					"description": map[string]any{"type": "string"},
 					"priority":    map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"color":       map[string]any{"type": "string"},
+					"repo_path":   map[string]any{"type": "string"},
 					"archived":    map[string]any{"type": "boolean"},
 				},
 			},
@@ -306,6 +308,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Priority    service.Priority `json:"priority"`
 			Description *string          `json:"description"`
 			Color       *string          `json:"color"`
+			RepoPath    *string          `json:"repo_path"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
@@ -316,6 +319,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Priority:    args.Priority,
 			Description: args.Description,
 			Color:       args.Color,
+			RepoPath:    args.RepoPath,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
@@ -333,6 +337,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Description *string           `json:"description"`
 			Priority    *service.Priority `json:"priority"`
 			Color       *string           `json:"color"`
+			RepoPath    *string           `json:"repo_path"`
 			Archived    *bool             `json:"archived"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -344,6 +349,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Description: args.Description,
 			Priority:    args.Priority,
 			Color:       args.Color,
+			RepoPath:    args.RepoPath,
 			Archived:    args.Archived,
 		})
 		if err == nil && h.Events != nil {
