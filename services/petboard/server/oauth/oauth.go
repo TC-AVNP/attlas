@@ -138,10 +138,12 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"client_id":         clientID,
-		"client_id_issued_at": now,
-		"client_name":       body.ClientName,
-		"redirect_uris":     body.RedirectURIs,
+		"client_id":                  clientID,
+		"client_id_issued_at":        now,
+		"client_name":                body.ClientName,
+		"redirect_uris":              body.RedirectURIs,
+		"grant_types":                []string{"authorization_code"},
+		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "none",
 	})
 }
