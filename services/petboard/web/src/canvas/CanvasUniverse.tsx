@@ -579,7 +579,7 @@ function ProjectThread({
       )}
 
       {/* Feature orbs */}
-      {detail?.features
+      {(detail?.features ?? [])
         .filter((f) => enabledStatuses.has(f.status))
         .map((f) => (
           <FeatureOrb
