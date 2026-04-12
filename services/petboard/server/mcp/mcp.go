@@ -219,6 +219,32 @@ func toolDefinitions() []map[string]any {
 				},
 			},
 		},
+		{
+			"name":        "link_repo",
+			"description": "Link a local git repository to a project for automatic effort tracking from commit history.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"slug", "repo_path"},
+				"properties": map[string]any{
+					"slug":              map[string]any{"type": "string"},
+					"repo_path":         map[string]any{"type": "string", "description": "Absolute filesystem path to the git repo"},
+					"author_filter":     map[string]any{"type": "string", "description": "Only count commits from this email address"},
+					"session_gap_min":   map[string]any{"type": "integer", "description": "Max gap in minutes within a work session (default 120)"},
+					"first_commit_min":  map[string]any{"type": "integer", "description": "Minutes credited for first commit in a session (default 30)"},
+				},
+			},
+		},
+		{
+			"name":        "sync_repo",
+			"description": "Sync effort logs from git commit history for a project's linked repos. Finds new commits since last sync and creates effort log entries from work sessions.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]any{
+					"slug": map[string]any{"type": "string"},
+				},
+			},
+		},
 	}
 }
 
@@ -412,6 +438,47 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			})
 		}
 		return l, err
+
+	case "link_repo":
+		var args struct {
+			Slug           string  `json:"slug"`
+			RepoPath       string  `json:"repo_path"`
+			AuthorFilter   *string `json:"author_filter"`
+			SessionGapMin  *int64  `json:"session_gap_min"`
+			FirstCommitMin *int64  `json:"first_commit_min"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, err
+		}
+		r, err := h.Svc.LinkRepo(args.Slug, service.LinkRepoInput{
+			RepoPath:       args.RepoPath,
+			AuthorFilter:   args.AuthorFilter,
+			SessionGapMin:  args.SessionGapMin,
+			FirstCommitMin: args.FirstCommitMin,
+		})
+		if err == nil && h.Events != nil {
+			h.Events.Publish(events.Event{
+				Type:    "repo.linked",
+				Payload: map[string]any{"slug": args.Slug, "repo_path": args.RepoPath},
+			})
+		}
+		return r, err
+
+	case "sync_repo":
+		var args struct {
+			Slug string `json:"slug"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, err
+		}
+		results, err := h.Svc.SyncProjectRepos(args.Slug)
+		if err == nil && h.Events != nil {
+			h.Events.Publish(events.Event{
+				Type:    "repo.synced",
+				Payload: map[string]any{"slug": args.Slug},
+			})
+		}
+		return results, err
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
