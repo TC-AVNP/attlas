@@ -63,6 +63,12 @@ var knownServices = []Service{
 		Path: "/petboard/", Script: "install-petboard.sh"},
 	{ID: "homelab-planner", Name: "Homelab Planner", ServiceName: "homelab-planner", Command: "homelab-planner",
 		Path: "/homelab-planner/", Script: "install-homelab-planner.sh"},
+	// Splitsies lives on its own subdomain (splitsies.attlas.uk) routed
+	// through splitsies-gateway (separate service, not listed here because
+	// users never visit the gateway directly). The Path field accepts a
+	// full URL — the dashboard's "open" link uses it as an href directly.
+	{ID: "splitsies", Name: "Splitsies", ServiceName: "splitsies", Command: "splitsies",
+		Path: "https://splitsies.attlas.uk/", Script: "install-splitsies.sh"},
 }
 
 type Service struct {
