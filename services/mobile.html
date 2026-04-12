@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>attlas — mobile terminal</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; background: #000; }
+  #frame { width: 100%; border: none; }
+  #toolbar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; gap: 6px; padding: 6px 8px;
+    background: #111; border-top: 1px solid #333;
+    z-index: 999;
+    /* safe-area for phones with home indicator */
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+  }
+  .key {
+    font-family: ui-monospace, monospace; font-size: 14px;
+    padding: 10px 14px; border-radius: 6px; border: 1px solid #444;
+    background: #222; color: #ccc; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none; touch-action: manipulation;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .key:active { background: #444; }
+  .key.held {
+    background: #7aa2f7; color: #000; border-color: #7aa2f7;
+    font-weight: bold;
+  }
+  .key.wide { flex: 1; text-align: center; }
+  .spacer { flex: 1; }
+</style>
+</head>
+<body>
+
+<iframe id="frame" src="/terminal/"></iframe>
+<div id="toolbar">
+  <button class="key held-toggle" id="btn-ctrl">Ctrl</button>
+  <button class="key held-toggle" id="btn-alt">Alt</button>
+  <button class="key" id="btn-esc">Esc</button>
+  <button class="key" id="btn-tab">Tab</button>
+  <span class="spacer"></span>
+  <button class="key" id="btn-up">↑</button>
+  <button class="key" id="btn-down">↓</button>
+</div>
+
+<script>
+(function() {
+  const frame = document.getElementById('frame');
+  const toolbar = document.getElementById('toolbar');
+  const btnCtrl = document.getElementById('btn-ctrl');
+  const btnAlt = document.getElementById('btn-alt');
+
+  // Resize iframe to leave room for toolbar
+  function resize() {
+    frame.style.height = (window.innerHeight - toolbar.offsetHeight) + 'px';
+  }
+  window.addEventListener('resize', resize);
+  frame.addEventListener('load', resize);
+  resize();
+
+  // Modifier state — these toggle on tap and auto-release after one key
+  let ctrlHeld = false;
+  let altHeld = false;
+
+  function setCtrl(on) {
+    ctrlHeld = on;
+    btnCtrl.classList.toggle('held', on);
+  }
+  function setAlt(on) {
+    altHeld = on;
+    btnAlt.classList.toggle('held', on);
+  }
+
+  btnCtrl.addEventListener('click', () => setCtrl(!ctrlHeld));
+  btnAlt.addEventListener('click', () => setAlt(!altHeld));
+
+  // Send a character/sequence to the terminal inside the iframe.
+  // ttyd's xterm.js stores the Terminal instance on window.term (via
+  // the lib/index.ts client code). We write raw bytes into the input
+  // handler which sends them over the websocket to the pty.
+  function send(data) {
+    try {
+      const win = frame.contentWindow;
+      // ttyd exposes its Terminal as window.term or via the global
+      // overlay object. Try several paths for robustness.
+      const term = win.term           // ttyd ≥ 1.7
+                || (win.overlay && win.overlay.terminal)
+                || null;
+      if (term && term._core) {
+        // xterm.js internal: triggerDataEvent sends data as if typed
+        term._core.coreService.triggerDataEvent(data, true);
+      } else {
+        // Fallback: dispatch on the hidden textarea xterm.js uses
+        const ta = frame.contentDocument.querySelector('.xterm-helper-textarea');
+        if (ta) {
+          ta.focus();
+          // For single-char control codes, the input event path works
+          const ev = new InputEvent('input', { data: data, inputType: 'insertText', bubbles: true });
+          ta.dispatchEvent(ev);
+        }
+      }
+    } catch (e) {
+      console.warn('send failed:', e);
+    }
+  }
+
+  // After sending a real key, auto-release modifiers (one-shot behavior)
+  function releaseModifiers() {
+    setCtrl(false);
+    setAlt(false);
+  }
+
+  // Control character: Ctrl+<letter> = letter code - 0x60
+  // e.g. Ctrl+C = 0x03, Ctrl+D = 0x04, Ctrl+Z = 0x1a
+  function ctrlChar(ch) {
+    return String.fromCharCode(ch.toUpperCase().charCodeAt(0) - 64);
+  }
+
+  // Intercept key presses in the iframe to apply held modifiers.
+  // We listen on the iframe's document and modify/block as needed.
+  frame.addEventListener('load', () => {
+    try {
+      frame.contentDocument.addEventListener('keydown', (e) => {
+        if (!ctrlHeld && !altHeld) return; // no modifier held, pass through
+
+        // Single printable char with a held modifier
+        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          if (ctrlHeld) {
+            send(ctrlChar(e.key));
+          } else if (altHeld) {
+            // Alt+<key> = ESC followed by the key
+            send('\x1b' + e.key);
+          }
+          releaseModifiers();
+        }
+      }, true); // capture phase so we get it before xterm.js
+    } catch (e) {
+      console.warn('Could not attach iframe keydown listener:', e);
+    }
+  });
+
+  // Toolbar button actions
+  document.getElementById('btn-esc').addEventListener('click', () => {
+    send('\x1b');
+    releaseModifiers();
+    try { frame.contentWindow.focus(); } catch(e) {}
+  });
+
+  document.getElementById('btn-tab').addEventListener('click', () => {
+    if (ctrlHeld) {
+      send('\x09'); // Tab is the same with or without ctrl in most terminals
+    } else {
+      send('\x09');
+    }
+    releaseModifiers();
+    try { frame.contentWindow.focus(); } catch(e) {}
+  });
+
+  document.getElementById('btn-up').addEventListener('click', () => {
+    send('\x1b[A'); // Arrow up escape sequence
+    releaseModifiers();
+    try { frame.contentWindow.focus(); } catch(e) {}
+  });
+
+  document.getElementById('btn-down').addEventListener('click', () => {
+    send('\x1b[B'); // Arrow down escape sequence
+    releaseModifiers();
+    try { frame.contentWindow.focus(); } catch(e) {}
+  });
+})();
+</script>
+</body>
+</html>
