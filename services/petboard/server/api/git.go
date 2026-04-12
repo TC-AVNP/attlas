@@ -47,6 +47,31 @@ func (a *API) unlinkRepo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "unlinked"})
 }
 
+// patchRepo handles PATCH /api/repos/{id} — update cursor without syncing.
+func (a *API) patchRepo(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil {
+		writeError(w, wrapInvalid("invalid repo id"))
+		return
+	}
+	var body struct {
+		LastSyncedSHA *string `json:"last_synced_sha"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, err)
+		return
+	}
+	if body.LastSyncedSHA == nil {
+		writeError(w, wrapInvalid("last_synced_sha is required"))
+		return
+	}
+	if err := a.Svc.UpdateRepoSHA(id, *body.LastSyncedSHA); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
 // syncRepos handles POST /api/projects/{slug}/repos/sync.
 func (a *API) syncRepos(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
