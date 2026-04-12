@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -50,6 +51,10 @@ type Server struct {
 	// X-Forwarded-For unconditionally — so this flag cannot weaken the
 	// auth on the real attlas.uk surface. See BearerMiddleware.
 	LocalBypass bool
+
+	// Device grant (RFC 8628) in-memory store, lazily initialized.
+	deviceOnce sync.Once
+	devices    *deviceStore
 }
 
 // New constructs a Server.
@@ -76,6 +81,11 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /oauth/register", s.handleRegister)
 	mux.HandleFunc("GET /oauth/authorize", s.handleAuthorize)
 	mux.HandleFunc("POST /oauth/token", s.handleToken)
+
+	// Device authorization grant (RFC 8628)
+	mux.HandleFunc("POST /oauth/device/code", s.handleDeviceCode)    // public
+	mux.HandleFunc("GET /oauth/device", s.handleDevicePage)          // Caddy-authed
+	mux.HandleFunc("POST /oauth/device/approve", s.handleDeviceApprove) // Caddy-authed
 }
 
 // ----- well-known metadata ------------------------------------------------
@@ -89,7 +99,8 @@ func (s *Server) handleAuthServerMetadata(w http.ResponseWriter, r *http.Request
 		"scopes_supported":                      []string{"petboard:read", "petboard:write"},
 		"response_types_supported":              []string{"code"},
 		"response_modes_supported":              []string{"query"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"grant_types_supported":                 []string{"authorization_code", "urn:ietf:params:oauth:grant-type:device_code"},
+		"device_authorization_endpoint":         s.Issuer + "/oauth/device/code",
 		"code_challenge_methods_supported":       []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
 		"client_id_metadata_document_supported": false,
@@ -236,13 +247,20 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grantType := r.Form.Get("grant_type")
+
+	// Device authorization grant — dispatch to the device-specific handler
+	if grantType == "urn:ietf:params:oauth:grant-type:device_code" {
+		s.handleDeviceToken(w, r)
+		return
+	}
+
 	code := r.Form.Get("code")
 	redirectURI := r.Form.Get("redirect_uri")
 	clientID := r.Form.Get("client_id")
 	codeVerifier := r.Form.Get("code_verifier")
 
 	if grantType != "authorization_code" {
-		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "only authorization_code is supported")
+		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "unsupported grant_type")
 		return
 	}
 	if code == "" || codeVerifier == "" || clientID == "" {
