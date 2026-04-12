@@ -45,14 +45,17 @@ git log -1 --format='%H %s' > /tmp/baseline-sha.txt
 
 | Port | Process | Command |
 |---|---|---|
-| 3000 | attlas-server | `ss -tlnp \| grep ':3000.*attlas-server'` |
-| 7681 | ttyd | `ss -tlnp \| grep ':7681'` |
-| 8080 | code-server | `ss -tlnp \| grep ':8080'` |
-| 18789 | openclaw-gateway | `ss -tlnp \| grep ':18789'` |
-| 7690 | petboard | `ss -tlnp \| grep ':7690'` |
-| 7691 | homelab-planner | `ss -tlnp \| grep ':7691'` |
-| 7692 | splitsies | `ss -tlnp \| grep ':7692'` |
-| 7700 | splitsies-gateway | `ss -tlnp \| grep ':7700'` |
+| 3000 | attlas-server | `sudo ss -tlnp \| grep '127.0.0.1:3000 '` |
+| 7681 | ttyd | `sudo ss -tlnp \| grep ':7681 '` (binds 0.0.0.0, not 127.0.0.1) |
+| 8080 | code-server | `sudo ss -tlnp \| grep '127.0.0.1:8080 '` |
+| 18789 | openclaw-gateway | `sudo ss -tlnp \| grep '127.0.0.1:18789 '` |
+| 7690 | petboard | `sudo ss -tlnp \| grep '127.0.0.1:7690 '` |
+| 7691 | homelab-planner | `sudo ss -tlnp \| grep '127.0.0.1:7691 '` |
+| 7692 | splitsies | `sudo ss -tlnp \| grep '127.0.0.1:7692 '` |
+| 7700 | splitsies-gateway | `sudo ss -tlnp \| grep '127.0.0.1:7700 '` |
+
+Note the trailing space in each grep pattern — without it, port `3000`
+matches `:30000` too.
 
 ## C. alive-server API endpoints (localhost:3000 — bypasses OAuth)
 
@@ -158,8 +161,11 @@ code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:7700/api/auth/me)
 
 ## K. Caddy config validates
 
+`caddy validate` needs the `CADDY_DOMAIN` env var set (systemd provides
+it via the override unit; a bare shell does not).
+
 ```bash
-sudo caddy validate --config /etc/caddy/Caddyfile 2>&1 | grep -qv 'error' && pass "caddy config" || fail "caddy config"
+sudo CADDY_DOMAIN=attlas.uk caddy validate --config /etc/caddy/Caddyfile 2>&1 | grep -q 'Valid configuration' && pass "caddy config" || fail "caddy config"
 ```
 
 ## L. Frontend-only sanity (manual, for reference)
@@ -185,5 +191,8 @@ git status --short | grep -v -E '(alive-server|attlas-server|node_modules|/dist/
 
 ## Known-broken baseline (tests that already fail before refactor)
 
-Record any baseline failures here so we know the refactor didn't cause
-them. Populate after the first run of these tests against main.
+Populated from the baseline run at commit `be6a66c`:
+
+- **ttyd listens on `0.0.0.0:7681` instead of `127.0.0.1:7681`.** Caddy
+  still front-ends it on localhost, so behaviourally indistinguishable
+  from outside. Out of scope for this refactor (structural only).

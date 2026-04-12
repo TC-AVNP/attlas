@@ -105,7 +105,7 @@ echo "Go: $(go version)"
 # 8. Build alive-server (Go binary) as agnostic-user so the on-disk
 #    permissions match the rest of the repo.
 echo "Building alive-server..."
-sudo -u "${AGNOSTIC_USER}" bash -c "export PATH=\$PATH:/usr/local/go/bin && cd '${ATTLAS_DIR}/base-setup/alive-server' && go build -o attlas-server ."
+sudo -u "${AGNOSTIC_USER}" bash -c "export PATH=\$PATH:/usr/local/go/bin && cd '${ATTLAS_DIR}/services/alive-server' && go build -o attlas-server ."
 echo "alive-server built"
 
 # 9. Provision /var/lib/alive-server/ and seed the OAuth config from
@@ -133,8 +133,8 @@ After=network.target
 Type=simple
 User=alive-svc
 Group=alive-svc
-WorkingDirectory=${ATTLAS_DIR}/base-setup/alive-server
-ExecStart=${ATTLAS_DIR}/base-setup/alive-server/attlas-server
+WorkingDirectory=${ATTLAS_DIR}/services/alive-server
+ExecStart=${ATTLAS_DIR}/services/alive-server/attlas-server
 Restart=always
 RestartSec=5
 StateDirectory=alive-server
