@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	"attlas-server/internal/gcp"
 	"attlas-server/internal/util"
 )
 
@@ -358,28 +359,15 @@ func isAuthenticated(r *http.Request) bool {
 
 // --- VM info ---
 
-func gcpMeta(path string) string {
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, _ := http.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/"+path, nil)
-	req.Header.Set("Metadata-Flavor", "Google")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "unknown"
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	return strings.TrimSpace(string(body))
-}
-
 func getVMInfo() map[string]string {
-	ip := gcpMeta("instance/network-interfaces/0/access-configs/0/external-ip")
-	zoneRaw := gcpMeta("instance/zone")
+	ip := gcp.Meta("instance/network-interfaces/0/access-configs/0/external-ip")
+	zoneRaw := gcp.Meta("instance/zone")
 	zone := zoneRaw
 	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
 		zone = zoneRaw[i+1:]
 	}
-	name := gcpMeta("instance/name")
-	mt := gcpMeta("instance/machine-type")
+	name := gcp.Meta("instance/name")
+	mt := gcp.Meta("instance/machine-type")
 	if i := strings.LastIndex(mt, "/"); i >= 0 {
 		mt = mt[i+1:]
 	}
@@ -1039,31 +1027,6 @@ var (
 	infraCacheExpires time.Time
 )
 
-// getMetadataToken fetches a short-lived OAuth access token for the
-// VM's default service account via the metadata server. Used to call
-// GCP REST APIs (Cloud Logging) without shelling out to gcloud.
-func getMetadataToken() (string, error) {
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, _ := http.NewRequest("GET",
-		"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token", nil)
-	req.Header.Set("Metadata-Flavor", "Google")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var data struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", err
-	}
-	if data.AccessToken == "" {
-		return "", fmt.Errorf("empty access token")
-	}
-	return data.AccessToken, nil
-}
-
 // fetchInstanceUptime queries Cloud Monitoring for the per-VM daily
 // uptime metric over [monthStart, endExclusive), returning:
 //
@@ -1093,12 +1056,12 @@ func getMetadataToken() (string, error) {
 func fetchInstanceUptime(monthStart, endExclusive time.Time) (
 	days []string, series map[string][]int64, err error,
 ) {
-	projectID := gcpMeta("project/project-id")
+	projectID := gcp.Meta("project/project-id")
 	if projectID == "unknown" {
 		return nil, nil, fmt.Errorf("missing metadata (project=%s)", projectID)
 	}
 
-	token, terr := getMetadataToken()
+	token, terr := gcp.MetadataToken()
 	if terr != nil {
 		return nil, nil, fmt.Errorf("metadata token: %v", terr)
 	}
@@ -1237,13 +1200,13 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	detail := InfrastructureDetail{
-		Name:       gcpMeta("instance/name"),
-		ExternalIP: gcpMeta("instance/network-interfaces/0/access-configs/0/external-ip"),
-		InternalIP: gcpMeta("instance/network-interfaces/0/ip"),
+		Name:       gcp.Meta("instance/name"),
+		ExternalIP: gcp.Meta("instance/network-interfaces/0/access-configs/0/external-ip"),
+		InternalIP: gcp.Meta("instance/network-interfaces/0/ip"),
 		Domain:     "attlas.uk",
 	}
 
-	zoneRaw := gcpMeta("instance/zone") // "projects/<num>/zones/europe-west1-b"
+	zoneRaw := gcp.Meta("instance/zone") // "projects/<num>/zones/europe-west1-b"
 	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
 		detail.Zone = zoneRaw[i+1:]
 	} else {
@@ -1253,7 +1216,7 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 		detail.Region = detail.Zone[:idx]
 	}
 
-	mtRaw := gcpMeta("instance/machine-type")
+	mtRaw := gcp.Meta("instance/machine-type")
 	if i := strings.LastIndex(mtRaw, "/"); i >= 0 {
 		detail.MachineType = mtRaw[i+1:]
 	} else {
@@ -1403,7 +1366,7 @@ func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
 func fetchGCPSpendBigQuery(monthStart time.Time) (float64, error) {
 	projectID := os.Getenv("BILLING_EXPORT_PROJECT")
 	if projectID == "" {
-		projectID = gcpMeta("project/project-id")
+		projectID = gcp.Meta("project/project-id")
 	}
 	dataset := os.Getenv("BILLING_EXPORT_DATASET")
 	if dataset == "" {
@@ -1413,7 +1376,7 @@ func fetchGCPSpendBigQuery(monthStart time.Time) (float64, error) {
 		return 0, fmt.Errorf("missing project id")
 	}
 
-	token, err := getMetadataToken()
+	token, err := gcp.MetadataToken()
 	if err != nil {
 		return 0, fmt.Errorf("metadata token: %v", err)
 	}
@@ -1621,7 +1584,7 @@ func fetchGCPCategorizedCosts(start, end time.Time) (
 ) {
 	projectID := os.Getenv("BILLING_EXPORT_PROJECT")
 	if projectID == "" {
-		projectID = gcpMeta("project/project-id")
+		projectID = gcp.Meta("project/project-id")
 	}
 	dataset := os.Getenv("BILLING_EXPORT_DATASET")
 	if dataset == "" {
@@ -1631,7 +1594,7 @@ func fetchGCPCategorizedCosts(start, end time.Time) (
 		return nil, nil, 0, fmt.Errorf("missing project id")
 	}
 
-	token, terr := getMetadataToken()
+	token, terr := gcp.MetadataToken()
 	if terr != nil {
 		return nil, nil, 0, fmt.Errorf("metadata token: %v", terr)
 	}
@@ -1759,20 +1722,20 @@ func buildCostSeries(byDate map[string]float64, start, end time.Time) CostCatego
 // over the next ~30 seconds, which is plenty of time for this HTTP
 // response to complete before alive-server gets killed.
 func handleStopVM(w http.ResponseWriter, r *http.Request) {
-	project := gcpMeta("project/project-id")
-	zoneRaw := gcpMeta("instance/zone")
+	project := gcp.Meta("project/project-id")
+	zoneRaw := gcp.Meta("instance/zone")
 	zone := zoneRaw
 	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
 		zone = zoneRaw[i+1:]
 	}
-	name := gcpMeta("instance/name")
+	name := gcp.Meta("instance/name")
 
 	if project == "unknown" || name == "unknown" {
 		util.SendJSON(w, map[string]interface{}{"error": "metadata missing"})
 		return
 	}
 
-	token, err := getMetadataToken()
+	token, err := gcp.MetadataToken()
 	if err != nil {
 		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("metadata token: %v", err)})
 		return
@@ -1808,18 +1771,18 @@ func handleStopVM(w http.ResponseWriter, r *http.Request) {
 // the current instance to get its creation timestamp (not exposed in
 // the metadata server). Uses the metadata-server access token.
 func fetchInstanceCreationTimestamp() (string, error) {
-	project := gcpMeta("project/project-id")
-	zoneRaw := gcpMeta("instance/zone")
+	project := gcp.Meta("project/project-id")
+	zoneRaw := gcp.Meta("instance/zone")
 	zone := zoneRaw
 	if i := strings.LastIndex(zoneRaw, "/"); i >= 0 {
 		zone = zoneRaw[i+1:]
 	}
-	name := gcpMeta("instance/name")
+	name := gcp.Meta("instance/name")
 	if project == "unknown" || name == "unknown" {
 		return "", fmt.Errorf("metadata missing")
 	}
 
-	token, err := getMetadataToken()
+	token, err := gcp.MetadataToken()
 	if err != nil {
 		return "", err
 	}
