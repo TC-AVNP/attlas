@@ -19,6 +19,7 @@ export default function TerminalDetail() {
   const [error, setError] = useState(null)
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(null) // session name being acted on
+  const [confirmKill, setConfirmKill] = useState(null) // session name pending confirmation
   const inputRef = useRef(null)
 
   // promptMode is set by the Caddy redirect on bare /terminal/. When
@@ -76,7 +77,6 @@ export default function TerminalDetail() {
   }
 
   const killSession = async (name) => {
-    if (!confirm(`Kill session "${name}"?\n\nAny running processes in this session will be terminated.`)) return
     setBusy(name)
     try {
       const res = await fetch('/api/services/terminal/kill', {
@@ -95,6 +95,7 @@ export default function TerminalDetail() {
       showToast(e.message, 'error')
     } finally {
       setBusy(null)
+      setConfirmKill(null)
     }
   }
 
@@ -207,14 +208,33 @@ export default function TerminalDetail() {
                     <a href={attachUrl(s.name)} target="_blank" rel="noopener noreferrer">
                       attach ↗
                     </a>
-                    <button
-                      className="link-btn dismiss"
-                      disabled={busy === s.name}
-                      onClick={() => killSession(s.name)}
-                      title={`kill ${s.name}`}
-                    >
-                      ×
-                    </button>
+                    {confirmKill === s.name ? (
+                      <>
+                        <button
+                          className="link-btn"
+                          style={{ color: 'var(--danger)', fontWeight: 'bold' }}
+                          disabled={busy === s.name}
+                          onClick={() => killSession(s.name)}
+                        >
+                          yes, kill
+                        </button>
+                        <button
+                          className="link-btn"
+                          onClick={() => setConfirmKill(null)}
+                        >
+                          cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="link-btn dismiss"
+                        disabled={busy === s.name}
+                        onClick={() => setConfirmKill(s.name)}
+                        title={`kill ${s.name}`}
+                      >
+                        ×
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
