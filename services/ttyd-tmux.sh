@@ -29,5 +29,11 @@ fi
 # later invocations inherit the already-applied setting.
 export IAPETUS_TTYD=1
 
+# Set the browser tab title to the session name. The \033]0;…\007
+# escape is interpreted by xterm.js inside ttyd and updates the
+# document title. tmux does not override this unless set-titles is on
+# (it isn't on the attlas socket).
+printf '\033]0;%s · terminal\007' "$SESSION"
+
 # new-session -A: attach if it exists, create if it doesn't.
 exec /usr/bin/tmux -L attlas new-session -A -s "$SESSION"

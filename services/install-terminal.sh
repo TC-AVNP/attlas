@@ -50,6 +50,33 @@ echo "ttyd: $(ttyd --version 2>&1 | head -1)"
 # which in turn execs tmux new-session -A -s <arg1 or main>.
 install -m 0755 "$SCRIPT_DIR/ttyd-tmux.sh" /usr/local/bin/ttyd-tmux.sh
 
+# Build custom index.html with mobile keyboard injected.
+# ttyd 1.7.7 inlines all JS/CSS into its HTML, so we extract the
+# built-in page (by running ttyd briefly on a throwaway port),
+# inject our keyboard fragment before </body>, and point ttyd at
+# the result via --index. The keyboard fragment lives in the repo
+# at services/ttyd-mobile-keyboard.html.
+CUSTOM_INDEX="/usr/local/share/ttyd-custom-index.html"
+echo "Building custom ttyd index with mobile keyboard..."
+/usr/local/bin/ttyd --port 17681 -W /bin/true &
+PROBE_PID=$!
+for i in $(seq 1 10); do
+  curl -sf http://localhost:17681/ > "${CUSTOM_INDEX}.tmp" 2>/dev/null && break
+  sleep 0.5
+done
+kill "$PROBE_PID" 2>/dev/null; wait "$PROBE_PID" 2>/dev/null || true
+if [[ ! -s "${CUSTOM_INDEX}.tmp" ]]; then
+  echo "WARNING: could not extract ttyd HTML, skipping keyboard injection." >&2
+  rm -f "${CUSTOM_INDEX}.tmp"
+else
+  # Strip the closing </body></html>, append keyboard, re-close.
+  sed -i 's|</body></html>$||' "${CUSTOM_INDEX}.tmp"
+  cat "$SCRIPT_DIR/ttyd-mobile-keyboard.html" >> "${CUSTOM_INDEX}.tmp"
+  printf '\n</body></html>\n' >> "${CUSTOM_INDEX}.tmp"
+  mv "${CUSTOM_INDEX}.tmp" "$CUSTOM_INDEX"
+  echo "Custom index with mobile keyboard written to ${CUSTOM_INDEX}"
+fi
+
 # Create systemd unit
 # WorkingDirectory drops the user into the iapetus workspace by default
 # when they open /terminal in the browser. The path is hardcoded (not %h)
@@ -67,7 +94,7 @@ After=network.target
 Type=simple
 User=${SERVICE_USER}
 WorkingDirectory=${SERVICE_HOME}/iapetus
-ExecStart=/usr/local/bin/ttyd --base-path /terminal --port 7681 --writable --url-arg -t titleFixed=attlas /usr/local/bin/ttyd-tmux.sh
+ExecStart=/usr/local/bin/ttyd --base-path /terminal --index /usr/local/share/ttyd-custom-index.html --port 7681 --writable --url-arg /usr/local/bin/ttyd-tmux.sh
 Restart=always
 RestartSec=5
 
