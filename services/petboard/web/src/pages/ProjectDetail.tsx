@@ -146,8 +146,10 @@ export default function ProjectDetail() {
 
   if (!data) return null;
 
-  const groups = groupByStatus(data.features);
-  const totalEffort = data.features.length;
+  const features = data.features ?? [];
+  const effort = data.effort ?? [];
+  const groups = groupByStatus(features);
+  const totalEffort = features.length;
   const doneCount = groups.done.length;
 
   return (
@@ -270,7 +272,7 @@ export default function ProjectDetail() {
         {/* Four-column board */}
         <section className="mt-8">
           <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-3">
-            features ({data.features.length})
+            features ({features.length})
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {STATUS_ORDER.map((status) => (
@@ -338,11 +340,11 @@ export default function ProjectDetail() {
             </button>
           </form>
 
-          {data.effort.length > 0 && (
+          {effort.length > 0 && (
             <div className="mt-4">
-              <EffortSparkline effort={data.effort} />
+              <EffortSparkline effort={effort} />
               <ul className="mt-3 space-y-1 text-sm text-neutral-400">
-                {data.effort
+                {effort
                   .slice()
                   .sort((a, b) => b.logged_at - a.logged_at)
                   .slice(0, 10)
