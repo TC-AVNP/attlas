@@ -2484,6 +2484,12 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 			contentType = "application/octet-stream"
 		}
 		w.Header().Set("Content-Type", contentType)
+		// Hashed assets are immutable; index.html must always revalidate.
+		if strings.HasPrefix(path, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		http.ServeFile(w, r, filePath)
 		return
 	}
@@ -2491,6 +2497,7 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 	indexPath := filepath.Join(distDir, "index.html")
 	if _, err := os.Stat(indexPath); err == nil {
 		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, indexPath)
 		return
 	}
