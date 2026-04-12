@@ -88,6 +88,7 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     <button class="k" data-key="down">&darr;</button>
     <button class="k" data-key="left">&larr;</button>
     <button class="k" data-key="right">&rarr;</button>
+    <button class="k" id="mk-scroll">Scrl</button>
     <button class="k" id="mk-sel">Sel</button>
     <button class="k" id="mk-copy">Copy</button>
     <button class="k" id="mk-paste">Paste</button>
@@ -441,6 +442,27 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     updateKbVisibility();
   }
   init();
+
+  // ── Scroll (tmux copy-mode) ───────────────────────────────────────
+  var scrollBtn = document.getElementById('mk-scroll');
+  var scrolling = false;
+  if (scrollBtn) {
+    function toggleScroll() {
+      scrolling = !scrolling;
+      scrollBtn.classList.toggle('held', scrolling);
+      if (scrolling) {
+        // Enter tmux copy-mode: prefix (Ctrl+B) then [
+        send('\x02[');
+      } else {
+        // Exit copy-mode: q
+        send('q');
+      }
+    }
+    scrollBtn.addEventListener('touchstart', function(e) {
+      e.preventDefault(); toggleScroll();
+    }, { passive: false });
+    scrollBtn.addEventListener('click', function() { toggleScroll(); });
+  }
 
   // ── Internal buffer for Sel / Copy / Paste ───────────────────────
   var selBtn = document.getElementById('mk-sel');
