@@ -88,9 +88,11 @@ func (s *Server) handleAuthServerMetadata(w http.ResponseWriter, r *http.Request
 		"registration_endpoint":                 s.Issuer + "/oauth/register",
 		"scopes_supported":                      []string{"petboard:read", "petboard:write"},
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code"},
-		"code_challenge_methods_supported":      []string{"S256"},
-		"token_endpoint_auth_methods_supported": []string{"none"}, // public clients (PKCE)
+		"response_modes_supported":              []string{"query"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":       []string{"S256"},
+		"token_endpoint_auth_methods_supported": []string{"none"},
+		"client_id_metadata_document_supported": false,
 	})
 }
 
