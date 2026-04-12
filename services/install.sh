@@ -16,6 +16,8 @@ for f in "$SCRIPT_DIR"/*/install.sh; do
   name=$(basename "$(dirname "$f")")
   # alive-server is bootstrapped by base-setup/setup.sh, not from this menu.
   [ "$name" = "alive-server" ] && continue
+  # claude-login is a helper the dashboard shells out to, not a user-visible service.
+  [ "$name" = "claude-login" ] && continue
   desc=$(head -2 "$f" | grep '^#' | tail -1 | sed 's/^# *//')
   SERVICES+=("$name")
   DESCRIPTIONS+=("$desc")

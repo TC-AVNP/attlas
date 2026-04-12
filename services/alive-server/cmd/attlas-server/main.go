@@ -1312,9 +1312,17 @@ func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
 		os.Remove(f)
 	}
 
-	helperPath := filepath.Join(filepath.Dir(os.Args[0]), "claude-login-helper.py")
+	// The helper lives under services/claude-login/ alongside every
+	// other service. Fall back to legacy locations (next-to-binary
+	// or alive-server/) for old installs that haven't redeployed yet.
+	helperPath := filepath.Join(attlasDir, "services", "claude-login", "claude-login-helper.py")
 	if _, err := os.Stat(helperPath); err != nil {
-		helperPath = filepath.Join(distDir, "..", "claude-login-helper.py")
+		alt := filepath.Join(filepath.Dir(os.Args[0]), "claude-login-helper.py")
+		if _, aerr := os.Stat(alt); aerr == nil {
+			helperPath = alt
+		} else {
+			helperPath = filepath.Join(distDir, "..", "claude-login-helper.py")
+		}
 	}
 
 	logFile, _ := os.Create("/tmp/claude-login-helper.log")
