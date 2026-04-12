@@ -5,12 +5,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Discover available services (any file matching install-*.sh)
+# Discover available services. Each service owns a folder with an
+# install.sh at services/<name>/install.sh. The service's display name
+# comes from the second comment line of install.sh (matching the old
+# flat-file convention).
 SERVICES=()
 DESCRIPTIONS=()
-for f in "$SCRIPT_DIR"/install-*.sh; do
+for f in "$SCRIPT_DIR"/*/install.sh; do
   [ -f "$f" ] || continue
-  name=$(basename "$f" | sed 's/install-//;s/\.sh//')
+  name=$(basename "$(dirname "$f")")
+  # alive-server is bootstrapped by base-setup/setup.sh, not from this menu.
+  [ "$name" = "alive-server" ] && continue
   desc=$(head -2 "$f" | grep '^#' | tail -1 | sed 's/^# *//')
   SERVICES+=("$name")
   DESCRIPTIONS+=("$desc")
@@ -62,7 +67,7 @@ echo ""
 
 for svc in "${SELECTED[@]}"; do
   echo "--- Installing $svc ---"
-  bash "$SCRIPT_DIR/install-$svc.sh"
+  bash "$SCRIPT_DIR/$svc/install.sh"
   echo ""
 done
 

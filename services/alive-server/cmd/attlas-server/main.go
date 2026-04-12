@@ -39,23 +39,23 @@ var (
 // Known services
 var knownServices = []Service{
 	{ID: "terminal", Name: "Cloud Terminal", ServiceName: "ttyd", Command: "ttyd",
-		Path: "/terminal/", Script: "install-terminal.sh"},
+		Path: "/terminal/", Script: "install.sh"},
 	{ID: "code-server", Name: "Cloud VS Code", ServiceName: "code-server", Command: "code-server",
-		Path: "/code/", Script: "install-code-server.sh"},
+		Path: "/code/", Script: "install.sh"},
 	{ID: "openclaw", Name: "OpenClaw", ServiceName: "openclaw-gateway", Command: "openclaw",
-		Path: "/openclaw/", Script: "install-openclaw.sh", CheckProcess: "openclaw-gateway"},
+		Path: "/openclaw/", Script: "install.sh", CheckProcess: "openclaw-gateway"},
 	{ID: "diary", Name: "Project Diary", ServiceName: "", Command: "hugo",
-		Path: "/diary/", Script: "install-diary.sh"},
+		Path: "/diary/", Script: "install.sh"},
 	{ID: "petboard", Name: "Petboard", ServiceName: "petboard", Command: "petboard",
-		Path: "/petboard/", Script: "install-petboard.sh"},
+		Path: "/petboard/", Script: "install.sh"},
 	{ID: "homelab-planner", Name: "Homelab Planner", ServiceName: "homelab-planner", Command: "homelab-planner",
-		Path: "/homelab-planner/", Script: "install-homelab-planner.sh"},
+		Path: "/homelab-planner/", Script: "install.sh"},
 	// Splitsies lives on its own subdomain (splitsies.attlas.uk) routed
 	// through splitsies-gateway (separate service, not listed here because
 	// users never visit the gateway directly). The Path field accepts a
 	// full URL — the dashboard's "open" link uses it as an href directly.
 	{ID: "splitsies", Name: "Splitsies", ServiceName: "splitsies", Command: "splitsies",
-		Path: "https://splitsies.attlas.uk/", Script: "install-splitsies.sh"},
+		Path: "https://splitsies.attlas.uk/", Script: "install.sh"},
 }
 
 type Service struct {
@@ -1393,16 +1393,16 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := filepath.Join(attlasDir, "services", svc.Script)
+	script := filepath.Join(attlasDir, "services", svc.ID, svc.Script)
 	if _, err := os.Stat(script); err != nil {
 		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Script not found: %s", script)})
 		return
 	}
 
-	// install-*.sh scripts require root (they write to /etc/systemd/system/),
+	// install.sh scripts require root (they write to /etc/systemd/system/),
 	// so we run them via sudo. Authorized by /etc/sudoers.d/alive-svc-services.
 	cmd := exec.Command("sudo", "-n", "bash", script)
-	cmd.Dir = filepath.Join(attlasDir, "services")
+	cmd.Dir = filepath.Join(attlasDir, "services", svc.ID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		util.SendJSON(w, map[string]interface{}{"error": string(out)})
@@ -1425,16 +1425,16 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	script := filepath.Join(attlasDir, "services", fmt.Sprintf("uninstall-%s.sh", svc.ID))
+	script := filepath.Join(attlasDir, "services", svc.ID, "uninstall.sh")
 	if _, err := os.Stat(script); err != nil {
 		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Uninstall script not found: %s", script)})
 		return
 	}
 
-	// uninstall-*.sh scripts require root (they touch /etc/systemd/system/
+	// uninstall.sh scripts require root (they touch /etc/systemd/system/
 	// and /etc/caddy/conf.d/), so we run them via sudo.
 	cmd := exec.Command("sudo", "-n", "bash", script)
-	cmd.Dir = filepath.Join(attlasDir, "services")
+	cmd.Dir = filepath.Join(attlasDir, "services", svc.ID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		util.SendJSON(w, map[string]interface{}{"error": string(out)})
