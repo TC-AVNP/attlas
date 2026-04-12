@@ -2078,6 +2078,20 @@ func handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+
+	// RFC 8414: when an OAuth issuer has a path component (e.g.
+	// https://attlas.uk/petboard), clients construct the well-known
+	// metadata URL as /.well-known/oauth-authorization-server/<path>.
+	// That path is NOT under /petboard/* so Caddy won't route it to
+	// petboard. We handle it here by redirecting to the service's
+	// actual well-known endpoint. This makes Claude Code's MCP OAuth
+	// discovery work for any subpath-based issuer without Caddy changes.
+	if strings.HasPrefix(origURI, "/.well-known/oauth-authorization-server/") {
+		svcPath := strings.TrimPrefix(origURI, "/.well-known/oauth-authorization-server")
+		redirect := svcPath + "/.well-known/oauth-authorization-server"
+		http.Redirect(w, r, redirect, http.StatusFound)
+		return
+	}
 	if isAuthenticated(r) {
 		w.WriteHeader(http.StatusOK)
 		return
