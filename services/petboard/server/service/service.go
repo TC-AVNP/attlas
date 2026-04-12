@@ -218,7 +218,12 @@ func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	p.FeatureCounts = counts
 	p.TotalMinutes = total
 
-	return &ProjectDetail{Project: p, Features: features, Effort: effort}, nil
+	repos, err := s.gitReposFor(p.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ProjectDetail{Project: p, Features: features, Effort: effort, GitRepos: repos}, nil
 }
 
 func (s *Service) featuresFor(projectID int64) ([]Feature, error) {

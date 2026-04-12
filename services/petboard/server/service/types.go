@@ -70,6 +70,20 @@ type EffortLog struct {
 	LoggedAt  int64   `json:"logged_at"`
 }
 
+// GitRepo links a local git repository to a project for auto effort
+// derivation from commit history.
+type GitRepo struct {
+	ID             int64   `json:"id"`
+	ProjectID      int64   `json:"project_id"`
+	RepoPath       string  `json:"repo_path"`
+	AuthorFilter   *string `json:"author_filter,omitempty"`
+	SessionGapMin  int64   `json:"session_gap_min"`
+	FirstCommitMin int64   `json:"first_commit_min"`
+	LastSyncedSHA  *string `json:"last_synced_sha,omitempty"`
+	LastSyncedAt   *int64  `json:"last_synced_at,omitempty"`
+	CreatedAt      int64   `json:"created_at"`
+}
+
 // ProjectDetail bundles a project with its features and recent effort
 // log — what GET /api/projects/:slug returns and what MCP get_project
 // returns.
@@ -77,6 +91,7 @@ type ProjectDetail struct {
 	Project
 	Features []Feature   `json:"features"`
 	Effort   []EffortLog `json:"effort"`
+	GitRepos []GitRepo   `json:"git_repos,omitempty"`
 }
 
 // CreateProjectInput captures the fields required to create a project.
@@ -120,6 +135,23 @@ type LogEffortInput struct {
 	Minutes   int64
 	Note      *string
 	FeatureID *int64
+}
+
+// LinkRepoInput is the payload for linking a git repo to a project.
+type LinkRepoInput struct {
+	RepoPath       string
+	AuthorFilter   *string
+	SessionGapMin  *int64
+	FirstCommitMin *int64
+}
+
+// GitSyncResult summarizes what a sync run produced.
+type GitSyncResult struct {
+	RepoPath       string      `json:"repo_path"`
+	CommitsScanned int         `json:"commits_scanned"`
+	SessionsFound  int         `json:"sessions_found"`
+	MinutesLogged  int64       `json:"minutes_logged"`
+	EffortLogs     []EffortLog `json:"effort_logs"`
 }
 
 // Sentinel errors for common failure modes so handlers can map them to

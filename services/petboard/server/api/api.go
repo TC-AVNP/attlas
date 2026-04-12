@@ -45,10 +45,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Nested under projects
 	mux.HandleFunc("POST /api/projects/{slug}/features", a.createFeature)
 	mux.HandleFunc("POST /api/projects/{slug}/effort", a.logEffort)
+	mux.HandleFunc("POST /api/projects/{slug}/repos", a.linkRepo)
+	mux.HandleFunc("POST /api/projects/{slug}/repos/sync", a.syncRepos)
 
 	// Features
 	mux.HandleFunc("PATCH /api/features/{id}", a.updateFeature)
 	mux.HandleFunc("DELETE /api/features/{id}", a.deleteFeature)
+
+	// Git repos
+	mux.HandleFunc("DELETE /api/repos/{id}", a.unlinkRepo)
 
 	// Standalone todos (not tied to any project)
 	mux.HandleFunc("GET /api/todos", a.listTodos)
