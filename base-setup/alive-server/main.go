@@ -59,6 +59,8 @@ var knownServices = []Service{
 		Path: "/openclaw/", Script: "install-openclaw.sh", CheckProcess: "openclaw-gateway"},
 	{ID: "diary", Name: "Project Diary", ServiceName: "", Command: "hugo",
 		Path: "/diary/", Script: "install-diary.sh"},
+	{ID: "petboard", Name: "Petboard", ServiceName: "petboard", Command: "petboard",
+		Path: "/petboard/", Script: "install-petboard.sh"},
 }
 
 type Service struct {
