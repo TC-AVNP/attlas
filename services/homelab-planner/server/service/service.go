@@ -22,7 +22,7 @@ func (s *Service) now() int64 { return s.Now().Unix() }
 
 func (s *Service) ListSteps() ([]Step, error) {
 	rows, err := s.DB.Query(`
-		SELECT s.id, s.title, s.description, s.position, s.total_budget_cents, s.created_at, s.completed_at,
+		SELECT s.id, s.title, s.description, s.position, s.category, s.total_budget_cents, s.created_at, s.completed_at,
 		       COALESCE((SELECT COUNT(*) FROM checklist_items WHERE step_id = s.id), 0),
 		       COALESCE((SELECT COUNT(*) FROM checklist_items WHERE step_id = s.id AND status = 'arrived'), 0),
 		       COALESCE((SELECT SUM(COALESCE(budget_cents, 0)) FROM checklist_items WHERE step_id = s.id), 0),
@@ -39,7 +39,7 @@ func (s *Service) ListSteps() ([]Step, error) {
 	for rows.Next() {
 		var st Step
 		if err := rows.Scan(
-			&st.ID, &st.Title, &st.Description, &st.Position, &st.TotalBudgetCents, &st.CreatedAt, &st.CompletedAt,
+			&st.ID, &st.Title, &st.Description, &st.Position, &st.Category, &st.TotalBudgetCents, &st.CreatedAt, &st.CompletedAt,
 			&st.ItemCount, &st.ArrivedCount, &st.BudgetCents, &st.ActualCents,
 		); err != nil {
 			return nil, err
@@ -52,7 +52,7 @@ func (s *Service) ListSteps() ([]Step, error) {
 func (s *Service) GetStep(id int64) (*StepDetail, error) {
 	var st Step
 	err := s.DB.QueryRow(`
-		SELECT s.id, s.title, s.description, s.position, s.total_budget_cents, s.created_at, s.completed_at,
+		SELECT s.id, s.title, s.description, s.position, s.category, s.total_budget_cents, s.created_at, s.completed_at,
 		       COALESCE((SELECT COUNT(*) FROM checklist_items WHERE step_id = s.id), 0),
 		       COALESCE((SELECT COUNT(*) FROM checklist_items WHERE step_id = s.id AND status = 'arrived'), 0),
 		       COALESCE((SELECT SUM(COALESCE(budget_cents, 0)) FROM checklist_items WHERE step_id = s.id), 0),
@@ -173,17 +173,25 @@ func (s *Service) CreateStep(in CreateStepInput) (*Step, error) {
 	s.DB.QueryRow(`SELECT COALESCE(MAX(position), -1) FROM steps`).Scan(&maxPos)
 
 	now := s.now()
+	cat := in.Category
+	if cat == "" {
+		cat = CategoryExecuting
+	}
+	if !ValidStepCategory(cat) {
+		return nil, fmt.Errorf("invalid category %q: %w", cat, ErrInvalidInput)
+	}
+
 	res, err := s.DB.Exec(`
-		INSERT INTO steps (title, description, position, total_budget_cents, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, title, in.Description, maxPos+1, in.TotalBudgetCents, now)
+		INSERT INTO steps (title, description, position, category, total_budget_cents, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, title, in.Description, maxPos+1, cat, in.TotalBudgetCents, now)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
 	return &Step{
 		ID: id, Title: title, Description: in.Description,
-		Position: maxPos + 1, TotalBudgetCents: in.TotalBudgetCents, CreatedAt: now,
+		Position: maxPos + 1, Category: cat, TotalBudgetCents: in.TotalBudgetCents, CreatedAt: now,
 	}, nil
 }
 
@@ -206,6 +214,12 @@ func (s *Service) UpdateStep(id int64, in UpdateStepInput) (*Step, error) {
 	if in.Position != nil {
 		st.Position = *in.Position
 	}
+	if in.Category != nil {
+		if !ValidStepCategory(*in.Category) {
+			return nil, fmt.Errorf("invalid category %q: %w", *in.Category, ErrInvalidInput)
+		}
+		st.Category = *in.Category
+	}
 	if in.TotalBudgetCents != nil {
 		st.TotalBudgetCents = in.TotalBudgetCents
 	}
@@ -219,9 +233,9 @@ func (s *Service) UpdateStep(id int64, in UpdateStepInput) (*Step, error) {
 	}
 
 	_, err = s.DB.Exec(`
-		UPDATE steps SET title = ?, description = ?, position = ?, total_budget_cents = ?, completed_at = ?
+		UPDATE steps SET title = ?, description = ?, position = ?, category = ?, total_budget_cents = ?, completed_at = ?
 		WHERE id = ?
-	`, st.Title, st.Description, st.Position, st.TotalBudgetCents, st.CompletedAt, id)
+	`, st.Title, st.Description, st.Position, st.Category, st.TotalBudgetCents, st.CompletedAt, id)
 	if err != nil {
 		return nil, err
 	}
@@ -243,9 +257,9 @@ func (s *Service) DeleteStep(id int64) error {
 func (s *Service) getStepRow(id int64) (*Step, error) {
 	var st Step
 	err := s.DB.QueryRow(`
-		SELECT id, title, description, position, total_budget_cents, created_at, completed_at
+		SELECT id, title, description, position, category, total_budget_cents, created_at, completed_at
 		FROM steps WHERE id = ?
-	`, id).Scan(&st.ID, &st.Title, &st.Description, &st.Position, &st.TotalBudgetCents, &st.CreatedAt, &st.CompletedAt)
+	`, id).Scan(&st.ID, &st.Title, &st.Description, &st.Position, &st.Category, &st.TotalBudgetCents, &st.CreatedAt, &st.CompletedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("step %d: %w", id, ErrNotFound)
 	}

@@ -1,10 +1,12 @@
 export type ItemStatus = "researching" | "ordered" | "arrived";
+export type StepCategory = "refining" | "executing";
 
 export interface Step {
   id: number;
   title: string;
   description: string;
   position: number;
+  category: StepCategory;
   total_budget_cents?: number;
   created_at: number;
   completed_at?: number;

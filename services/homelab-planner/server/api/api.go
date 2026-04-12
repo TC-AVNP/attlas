@@ -56,9 +56,10 @@ func (a *API) listSteps(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createStep(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title            string `json:"title"`
-		Description      string `json:"description"`
-		TotalBudgetCents *int64 `json:"total_budget_cents"`
+		Title            string               `json:"title"`
+		Description      string               `json:"description"`
+		Category         service.StepCategory  `json:"category"`
+		TotalBudgetCents *int64               `json:"total_budget_cents"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -66,7 +67,7 @@ func (a *API) createStep(w http.ResponseWriter, r *http.Request) {
 	}
 	step, err := a.Svc.CreateStep(service.CreateStepInput{
 		Title: body.Title, Description: body.Description,
-		TotalBudgetCents: body.TotalBudgetCents,
+		Category: body.Category, TotalBudgetCents: body.TotalBudgetCents,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -102,11 +103,12 @@ func (a *API) updateStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title            *string `json:"title"`
-		Description      *string `json:"description"`
-		Position         *int64  `json:"position"`
-		TotalBudgetCents *int64  `json:"total_budget_cents"`
-		Completed        *bool   `json:"completed"`
+		Title            *string               `json:"title"`
+		Description      *string               `json:"description"`
+		Position         *int64                `json:"position"`
+		Category         *service.StepCategory `json:"category"`
+		TotalBudgetCents *int64                `json:"total_budget_cents"`
+		Completed        *bool                 `json:"completed"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -114,8 +116,8 @@ func (a *API) updateStep(w http.ResponseWriter, r *http.Request) {
 	}
 	step, err := a.Svc.UpdateStep(id, service.UpdateStepInput{
 		Title: body.Title, Description: body.Description,
-		Position: body.Position, TotalBudgetCents: body.TotalBudgetCents,
-		Completed: body.Completed,
+		Position: body.Position, Category: body.Category,
+		TotalBudgetCents: body.TotalBudgetCents, Completed: body.Completed,
 	})
 	if err != nil {
 		writeError(w, err)

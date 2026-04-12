@@ -11,6 +11,21 @@ const (
 	StatusArrived     ItemStatus = "arrived"
 )
 
+type StepCategory string
+
+const (
+	CategoryRefining  StepCategory = "refining"
+	CategoryExecuting StepCategory = "executing"
+)
+
+func ValidStepCategory(c StepCategory) bool {
+	switch c {
+	case CategoryRefining, CategoryExecuting:
+		return true
+	}
+	return false
+}
+
 func ValidItemStatus(s ItemStatus) bool {
 	switch s {
 	case StatusResearching, StatusOrdered, StatusArrived:
@@ -21,13 +36,14 @@ func ValidItemStatus(s ItemStatus) bool {
 
 // Step is an independent weekend-sized milestone.
 type Step struct {
-	ID               int64  `json:"id"`
-	Title            string `json:"title"`
-	Description      string `json:"description"`
-	Position         int64  `json:"position"`
-	TotalBudgetCents *int64 `json:"total_budget_cents,omitempty"`
-	CreatedAt        int64  `json:"created_at"`
-	CompletedAt      *int64 `json:"completed_at,omitempty"`
+	ID               int64        `json:"id"`
+	Title            string       `json:"title"`
+	Description      string       `json:"description"`
+	Position         int64        `json:"position"`
+	Category         StepCategory `json:"category"`
+	TotalBudgetCents *int64       `json:"total_budget_cents,omitempty"`
+	CreatedAt        int64        `json:"created_at"`
+	CompletedAt      *int64       `json:"completed_at,omitempty"`
 
 	// Aggregates
 	ItemCount    int   `json:"item_count"`
@@ -82,6 +98,7 @@ type StepDetail struct {
 type CreateStepInput struct {
 	Title            string
 	Description      string
+	Category         StepCategory
 	TotalBudgetCents *int64
 }
 
@@ -89,6 +106,7 @@ type UpdateStepInput struct {
 	Title            *string
 	Description      *string
 	Position         *int64
+	Category         *StepCategory
 	TotalBudgetCents *int64
 	Completed        *bool
 }

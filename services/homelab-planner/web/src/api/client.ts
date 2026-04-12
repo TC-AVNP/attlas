@@ -4,6 +4,7 @@ import type {
   ItemStatus,
   BuildLogEntry,
   Step,
+  StepCategory,
   StepDetail,
 } from "./types";
 
@@ -43,6 +44,7 @@ export const api = {
   createStep: (body: {
     title: string;
     description?: string;
+    category?: StepCategory;
     total_budget_cents?: number;
   }) =>
     request<Step>("/steps", { method: "POST", body: JSON.stringify(body) }),

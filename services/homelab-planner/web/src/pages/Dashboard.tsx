@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { api } from "../api/client";
+import type { Step, StepCategory } from "../api/types";
 import { formatCents } from "../lib/format";
 
 export default function Dashboard() {
@@ -9,6 +10,7 @@ export default function Dashboard() {
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState<StepCategory>("executing");
 
   const { data, isLoading } = useQuery({
     queryKey: ["steps"],
@@ -16,7 +18,7 @@ export default function Dashboard() {
   });
 
   const createMutation = useMutation({
-    mutationFn: () => api.createStep({ title, description }),
+    mutationFn: () => api.createStep({ title, description, category }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["steps"] });
       setTitle("");
@@ -27,8 +29,14 @@ export default function Dashboard() {
 
   const steps = data?.steps ?? [];
 
-  const totalBudget = steps.reduce((sum, s) => sum + s.budget_cents, 0);
+  const totalBudget = steps.reduce(
+    (sum, s) => sum + (s.total_budget_cents ?? s.budget_cents),
+    0,
+  );
   const totalActual = steps.reduce((sum, s) => sum + s.actual_cents, 0);
+
+  const refiningSteps = steps.filter((s) => s.category === "refining");
+  const executingSteps = steps.filter((s) => s.category === "executing");
 
   if (isLoading) {
     return <div className="p-8 text-gray-500">Loading...</div>;
@@ -85,7 +93,17 @@ export default function Dashboard() {
             className="w-full bg-gray-800 rounded px-3 py-2 text-sm"
             rows={2}
           />
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <select
+              value={category}
+              onChange={(e) =>
+                setCategory(e.target.value as StepCategory)
+              }
+              className="bg-gray-800 rounded px-3 py-2 text-sm"
+            >
+              <option value="refining">Refining</option>
+              <option value="executing">Executing</option>
+            </select>
             <button
               type="submit"
               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-sm"
@@ -103,61 +121,86 @@ export default function Dashboard() {
         </form>
       )}
 
-      {/* Steps list */}
-      <div className="space-y-3">
-        {steps.map((step) => (
-          <Link
-            key={step.id}
-            to={`/step/${step.id}`}
-            className="block bg-gray-900 rounded-lg p-4 hover:bg-gray-800 transition-colors"
-          >
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="font-semibold">
-                {step.completed_at ? (
-                  <span className="text-green-400 mr-2">[done]</span>
-                ) : null}
-                {step.title}
-              </h2>
-              <span className="text-sm text-gray-400">
-                {step.arrived_count}/{step.item_count} items
-              </span>
-            </div>
-            {step.description && (
-              <p className="text-sm text-gray-400 mb-2">{step.description}</p>
-            )}
-            <div className="flex gap-6 text-xs text-gray-500">
-              <span>
-                Budget: &euro;
-                {formatCents(
-                  step.total_budget_cents ?? step.budget_cents,
-                )}
-              </span>
-              <span>
-                Spent: &euro;{formatCents(step.actual_cents)}
-              </span>
-              {/* Progress bar */}
-              {step.item_count > 0 && (
-                <div className="flex-1 flex items-center gap-2">
-                  <div className="flex-1 bg-gray-800 rounded-full h-1.5">
-                    <div
-                      className="bg-green-500 rounded-full h-1.5 transition-all"
-                      style={{
-                        width: `${(step.arrived_count / step.item_count) * 100}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          </Link>
-        ))}
+      {/* Refining steps */}
+      {refiningSteps.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-amber-400 uppercase tracking-wider mb-3">
+            Refining — decide &amp; research
+          </h2>
+          <div className="space-y-3">
+            {refiningSteps.map((step) => (
+              <StepCard key={step.id} step={step} />
+            ))}
+          </div>
+        </div>
+      )}
 
-        {steps.length === 0 && (
-          <p className="text-gray-500 text-center py-12">
-            No steps yet. Add your first milestone to get started.
-          </p>
+      {/* Executing steps */}
+      {executingSteps.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-sm font-semibold text-emerald-400 uppercase tracking-wider mb-3">
+            Executing — build &amp; do
+          </h2>
+          <div className="space-y-3">
+            {executingSteps.map((step) => (
+              <StepCard key={step.id} step={step} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {steps.length === 0 && (
+        <p className="text-gray-500 text-center py-12">
+          No steps yet. Add your first milestone to get started.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function StepCard({ step }: { step: Step }) {
+  return (
+    <Link
+      to={`/step/${step.id}`}
+      className="block bg-gray-900 rounded-lg p-4 hover:bg-gray-800 transition-colors"
+    >
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="font-semibold">
+          {step.completed_at ? (
+            <span className="text-green-400 mr-2">[done]</span>
+          ) : null}
+          {step.title}
+        </h3>
+        {step.item_count > 0 && (
+          <span className="text-sm text-gray-400">
+            {step.arrived_count}/{step.item_count} items
+          </span>
         )}
       </div>
-    </div>
+      {step.description && (
+        <p className="text-sm text-gray-400 mb-2">{step.description}</p>
+      )}
+      {(step.budget_cents > 0 || step.actual_cents > 0) && (
+        <div className="flex gap-6 text-xs text-gray-500">
+          <span>
+            Budget: &euro;
+            {formatCents(step.total_budget_cents ?? step.budget_cents)}
+          </span>
+          <span>Spent: &euro;{formatCents(step.actual_cents)}</span>
+          {step.item_count > 0 && (
+            <div className="flex-1 flex items-center gap-2">
+              <div className="flex-1 bg-gray-800 rounded-full h-1.5">
+                <div
+                  className="bg-green-500 rounded-full h-1.5 transition-all"
+                  style={{
+                    width: `${(step.arrived_count / step.item_count) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Link>
   );
 }
