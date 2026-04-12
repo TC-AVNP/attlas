@@ -193,6 +193,19 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
+			"name":        "update_feature",
+			"description": "Patch fields of an existing feature (title and/or description).",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"feature_id"},
+				"properties": map[string]any{
+					"feature_id":  map[string]any{"type": "integer"},
+					"title":       map[string]any{"type": "string"},
+					"description": map[string]any{"type": "string"},
+				},
+			},
+		},
+		{
 			"name":        "log_effort",
 			"description": "Record minutes of work against a project (optionally tied to a specific feature).",
 			"inputSchema": map[string]any{
@@ -352,6 +365,27 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			h.Events.Publish(events.Event{
 				Type:    "feature.status_changed",
 				Payload: map[string]any{"feature_id": args.FeatureID, "status": args.Status},
+			})
+		}
+		return f, err
+
+	case "update_feature":
+		var args struct {
+			FeatureID   int64   `json:"feature_id"`
+			Title       *string `json:"title"`
+			Description *string `json:"description"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, err
+		}
+		f, err := h.Svc.UpdateFeature(args.FeatureID, service.UpdateFeatureInput{
+			Title:       args.Title,
+			Description: args.Description,
+		})
+		if err == nil && h.Events != nil {
+			h.Events.Publish(events.Event{
+				Type:    "feature.updated",
+				Payload: map[string]any{"feature_id": args.FeatureID},
 			})
 		}
 		return f, err
