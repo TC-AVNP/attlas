@@ -632,10 +632,18 @@ a:hover { text-decoration: underline; }
 }
 .svc-actions .dismiss {
   color: var(--muted);
-  font-size: 1rem;
-  padding: 0 0.2rem;
+  font-size: 1.1rem;
+  padding: 0.4rem 0.6rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
-.svc-actions .dismiss:hover { color: var(--danger); }
+.svc-actions .dismiss:hover { color: var(--danger); background: var(--danger); color: var(--btn-on-accent); }
 
 .back-link {
   display: inline-block;
