@@ -96,8 +96,8 @@ func (s *Server) handleAuthServerMetadata(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":              s.Issuer,
-		"authorization_servers": []string{s.Issuer},
+		"resource":                 s.Issuer + "/mcp",
+		"authorization_servers":    []string{s.Issuer},
 		"bearer_methods_supported": []string{"header"},
 	})
 }
