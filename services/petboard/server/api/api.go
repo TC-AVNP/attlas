@@ -53,6 +53,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/features/{id}", a.deleteFeature)
 
 	// Git repos
+	mux.HandleFunc("PATCH /api/repos/{id}", a.patchRepo)
 	mux.HandleFunc("DELETE /api/repos/{id}", a.unlinkRepo)
 
 	// Standalone todos (not tied to any project)

@@ -79,6 +79,21 @@ func (s *Service) LinkRepo(projectSlug string, in LinkRepoInput) (*GitRepo, erro
 	}, nil
 }
 
+// UpdateRepoSHA advances the sync cursor without creating effort logs.
+func (s *Service) UpdateRepoSHA(repoID int64, sha string) error {
+	res, err := s.DB.Exec(`
+		UPDATE git_repos SET last_synced_sha = ?, last_synced_at = ? WHERE id = ?
+	`, sha, s.now(), repoID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UnlinkRepo removes a git repo link. Existing effort logs are kept.
 func (s *Service) UnlinkRepo(repoID int64) error {
 	res, err := s.DB.Exec(`DELETE FROM git_repos WHERE id = ?`, repoID)
