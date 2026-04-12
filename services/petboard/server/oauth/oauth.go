@@ -395,9 +395,11 @@ func (s *Server) writeAuthChallenge(w http.ResponseWriter, errDesc string) {
 // ----- helpers ------------------------------------------------------------
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	b, _ := json.Marshal(v)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(b)))
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	w.Write(b)
 }
 
 func writeError(w http.ResponseWriter, status int, errCode, desc string) {
