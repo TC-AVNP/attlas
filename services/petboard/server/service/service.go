@@ -80,7 +80,7 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	}
 	rows, err := s.DB.Query(`
 		SELECT p.id, p.slug, p.name, p.problem, p.description, p.priority,
-		       p.color, p.created_at, p.archived_at, p.canvas_x, p.canvas_y
+		       p.color, p.created_at, p.archived_at, p.repo_path, p.canvas_x, p.canvas_y
 		FROM projects p
 		` + where + `
 		ORDER BY p.created_at DESC
@@ -95,7 +95,7 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 		var p Project
 		if err := rows.Scan(
 			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
-			&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.CanvasX, &p.CanvasY,
+			&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.RepoPath, &p.CanvasX, &p.CanvasY,
 		); err != nil {
 			return nil, err
 		}
@@ -182,12 +182,12 @@ func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	var p Project
 	err := s.DB.QueryRow(`
 		SELECT id, slug, name, problem, description, priority, color,
-		       created_at, archived_at, canvas_x, canvas_y
+		       created_at, archived_at, repo_path, canvas_x, canvas_y
 		FROM projects
 		WHERE slug = ?
 	`, slug).Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
-		&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.CanvasX, &p.CanvasY,
+		&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.RepoPath, &p.CanvasX, &p.CanvasY,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -314,9 +314,9 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 
 	now := s.now()
 	res, err := s.DB.Exec(`
-		INSERT INTO projects (slug, name, problem, description, priority, color, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, slug, in.Name, in.Problem, in.Description, in.Priority, color, now)
+		INSERT INTO projects (slug, name, problem, description, priority, color, repo_path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, slug, in.Name, in.Problem, in.Description, in.Priority, color, in.RepoPath, now)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +332,7 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 		Description: in.Description,
 		Priority:    in.Priority,
 		Color:       color,
+		RepoPath:    in.RepoPath,
 		CreatedAt:   now,
 	}, nil
 }
@@ -374,6 +375,10 @@ func (s *Service) UpdateProject(slug string, in UpdateProjectInput) (*ProjectDet
 	if in.Color != nil {
 		sets = append(sets, "color = ?")
 		args = append(args, *in.Color)
+	}
+	if in.RepoPath != nil {
+		sets = append(sets, "repo_path = ?")
+		args = append(args, *in.RepoPath)
 	}
 	if in.CanvasX != nil {
 		sets = append(sets, "canvas_x = ?")
