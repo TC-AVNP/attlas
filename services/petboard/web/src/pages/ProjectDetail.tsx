@@ -379,6 +379,8 @@ function FeatureColumn({
   onCycleStatus: (f: Feature) => void;
   onDelete: (f: Feature) => void;
 }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
   return (
     <div>
       <h3 className="text-xs uppercase tracking-wider text-neutral-500 mb-2 flex items-center gap-2">
@@ -392,15 +394,21 @@ function FeatureColumn({
         {features.map((f) => (
           <li
             key={f.id}
-            className={`group relative rounded border ${STATUS_BORDER[f.status]} bg-neutral-900/50 px-3 py-2 text-sm`}
+            className={`group relative rounded border ${STATUS_BORDER[f.status]} bg-neutral-900/50 px-3 py-2 text-sm cursor-pointer`}
+            onClick={() => setExpanded(expanded === f.id ? null : f.id)}
           >
             <div className="text-neutral-200">{f.title}</div>
+            {expanded === f.id && f.description && (
+              <p className="mt-2 text-xs text-neutral-400 leading-relaxed border-t border-neutral-800 pt-2">
+                {f.description}
+              </p>
+            )}
             <div className="mt-1 flex items-center justify-between text-xs text-neutral-500">
               <span>{formatRelative(f.created_at)}</span>
               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
                   type="button"
-                  onClick={() => onCycleStatus(f)}
+                  onClick={(e) => { e.stopPropagation(); onCycleStatus(f); }}
                   className="px-1.5 py-0.5 rounded border border-neutral-700 hover:bg-neutral-800"
                   title={`move to ${STATUS_NEXT[f.status]}`}
                 >
@@ -408,7 +416,7 @@ function FeatureColumn({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDelete(f)}
+                  onClick={(e) => { e.stopPropagation(); onDelete(f); }}
                   className="px-1.5 py-0.5 rounded border border-neutral-700 hover:bg-red-900/50"
                   title="delete"
                 >
