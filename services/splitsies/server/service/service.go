@@ -194,6 +194,25 @@ func (s *Service) AddUser(email string, isAdmin bool) (*User, error) {
 	}, nil
 }
 
+// SetAdmin flips the admin flag on a user. Used by the super-admin
+// panel in the attlas alive dashboard — splitsies's own UI doesn't
+// expose promotion/demotion per the feature spec.
+func (s *Service) SetAdmin(userID int64, isAdmin bool) (*User, error) {
+	admin := 0
+	if isAdmin {
+		admin = 1
+	}
+	res, err := s.DB.Exec(`UPDATE users SET is_admin = ? WHERE id = ?`, admin, userID)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	return s.getUser(userID)
+}
+
 // RemoveUser deactivates a user (revokes access but keeps history).
 func (s *Service) RemoveUser(userID int64) error {
 	res, err := s.DB.Exec(`UPDATE users SET is_active = 0 WHERE id = ?`, userID)

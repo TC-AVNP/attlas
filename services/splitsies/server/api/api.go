@@ -46,6 +46,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	// Protected routes
 	mux.Handle("GET /api/users", a.requireAuth(http.HandlerFunc(a.listUsers)))
 	mux.Handle("POST /api/users", a.requireAdmin(http.HandlerFunc(a.addUser)))
+	mux.Handle("PATCH /api/users/{id}", a.requireAdmin(http.HandlerFunc(a.patchUser)))
 	mux.Handle("DELETE /api/users/{id}", a.requireAdmin(http.HandlerFunc(a.removeUser)))
 
 	mux.Handle("GET /api/groups", a.requireAuth(http.HandlerFunc(a.listGroups)))
@@ -107,9 +108,14 @@ func (a *API) requireAdmin(next http.Handler) http.Handler {
 }
 
 func (a *API) authenticateRequest(r *http.Request) (*service.User, error) {
-	// Dev mode: auto-login as first user
+	// Loopback requests without X-Forwarded-For are trusted as a
+	// synthetic "system" super-admin. This is how alive-server (which
+	// connects to splitsies over 127.0.0.1 with no Caddy in front) reads
+	// users and promotes/demotes admins from the attlas dashboard.
+	// Caddy always sets X-Forwarded-For on real client requests, so
+	// public traffic can never hit this branch.
 	if a.LocalBypass && r.Header.Get("X-Forwarded-For") == "" {
-		return a.devUser()
+		return systemUser(), nil
 	}
 
 	cookie, err := r.Cookie("splitsies_session")
@@ -119,25 +125,18 @@ func (a *API) authenticateRequest(r *http.Request) (*service.User, error) {
 	return a.Svc.ValidateSession(cookie.Value)
 }
 
-func (a *API) devUser() (*service.User, error) {
-	users, err := a.Svc.ListUsers()
-	if err != nil {
-		return nil, err
+// systemUser returns a synthetic super-admin identity used for trusted
+// loopback callers (alive-server). It has ID 0 so it can never collide
+// with a real user row; audit trails that record the caller should
+// render "system" distinctly if that ever matters.
+func systemUser() *service.User {
+	return &service.User{
+		ID:       0,
+		Email:    "system",
+		Name:     "System",
+		IsAdmin:  true,
+		IsActive: true,
 	}
-	for _, u := range users {
-		if u.IsAdmin && u.IsActive {
-			return &u, nil
-		}
-	}
-	// No admin yet — create one
-	u, err := a.Svc.AddUser("dev@localhost", true)
-	if err != nil {
-		return nil, err
-	}
-	// Set name
-	a.Svc.FindOrCreateUser("dev@localhost", "Dev User", "")
-	u.Name = "Dev User"
-	return u, nil
 }
 
 func currentUser(r *http.Request) *service.User {
@@ -171,6 +170,32 @@ func (a *API) addUser(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publish("user.added", u)
 	writeJSON(w, http.StatusCreated, u)
+}
+
+func (a *API) patchUser(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(r.PathValue("id"))
+	if err != nil {
+		writeError(w, wrapInvalid("invalid user id"))
+		return
+	}
+	var body struct {
+		IsAdmin *bool `json:"is_admin"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		writeError(w, err)
+		return
+	}
+	if body.IsAdmin == nil {
+		writeError(w, wrapInvalid("no updatable field supplied"))
+		return
+	}
+	u, err := a.Svc.SetAdmin(id, *body.IsAdmin)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	a.publish("user.updated", u)
+	writeJSON(w, http.StatusOK, u)
 }
 
 func (a *API) removeUser(w http.ResponseWriter, r *http.Request) {

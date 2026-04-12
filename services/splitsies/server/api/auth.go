@@ -8,18 +8,32 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"splitsies/service"
 )
 
 // authGoogle redirects the user to Google's OAuth consent screen.
 func (a *API) authGoogle(w http.ResponseWriter, r *http.Request) {
 	if a.LocalBypass && a.GoogleClientID == "" {
-		// Dev mode: skip Google, create session for dev user
-		user, err := a.devUser()
+		// Dev shortcut: no Google configured, bypass OAuth and log in as
+		// the first active admin (seeded by SPLITSIES_INITIAL_ADMIN).
+		users, err := a.Svc.ListUsers()
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		token, err := a.Svc.CreateSession(user.ID)
+		var admin *service.User
+		for i := range users {
+			if users[i].IsAdmin && users[i].IsActive {
+				admin = &users[i]
+				break
+			}
+		}
+		if admin == nil {
+			http.Error(w, "no admin exists — set SPLITSIES_INITIAL_ADMIN and restart", http.StatusServiceUnavailable)
+			return
+		}
+		token, err := a.Svc.CreateSession(admin.ID)
 		if err != nil {
 			writeError(w, err)
 			return

@@ -101,6 +101,11 @@ Environment=SPLITSIES_BASE_URL=${BASE_URL}
 Environment=SPLITSIES_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 Environment=SPLITSIES_GOOGLE_SECRET=${GOOGLE_SECRET}
 Environment=SPLITSIES_INITIAL_ADMIN=${INITIAL_ADMIN}
+# Loopback requests without X-Forwarded-For are trusted as system
+# super-admin so alive-server can manage splitsies users/admins from
+# the attlas dashboard. Caddy + splitsies-gateway both set
+# X-Forwarded-For on public traffic, so this can never weaken real auth.
+Environment=SPLITSIES_LOCAL_BYPASS=1
 ExecStart=${BIN_DEST} serve
 Restart=always
 RestartSec=5
