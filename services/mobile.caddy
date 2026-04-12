@@ -1,0 +1,5 @@
+handle /mobile {
+	root * /usr/local/share/attlas-mobile
+	try_files {path} /index.html
+	file_server
+}
