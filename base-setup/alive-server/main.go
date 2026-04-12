@@ -61,6 +61,8 @@ var knownServices = []Service{
 		Path: "/diary/", Script: "install-diary.sh"},
 	{ID: "petboard", Name: "Petboard", ServiceName: "petboard", Command: "petboard",
 		Path: "/petboard/", Script: "install-petboard.sh"},
+	{ID: "homelab-planner", Name: "Homelab Planner", ServiceName: "homelab-planner", Command: "homelab-planner",
+		Path: "/homelab-planner/", Script: "install-homelab-planner.sh"},
 }
 
 type Service struct {

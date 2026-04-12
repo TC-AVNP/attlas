@@ -1,0 +1,3 @@
+handle /homelab-planner* {
+    reverse_proxy localhost:7691
+}
