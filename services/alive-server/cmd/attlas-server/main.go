@@ -26,6 +26,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"attlas-server/internal/util"
 )
 
 const (
@@ -82,21 +84,6 @@ type Service struct {
 	Installed    bool   `json:"installed"`
 	Running      bool   `json:"running"`
 }
-
-// externalAPICacheTTL is the shared cache window for every handler
-// that fans out to a rate-limited upstream (Anthropic cost_report,
-// GCP BigQuery billing export, GCP Cloud Logging). The frontend polls
-// some of these endpoints every 15–60s, so without caching the
-// openclaw detail page alone would hit Anthropic ~4 times/minute and
-// the infra detail page would hit Cloud Logging at the same rate —
-// which is exactly how we started getting rate-limited.
-//
-// 15 minutes is short enough that "is anything on fire?" glances
-// still see fresh-enough numbers, and long enough that even a busy
-// day with multiple dashboards open never pushes us near any
-// upstream's published rate limits. If you bump this and start
-// seeing 429s again, this is the first knob to shrink.
-const externalAPICacheTTL = 15 * time.Minute
 
 // --- OAuth2 state tokens ---
 
@@ -585,22 +572,6 @@ func isClaudeLoggedIn() bool {
 
 // --- Service status ---
 
-func runCmd(name string, args ...string) (string, bool) {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err == nil
-}
-
-// runCmdCtx runs a command with a hard timeout. Used for subprocesses
-// that might hang (openclaw gateway probes, systemctl on a stuck unit).
-func runCmdCtx(timeout time.Duration, name string, args ...string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err == nil
-}
-
 // loadInstalledServices is a live binary lookup, not a cached state file.
 // The previous .attlas-services.json cache invalidated only on first read,
 // which made the dashboard show a stale snapshot if services were installed
@@ -648,7 +619,7 @@ func getDotfilesStatus() DotfilesStatus {
 	}
 
 	// systemctl show dotfiles-sync.service
-	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "dotfiles-sync.service",
+	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "show", "dotfiles-sync.service",
 		"-p", "ExecMainExitTimestamp", "-p", "ExecMainStatus"); ok {
 		for _, line := range strings.Split(out, "\n") {
 			if strings.HasPrefix(line, "ExecMainStatus=") {
@@ -666,21 +637,21 @@ func getDotfilesStatus() DotfilesStatus {
 	}
 
 	// Detect branch (upstream is master — but derive rather than hardcode).
-	branch, _ := runCmdCtx(2*time.Second, "git", "-C", dir, "symbolic-ref", "--short", "HEAD")
+	branch, _ := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "symbolic-ref", "--short", "HEAD")
 	if branch == "" {
 		branch = "master"
 	}
 
-	if head, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "HEAD"); ok {
+	if head, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "HEAD"); ok {
 		status.HeadCommit = head
 	}
-	if committedAt, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "log", "-1", "--format=%cI", "HEAD"); ok {
+	if committedAt, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "log", "-1", "--format=%cI", "HEAD"); ok {
 		status.HeadCommittedAt = committedAt
 	}
-	if remote, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "origin/"+branch); ok {
+	if remote, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-parse", "--short", "origin/"+branch); ok {
 		status.RemoteCommit = remote
 	}
-	if behindOut, ok := runCmdCtx(2*time.Second, "git", "-C", dir, "rev-list", "--count", "HEAD..origin/"+branch); ok {
+	if behindOut, ok := util.RunCmdCtx(2*time.Second, "git", "-C", dir, "rev-list", "--count", "HEAD..origin/"+branch); ok {
 		if n, err := strconv.Atoi(behindOut); err == nil {
 			status.Behind = n
 		}
@@ -703,10 +674,10 @@ func handleDotfilesSync(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("sudo", "-n", "systemctl", "start", "dotfiles-sync.service")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
+		util.SendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
 		return
 	}
-	sendJSON(w, map[string]interface{}{"success": true})
+	util.SendJSON(w, map[string]interface{}{"success": true})
 }
 
 // --- Domain expiry (F3) ---
@@ -748,7 +719,7 @@ func getDomainExpiry() DomainExpiry {
 		return result
 	}
 
-	out, ok := runCmdCtx(10*time.Second, "whois", "attlas.uk")
+	out, ok := util.RunCmdCtx(10*time.Second, "whois", "attlas.uk")
 	if !ok {
 		domainCacheValue = result
 		domainCacheExpires = time.Now().Add(10 * time.Minute)
@@ -835,27 +806,27 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	defer openclawCacheMu.Unlock()
 
 	if time.Now().Before(openclawCacheExpires) {
-		sendJSON(w, openclawCacheValue)
+		util.SendJSON(w, openclawCacheValue)
 		return
 	}
 
 	detail := OpenclawDetail{}
 
 	// 1. systemd runtime status.
-	if out, ok := runCmdCtx(2*time.Second, "systemctl", "is-active", "openclaw-gateway"); ok {
+	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "is-active", "openclaw-gateway"); ok {
 		detail.Running = out == "active"
 	}
-	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "openclaw-gateway",
+	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "show", "openclaw-gateway",
 		"-p", "ActiveEnterTimestamp"); ok {
 		raw := strings.TrimPrefix(strings.TrimSpace(out), "ActiveEnterTimestamp=")
 		if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil && !t.IsZero() {
-			detail.Uptime = humanDuration(time.Since(t))
+			detail.Uptime = util.HumanDuration(time.Since(t))
 		}
 	}
 
 	// 2. openclaw status --all --json via sudo -u openclaw-svc.
 	//    Authorized via /etc/sudoers.d/alive-svc-openclaw.
-	if out, ok := runCmdCtx(2*time.Second, "sudo", "-n", "-u", "openclaw-svc", "-H",
+	if out, ok := util.RunCmdCtx(2*time.Second, "sudo", "-n", "-u", "openclaw-svc", "-H",
 		"/usr/bin/openclaw", "status", "--all", "--json"); ok {
 		var s openclawStatusJSON
 		if err := json.Unmarshal([]byte(out), &s); err == nil {
@@ -885,8 +856,8 @@ func handleOpenclawDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	openclawCacheValue = detail
-	openclawCacheExpires = time.Now().Add(externalAPICacheTTL)
-	sendJSON(w, detail)
+	openclawCacheExpires = time.Now().Add(util.ExternalAPICacheTTL)
+	util.SendJSON(w, detail)
 }
 
 // --- Terminal detail (tmux-backed ttyd sessions) ---
@@ -973,10 +944,10 @@ func listTmuxSessions() ([]TerminalSession, error) {
 		if createdUnix > 0 {
 			t := time.Unix(createdUnix, 0).UTC()
 			s.CreatedAt = t.Format(time.RFC3339)
-			s.Created = humanDuration(time.Since(t)) + " ago"
+			s.Created = util.HumanDuration(time.Since(t)) + " ago"
 		}
 		if activityUnix > 0 {
-			s.Activity = humanDuration(time.Since(time.Unix(activityUnix, 0))) + " ago"
+			s.Activity = util.HumanDuration(time.Since(time.Unix(activityUnix, 0))) + " ago"
 		}
 		sessions = append(sessions, s)
 	}
@@ -992,14 +963,14 @@ func listTmuxSessions() ([]TerminalSession, error) {
 func handleTerminalDetail(w http.ResponseWriter, r *http.Request) {
 	detail := TerminalDetail{Sessions: []TerminalSession{}}
 
-	if out, ok := runCmdCtx(2*time.Second, "systemctl", "is-active", "ttyd"); ok {
+	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "is-active", "ttyd"); ok {
 		detail.Running = out == "active"
 	}
-	if out, ok := runCmdCtx(2*time.Second, "systemctl", "show", "ttyd",
+	if out, ok := util.RunCmdCtx(2*time.Second, "systemctl", "show", "ttyd",
 		"-p", "ActiveEnterTimestamp"); ok {
 		raw := strings.TrimPrefix(strings.TrimSpace(out), "ActiveEnterTimestamp=")
 		if t, err := time.Parse("Mon 2006-01-02 15:04:05 MST", raw); err == nil && !t.IsZero() {
-			detail.Uptime = humanDuration(time.Since(t))
+			detail.Uptime = util.HumanDuration(time.Since(t))
 		}
 	}
 
@@ -1009,7 +980,7 @@ func handleTerminalDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		detail.Sessions = sessions
 	}
-	sendJSON(w, detail)
+	util.SendJSON(w, detail)
 }
 
 func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
@@ -1019,7 +990,7 @@ func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(r.Body).Decode(&body)
 	name := strings.TrimSpace(body.Name)
 	if !terminalSessionRE.MatchString(name) {
-		sendJSON(w, map[string]interface{}{"error": "Invalid session name"})
+		util.SendJSON(w, map[string]interface{}{"error": "Invalid session name"})
 		return
 	}
 
@@ -1027,10 +998,10 @@ func handleTerminalKill(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out, err := tmuxCmd(ctx, "kill-session", "-t", "="+name).CombinedOutput()
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
+		util.SendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
 		return
 	}
-	sendJSON(w, map[string]interface{}{"success": true})
+	util.SendJSON(w, map[string]interface{}{"success": true})
 }
 
 // --- Infrastructure detail (daily VM uptime via Cloud Logging) ---
@@ -1260,7 +1231,7 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 	defer infraCacheMu.Unlock()
 
 	if time.Now().Before(infraCacheExpires) {
-		sendJSON(w, infraCacheValue)
+		util.SendJSON(w, infraCacheValue)
 		return
 	}
 
@@ -1292,7 +1263,7 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 	// /proc/stat btime → OS boot time → current uptime.
 	if bt := osBootTime(); !bt.IsZero() {
 		detail.OSBootTime = bt.Format(time.RFC3339)
-		detail.UptimeNow = humanDuration(now.Sub(bt))
+		detail.UptimeNow = util.HumanDuration(now.Sub(bt))
 	}
 
 	// Creation timestamp isn't in the metadata server directly; query
@@ -1337,8 +1308,8 @@ func handleInfrastructureDetail(w http.ResponseWriter, r *http.Request) {
 	detail.TotalSecondsMonth = totalMonth
 
 	infraCacheValue = detail
-	infraCacheExpires = time.Now().Add(externalAPICacheTTL)
-	sendJSON(w, detail)
+	infraCacheExpires = time.Now().Add(util.ExternalAPICacheTTL)
+	util.SendJSON(w, detail)
 }
 
 // --- Cloud spend (anthropic cost_report + gcp bigquery billing export) ---
@@ -1370,7 +1341,7 @@ func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
 	defer cloudSpendCacheMu.Unlock()
 
 	if time.Now().Before(cloudSpendCacheExpires) {
-		sendJSON(w, cloudSpendCacheValue)
+		util.SendJSON(w, cloudSpendCacheValue)
 		return
 	}
 
@@ -1405,8 +1376,8 @@ func handleCloudSpend(w http.ResponseWriter, r *http.Request) {
 	cs.TotalMTD = cs.AnthropicMTD + cs.GCPMTD
 
 	cloudSpendCacheValue = cs
-	cloudSpendCacheExpires = time.Now().Add(externalAPICacheTTL)
-	sendJSON(w, cs)
+	cloudSpendCacheExpires = time.Now().Add(util.ExternalAPICacheTTL)
+	util.SendJSON(w, cs)
 }
 
 // fetchGCPSpendBigQuery runs a SQL query against the Cloud Billing
@@ -1569,7 +1540,7 @@ func handleCostsBreakdown(w http.ResponseWriter, r *http.Request) {
 	defer costsBreakdownCacheMu.Unlock()
 
 	if time.Now().Before(costsBreakdownCacheExpires) {
-		sendJSON(w, costsBreakdownCacheValue)
+		util.SendJSON(w, costsBreakdownCacheValue)
 		return
 	}
 
@@ -1615,8 +1586,8 @@ func handleCostsBreakdown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	costsBreakdownCacheValue = cb
-	costsBreakdownCacheExpires = time.Now().Add(externalAPICacheTTL)
-	sendJSON(w, cb)
+	costsBreakdownCacheExpires = time.Now().Add(util.ExternalAPICacheTTL)
+	util.SendJSON(w, cb)
 }
 
 // fetchGCPCategorizedCosts runs ONE BigQuery SELECT that classifies
@@ -1797,13 +1768,13 @@ func handleStopVM(w http.ResponseWriter, r *http.Request) {
 	name := gcpMeta("instance/name")
 
 	if project == "unknown" || name == "unknown" {
-		sendJSON(w, map[string]interface{}{"error": "metadata missing"})
+		util.SendJSON(w, map[string]interface{}{"error": "metadata missing"})
 		return
 	}
 
 	token, err := getMetadataToken()
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("metadata token: %v", err)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("metadata token: %v", err)})
 		return
 	}
 
@@ -1818,19 +1789,19 @@ func handleStopVM(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("contact compute: %v", err)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("contact compute: %v", err)})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("compute %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("compute %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))})
 		return
 	}
 
 	log.Printf("vm stop: requested by dashboard, instance %s/%s/%s", project, zone, name)
-	sendJSON(w, map[string]interface{}{"success": true, "message": "stop requested — vm will be down in ~30s"})
+	util.SendJSON(w, map[string]interface{}{"success": true, "message": "stop requested — vm will be down in ~30s"})
 }
 
 // fetchInstanceCreationTimestamp hits the Compute Engine REST API for
@@ -1873,22 +1844,6 @@ func fetchInstanceCreationTimestamp() (string, error) {
 		return "", err
 	}
 	return data.CreationTimestamp, nil
-}
-
-func humanDuration(d time.Duration) string {
-	if d < 0 {
-		return "—"
-	}
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	mins := int(d.Minutes()) % 60
-	if days > 0 {
-		return fmt.Sprintf("%dd %dh", days, hours)
-	}
-	if hours > 0 {
-		return fmt.Sprintf("%dh %dm", hours, mins)
-	}
-	return fmt.Sprintf("%dm", mins)
 }
 
 // fetchAnthropicSpend calls the Anthropic cost_report admin API and
@@ -2008,9 +1963,9 @@ func getServicesStatus() []Service {
 		s.Installed = installed[svc.ID]
 		if s.Installed {
 			if svc.CheckProcess != "" {
-				_, s.Running = runCmd("pgrep", "-f", svc.CheckProcess)
+				_, s.Running = util.RunCmd("pgrep", "-f", svc.CheckProcess)
 			} else if svc.ServiceName != "" {
-				out, _ := runCmd("systemctl", "is-active", svc.ServiceName)
+				out, _ := util.RunCmd("systemctl", "is-active", svc.ServiceName)
 				s.Running = out == "active"
 			} else {
 				s.Running = true // static service (no daemon)
@@ -2285,7 +2240,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if oauthConfig != nil {
 		allowedEmails = oauthConfig.AllowedEmails
 	}
-	sendJSON(w, map[string]interface{}{
+	util.SendJSON(w, map[string]interface{}{
 		"vm": getVMInfo(),
 		"user": map[string]interface{}{
 			"email":          getSessionEmail(r),
@@ -2304,7 +2259,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
 	if isClaudeLoggedIn() {
-		sendJSON(w, map[string]interface{}{"error": "Already logged in"})
+		util.SendJSON(w, map[string]interface{}{"error": "Already logged in"})
 		return
 	}
 
@@ -2340,14 +2295,14 @@ func handleClaudeLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if authURL != "" {
-		sendJSON(w, map[string]interface{}{"url": authURL})
+		util.SendJSON(w, map[string]interface{}{"url": authURL})
 	} else {
 		logData, _ := os.ReadFile("/tmp/claude-login-helper.log")
 		snippet := string(logData)
 		if len(snippet) > 500 {
 			snippet = snippet[:500]
 		}
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Timed out waiting for URL. Log: %s", snippet)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Timed out waiting for URL. Log: %s", snippet)})
 	}
 }
 
@@ -2357,7 +2312,7 @@ func handleClaudeCode(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&body)
 	if body.Code == "" {
-		sendJSON(w, map[string]interface{}{"error": "No code provided."})
+		util.SendJSON(w, map[string]interface{}{"error": "No code provided."})
 		return
 	}
 
@@ -2376,11 +2331,11 @@ func handleClaudeCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if result == "SUCCESS" {
-		sendJSON(w, map[string]interface{}{"success": true})
+		util.SendJSON(w, map[string]interface{}{"success": true})
 	} else if result != "" {
-		sendJSON(w, map[string]interface{}{"error": result})
+		util.SendJSON(w, map[string]interface{}{"error": result})
 	} else {
-		sendJSON(w, map[string]interface{}{"error": "Timed out waiting for login result."})
+		util.SendJSON(w, map[string]interface{}{"error": "Timed out waiting for login result."})
 	}
 }
 
@@ -2392,13 +2347,13 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 
 	svc := findService(body.ID)
 	if svc == nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Unknown service: %s", body.ID)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Unknown service: %s", body.ID)})
 		return
 	}
 
 	script := filepath.Join(attlasDir, "services", svc.Script)
 	if _, err := os.Stat(script); err != nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Script not found: %s", script)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Script not found: %s", script)})
 		return
 	}
 
@@ -2408,12 +2363,12 @@ func handleInstallService(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = filepath.Join(attlasDir, "services")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": string(out)})
+		util.SendJSON(w, map[string]interface{}{"error": string(out)})
 		return
 	}
 
 	exec.Command("sudo", "-n", "systemctl", "reload", "caddy").Run()
-	sendJSON(w, map[string]interface{}{"success": true})
+	util.SendJSON(w, map[string]interface{}{"success": true})
 }
 
 func handleUninstallService(w http.ResponseWriter, r *http.Request) {
@@ -2424,13 +2379,13 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 
 	svc := findService(body.ID)
 	if svc == nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Unknown service: %s", body.ID)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Unknown service: %s", body.ID)})
 		return
 	}
 
 	script := filepath.Join(attlasDir, "services", fmt.Sprintf("uninstall-%s.sh", svc.ID))
 	if _, err := os.Stat(script); err != nil {
-		sendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Uninstall script not found: %s", script)})
+		util.SendJSON(w, map[string]interface{}{"error": fmt.Sprintf("Uninstall script not found: %s", script)})
 		return
 	}
 
@@ -2440,12 +2395,12 @@ func handleUninstallService(w http.ResponseWriter, r *http.Request) {
 	cmd.Dir = filepath.Join(attlasDir, "services")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		sendJSON(w, map[string]interface{}{"error": string(out)})
+		util.SendJSON(w, map[string]interface{}{"error": string(out)})
 		return
 	}
 
 	exec.Command("sudo", "-n", "systemctl", "reload", "caddy").Run()
-	sendJSON(w, map[string]interface{}{"success": true})
+	util.SendJSON(w, map[string]interface{}{"success": true})
 }
 
 // --- Helpers ---
@@ -2457,11 +2412,6 @@ func findService(id string) *Service {
 		}
 	}
 	return nil
-}
-
-func sendJSON(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
 }
 
 func extractIP(r *http.Request) string {
