@@ -40,7 +40,11 @@ export const api = {
   // Steps
   listSteps: () => request<{ steps: Step[] }>("/steps"),
   getStep: (id: number) => request<StepDetail>(`/steps/${id}`),
-  createStep: (body: { title: string; description?: string }) =>
+  createStep: (body: {
+    title: string;
+    description?: string;
+    total_budget_cents?: number;
+  }) =>
     request<Step>("/steps", { method: "POST", body: JSON.stringify(body) }),
   updateStep: (
     id: number,
@@ -48,6 +52,7 @@ export const api = {
       title?: string;
       description?: string;
       position?: number;
+      total_budget_cents?: number;
       completed?: boolean;
     },
   ) =>
@@ -59,7 +64,10 @@ export const api = {
     request<void>(`/steps/${id}`, { method: "DELETE" }),
 
   // Checklist items
-  createItem: (stepId: number, body: { name: string; budget_cents?: number }) =>
+  createItem: (
+    stepId: number,
+    body: { name: string; group_name?: string; budget_cents?: number },
+  ) =>
     request<ChecklistItem>(`/steps/${stepId}/items`, {
       method: "POST",
       body: JSON.stringify(body),
@@ -68,6 +76,7 @@ export const api = {
     id: number,
     body: {
       name?: string;
+      group_name?: string;
       budget_cents?: number;
       actual_cost_cents?: number;
       status?: ItemStatus;

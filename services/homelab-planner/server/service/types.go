@@ -21,12 +21,13 @@ func ValidItemStatus(s ItemStatus) bool {
 
 // Step is an independent weekend-sized milestone.
 type Step struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Position    int64  `json:"position"`
-	CreatedAt   int64  `json:"created_at"`
-	CompletedAt *int64 `json:"completed_at,omitempty"`
+	ID               int64  `json:"id"`
+	Title            string `json:"title"`
+	Description      string `json:"description"`
+	Position         int64  `json:"position"`
+	TotalBudgetCents *int64 `json:"total_budget_cents,omitempty"`
+	CreatedAt        int64  `json:"created_at"`
+	CompletedAt      *int64 `json:"completed_at,omitempty"`
 
 	// Aggregates
 	ItemCount    int   `json:"item_count"`
@@ -40,6 +41,7 @@ type ChecklistItem struct {
 	ID               int64      `json:"id"`
 	StepID           int64      `json:"step_id"`
 	Name             string     `json:"name"`
+	GroupName        string     `json:"group_name"`
 	BudgetCents      *int64     `json:"budget_cents,omitempty"`
 	ActualCostCents  *int64     `json:"actual_cost_cents,omitempty"`
 	Status           ItemStatus `json:"status"`
@@ -78,24 +80,28 @@ type StepDetail struct {
 // Input types
 
 type CreateStepInput struct {
-	Title       string
-	Description string
+	Title            string
+	Description      string
+	TotalBudgetCents *int64
 }
 
 type UpdateStepInput struct {
-	Title       *string
-	Description *string
-	Position    *int64
-	Completed   *bool
+	Title            *string
+	Description      *string
+	Position         *int64
+	TotalBudgetCents *int64
+	Completed        *bool
 }
 
 type CreateItemInput struct {
 	Name        string
+	GroupName   string
 	BudgetCents *int64
 }
 
 type UpdateItemInput struct {
 	Name             *string
+	GroupName        *string
 	BudgetCents      *int64
 	ActualCostCents  *int64
 	Status           *ItemStatus

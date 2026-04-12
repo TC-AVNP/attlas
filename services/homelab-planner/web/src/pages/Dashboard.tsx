@@ -127,7 +127,10 @@ export default function Dashboard() {
             )}
             <div className="flex gap-6 text-xs text-gray-500">
               <span>
-                Budget: &euro;{formatCents(step.budget_cents)}
+                Budget: &euro;
+                {formatCents(
+                  step.total_budget_cents ?? step.budget_cents,
+                )}
               </span>
               <span>
                 Spent: &euro;{formatCents(step.actual_cents)}

@@ -5,6 +5,7 @@ export interface Step {
   title: string;
   description: string;
   position: number;
+  total_budget_cents?: number;
   created_at: number;
   completed_at?: number;
   item_count: number;
@@ -17,6 +18,7 @@ export interface ChecklistItem {
   id: number;
   step_id: number;
   name: string;
+  group_name: string;
   budget_cents?: number;
   actual_cost_cents?: number;
   status: ItemStatus;

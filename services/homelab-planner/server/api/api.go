@@ -56,8 +56,9 @@ func (a *API) listSteps(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createStep(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
+		Title            string `json:"title"`
+		Description      string `json:"description"`
+		TotalBudgetCents *int64 `json:"total_budget_cents"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -65,6 +66,7 @@ func (a *API) createStep(w http.ResponseWriter, r *http.Request) {
 	}
 	step, err := a.Svc.CreateStep(service.CreateStepInput{
 		Title: body.Title, Description: body.Description,
+		TotalBudgetCents: body.TotalBudgetCents,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -100,10 +102,11 @@ func (a *API) updateStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title       *string `json:"title"`
-		Description *string `json:"description"`
-		Position    *int64  `json:"position"`
-		Completed   *bool   `json:"completed"`
+		Title            *string `json:"title"`
+		Description      *string `json:"description"`
+		Position         *int64  `json:"position"`
+		TotalBudgetCents *int64  `json:"total_budget_cents"`
+		Completed        *bool   `json:"completed"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -111,7 +114,8 @@ func (a *API) updateStep(w http.ResponseWriter, r *http.Request) {
 	}
 	step, err := a.Svc.UpdateStep(id, service.UpdateStepInput{
 		Title: body.Title, Description: body.Description,
-		Position: body.Position, Completed: body.Completed,
+		Position: body.Position, TotalBudgetCents: body.TotalBudgetCents,
+		Completed: body.Completed,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -143,6 +147,7 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Name        string `json:"name"`
+		GroupName   string `json:"group_name"`
 		BudgetCents *int64 `json:"budget_cents"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -150,7 +155,7 @@ func (a *API) createItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item, err := a.Svc.CreateItem(stepID, service.CreateItemInput{
-		Name: body.Name, BudgetCents: body.BudgetCents,
+		Name: body.Name, GroupName: body.GroupName, BudgetCents: body.BudgetCents,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -166,18 +171,19 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name             *string            `json:"name"`
-		BudgetCents      *int64             `json:"budget_cents"`
-		ActualCostCents  *int64             `json:"actual_cost_cents"`
+		Name             *string             `json:"name"`
+		GroupName        *string             `json:"group_name"`
+		BudgetCents      *int64              `json:"budget_cents"`
+		ActualCostCents  *int64              `json:"actual_cost_cents"`
 		Status           *service.ItemStatus `json:"status"`
-		SelectedOptionID *int64             `json:"selected_option_id"`
+		SelectedOptionID *int64              `json:"selected_option_id"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
 		return
 	}
 	item, err := a.Svc.UpdateItem(id, service.UpdateItemInput{
-		Name: body.Name, BudgetCents: body.BudgetCents,
+		Name: body.Name, GroupName: body.GroupName, BudgetCents: body.BudgetCents,
 		ActualCostCents: body.ActualCostCents, Status: body.Status,
 		SelectedOptionID: body.SelectedOptionID,
 	})

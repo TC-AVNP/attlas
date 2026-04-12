@@ -35,7 +35,12 @@ export default function StepDetail() {
           <p className="text-gray-400">{step.description}</p>
         )}
         <div className="flex gap-6 mt-2 text-sm text-gray-500">
-          <span>Budget: &euro;{formatCents(step.budget_cents)}</span>
+          {step.total_budget_cents != null && (
+            <span>
+              Total budget: &euro;{formatCents(step.total_budget_cents)}
+            </span>
+          )}
+          <span>Item budgets: &euro;{formatCents(step.budget_cents)}</span>
           <span>Spent: &euro;{formatCents(step.actual_cents)}</span>
           <span>
             {step.arrived_count}/{step.item_count} arrived
@@ -43,14 +48,10 @@ export default function StepDetail() {
         </div>
       </div>
 
-      {/* Checklist */}
+      {/* Checklist — grouped */}
       <section className="mb-8">
         <h2 className="text-lg font-semibold mb-3">Checklist</h2>
-        <div className="space-y-3">
-          {step.items.map((item) => (
-            <ItemCard key={item.id} item={item} onMutate={invalidate} />
-          ))}
-        </div>
+        <GroupedItems items={step.items} onMutate={invalidate} />
         <AddItemForm stepId={stepId} onCreated={invalidate} />
       </section>
 
@@ -69,6 +70,66 @@ export default function StepDetail() {
         </div>
         <AddLogForm stepId={stepId} onCreated={invalidate} />
       </section>
+    </div>
+  );
+}
+
+function GroupedItems({
+  items,
+  onMutate,
+}: {
+  items: ChecklistItem[];
+  onMutate: () => void;
+}) {
+  // Group items by group_name. Empty string = ungrouped.
+  const groups = new Map<string, ChecklistItem[]>();
+  for (const item of items) {
+    const key = item.group_name || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(item);
+  }
+
+  const entries = Array.from(groups.entries());
+
+  return (
+    <div className="space-y-6">
+      {entries.map(([groupName, groupItems]) => {
+        const groupBudget = groupItems.reduce(
+          (sum, i) => sum + (i.budget_cents ?? 0),
+          0,
+        );
+        const groupActual = groupItems.reduce(
+          (sum, i) => sum + (i.actual_cost_cents ?? 0),
+          0,
+        );
+        const groupArrived = groupItems.filter(
+          (i) => i.status === "arrived",
+        ).length;
+
+        return (
+          <div key={groupName}>
+            {groupName && (
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-indigo-400">
+                  {groupName}
+                </h3>
+                <div className="flex gap-4 text-xs text-gray-500">
+                  <span>Budget: &euro;{formatCents(groupBudget)}</span>
+                  <span>Spent: &euro;{formatCents(groupActual)}</span>
+                  <span>
+                    {groupArrived}/{groupItems.length} arrived
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="space-y-3">
+              {groupItems.map((item) => (
+                <ItemCard key={item.id} item={item} onMutate={onMutate} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -360,12 +421,14 @@ function AddItemForm({
 }) {
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
+  const [groupName, setGroupName] = useState("");
   const [budgetCents, setBudgetCents] = useState("");
 
   const mutation = useMutation({
     mutationFn: () =>
       api.createItem(stepId, {
         name,
+        group_name: groupName || undefined,
         budget_cents: budgetCents ? parseInt(budgetCents) : undefined,
       }),
     onSuccess: () => {
@@ -403,6 +466,13 @@ function AddItemForm({
           onChange={(e) => setName(e.target.value)}
           className="flex-1 bg-gray-800 rounded px-3 py-2 text-sm"
           autoFocus
+        />
+        <input
+          type="text"
+          placeholder="Group (e.g. Rig 1)"
+          value={groupName}
+          onChange={(e) => setGroupName(e.target.value)}
+          className="w-40 bg-gray-800 rounded px-3 py-2 text-sm"
         />
         <input
           type="number"
