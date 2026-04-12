@@ -70,6 +70,17 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   z-index:10001; background:#333; color:#fff; padding:12px 24px;
   border-radius:8px; font-size:16px; pointer-events:none; }
 
+/* ── Desktop scroll button (always visible) ────────────────────── */
+#mk-scroll-desktop { position:fixed; bottom:12px; left:12px; z-index:9999;
+  padding:8px 16px; border-radius:6px; border:1px solid #555;
+  background:#222; color:#999; font-family:-apple-system,'SF Pro',system-ui,sans-serif;
+  font-size:14px; cursor:pointer; user-select:none;
+  -webkit-tap-highlight-color:transparent; }
+#mk-scroll-desktop:hover { background:#333; color:#fff; }
+#mk-scroll-desktop.held { background:#7aa2f7; color:#000; border-color:#7aa2f7; font-weight:600; }
+/* Hide on mobile — the top bar already has Scrl */
+@media (hover:none) and (pointer:coarse) { #mk-scroll-desktop { display:none; } }
+
 /* ── Terminal resize ────────────────────────────────────────────── */
 @media (hover:none) and (pointer:coarse) {
   body.mk-open #terminal-container { height:60vh !important; }
@@ -268,6 +279,8 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 <div id="mk-sel-overlay"><textarea id="mk-sel-text"></textarea></div>
 <div id="mk-toast"></div>
 
+<button id="mk-scroll-desktop" title="Toggle scroll (tmux copy-mode)">Scroll</button>
+
 <button id="mk-toggle" title="Toggle keyboard">&#x2328;</button>
 
 <script>
@@ -443,25 +456,13 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   }
   init();
 
-  // ── Scroll (tmux copy-mode) ───────────────────────────────────────
+  // ── Scroll (tmux copy-mode) — mobile bar button ──────────────────
   var scrollBtn = document.getElementById('mk-scroll');
-  var scrolling = false;
   if (scrollBtn) {
-    function toggleScroll() {
-      scrolling = !scrolling;
-      scrollBtn.classList.toggle('held', scrolling);
-      if (scrolling) {
-        // Enter tmux copy-mode: prefix (Ctrl+B) then [
-        send('\x02[');
-      } else {
-        // Exit copy-mode: q
-        send('q');
-      }
-    }
     scrollBtn.addEventListener('touchstart', function(e) {
-      e.preventDefault(); toggleScroll();
+      e.preventDefault(); window._mkToggleScroll();
     }, { passive: false });
-    scrollBtn.addEventListener('click', function() { toggleScroll(); });
+    scrollBtn.addEventListener('click', function() { window._mkToggleScroll(); });
   }
 
   // ── Internal buffer for Sel / Copy / Paste ───────────────────────
@@ -573,5 +574,41 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     }
     releaseMods();
   }, true);
+})();
+</script>
+
+<!-- Scroll toggle — runs on ALL devices (desktop + mobile) -->
+<script>
+(function() {
+  'use strict';
+
+  function sendToTerm(data) {
+    var t = window.term;
+    if (!t) return;
+    if (t._core && t._core.coreService) {
+      t._core.coreService.triggerDataEvent(data, true);
+    } else if (t._core && t._core._onData) {
+      t._core._onData.fire(data);
+    }
+  }
+
+  var scrollBtn = document.getElementById('mk-scroll');
+  var scrollBtnDesktop = document.getElementById('mk-scroll-desktop');
+  var scrolling = false;
+
+  window._mkToggleScroll = function() {
+    scrolling = !scrolling;
+    if (scrollBtn) scrollBtn.classList.toggle('held', scrolling);
+    if (scrollBtnDesktop) scrollBtnDesktop.classList.toggle('held', scrolling);
+    if (scrolling) {
+      sendToTerm('\x02[');
+    } else {
+      sendToTerm('q');
+    }
+  };
+
+  if (scrollBtnDesktop) {
+    scrollBtnDesktop.addEventListener('click', function() { window._mkToggleScroll(); });
+  }
 })();
 </script>
