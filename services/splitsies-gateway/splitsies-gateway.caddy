@@ -1,0 +1,4 @@
+splitsies.attlas.uk {
+	# Gateway handles all routing within the subdomain.
+	reverse_proxy localhost:7700
+}

@@ -1,3 +1,9 @@
+# Subdomain site blocks live in /etc/caddy/sites.d/*.caddy — each file
+# defines a full Caddy site block (e.g. splitsies.attlas.uk { ... }).
+# Services that want their own subdomain drop a file here; services that
+# live under attlas.uk/<path>/ drop a file in /etc/caddy/conf.d/ instead.
+import /etc/caddy/sites.d/*.caddy
+
 {$CADDY_DOMAIN} {
 	# Public paths (no auth): oauth2 callback, logout, and any favicon
 	# request at any subpath. Everything else runs through forward_auth.

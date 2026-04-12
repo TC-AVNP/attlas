@@ -8,7 +8,7 @@ Terraform config for a single GCP VM with static IP, firewall rules, and Secret 
 - `google_compute_instance.vm` — the VM (simple-zombie, e2-standard-4, Ubuntu 24.04)
 - `google_compute_firewall.allow_ssh_iap` — SSH via IAP only (port 22, source 35.235.240.0/20)
 - `google_compute_firewall.allow_https` — HTTP/HTTPS from anywhere (ports 80, 443)
-- `google_secret_manager_secret_iam_member.vm_access` — IAM bindings for all 4 secrets (github-pat, cloudflare-dns-token, attlas-server-config, openclaw-config)
+- `google_secret_manager_secret_iam_member.vm_access` — IAM bindings for all 5 secrets (github-pat, cloudflare-dns-token, attlas-server-config, openclaw-config, splitsies-config)
 
 ## Variables
 
@@ -38,7 +38,7 @@ Everything else (packages, dotfiles, alive-server build, Caddy, services) is han
 
 Before first `terraform apply`:
 1. `gcloud auth login` and `gcloud auth application-default login`
-2. Secrets must exist in GCP Secret Manager: `github-pat`, `cloudflare-dns-token`, `attlas-server-config`, `openclaw-config`
+2. Secrets must exist in GCP Secret Manager: `github-pat`, `cloudflare-dns-token`, `attlas-server-config`, `openclaw-config`, `splitsies-config`
 
 ## State
 

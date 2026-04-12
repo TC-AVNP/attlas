@@ -8,6 +8,7 @@ locals {
     "cloudflare-dns-token",
     "attlas-server-config",
     "openclaw-config",
+    "splitsies-config",
   ]
 }
 
