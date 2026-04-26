@@ -35,5 +35,33 @@ export IAPETUS_TTYD=1
 # (it isn't on the attlas socket).
 printf '\033]0;%s · terminal\007' "$SESSION"
 
-# new-session -A: attach if it exists, create if it doesn't.
-exec /usr/bin/tmux -L attlas new-session -A -s "$SESSION"
+# If the session already exists, just reattach (reconnect after browser disconnect).
+if /usr/bin/tmux -L attlas has-session -t "$SESSION" 2>/dev/null; then
+  exec /usr/bin/tmux -L attlas attach-session -t "$SESSION"
+fi
+
+# New session — start claude directly as the shell command so no
+# typed command is visible. Wrap in zsh -c so the session stays alive
+# (drops to zsh if claude ever exits).
+/usr/bin/tmux -L attlas new-session -d -s "$SESSION" \
+  "zsh -c 'claude --dangerously-skip-permissions; exec zsh'"
+
+# Show a loading screen while claude initializes in the background.
+# Poll the tmux pane content until claude's UI appears.
+clear
+printf '\n'
+printf '   \033[1;34m◆\033[0m Starting Claude...\n'
+printf '\n'
+
+for i in $(seq 1 40); do
+  CONTENT=$(/usr/bin/tmux -L attlas capture-pane -t "$SESSION" -p 2>/dev/null || true)
+  # Claude shows its prompt marker (◆ or >) once ready
+  if printf '%s' "$CONTENT" | grep -qE '[◆>❯]'; then
+    break
+  fi
+  sleep 0.25
+done
+
+# Clear the loading screen and attach
+clear
+exec /usr/bin/tmux -L attlas attach-session -t "$SESSION"
