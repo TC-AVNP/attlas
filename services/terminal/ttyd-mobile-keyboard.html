@@ -742,21 +742,9 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     }
   }
 
-  var silenceTimer = null;
-  var maxTimer = null;
   var active = false;
 
-  function showReady() {
-    // Kill the shell (and thus the tmux session) now that Claude is done
-    sendToTerm('exit\r');
-    closeTitle.textContent = 'Session seems to be done';
-    closeMsg.textContent = 'Can we close the tab now?';
-    confirmBtn.disabled = false;
-  }
-
   function cleanup() {
-    if (silenceTimer) { clearInterval(silenceTimer); silenceTimer = null; }
-    if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
     closeModal.classList.remove('open');
     active = false;
   }
@@ -768,38 +756,11 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     // Invoke the /bye skill which writes diary, commits, and pushes
     sendToTerm('/bye\r');
 
-    // Show modal in waiting state
-    closeTitle.textContent = 'Closing session\u2026';
-    closeMsg.textContent = 'Waiting for Claude to finish the diary entry.';
-    confirmBtn.disabled = true;
+    // Show confirmation popup — user decides when /bye is done
+    closeTitle.textContent = 'Session closing\u2026';
+    closeMsg.textContent = 'Once Claude finishes the diary entry, close the session.';
+    confirmBtn.disabled = false;
     closeModal.classList.add('open');
-
-    // Monitor terminal for silence — poll cursor position every 2s.
-    // When the cursor hasn't moved for 15s, Claude is likely done.
-    var lastCursorY = -1, lastCursorX = -1, lastChange = Date.now();
-
-    silenceTimer = setInterval(function() {
-      var buf = window.term && window.term.buffer && window.term.buffer.active;
-      if (buf) {
-        var cy = buf.cursorY + buf.baseY;
-        var cx = buf.cursorX;
-        if (cy !== lastCursorY || cx !== lastCursorX) {
-          lastCursorY = cy; lastCursorX = cx;
-          lastChange = Date.now();
-        }
-      }
-      if (Date.now() - lastChange > 15000) {
-        if (silenceTimer) clearInterval(silenceTimer);
-        if (maxTimer) clearTimeout(maxTimer);
-        showReady();
-      }
-    }, 2000);
-
-    // Safety cap: after 3 minutes, show ready regardless
-    maxTimer = setTimeout(function() {
-      if (silenceTimer) clearInterval(silenceTimer);
-      showReady();
-    }, 180000);
   }
 
   if (closeBtnD) closeBtnD.addEventListener('click', initiateClose);
@@ -811,6 +772,8 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   }
 
   if (confirmBtn) confirmBtn.addEventListener('click', function() {
+    // Kill the shell (and tmux session), then close the tab
+    sendToTerm('exit\r');
     cleanup();
     window.close();
     // window.close() only works for script-opened windows.
