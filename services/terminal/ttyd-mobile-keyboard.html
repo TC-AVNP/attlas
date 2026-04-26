@@ -747,6 +747,8 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   var active = false;
 
   function showReady() {
+    // Kill the shell (and thus the tmux session) now that Claude is done
+    sendToTerm('exit\r');
     closeTitle.textContent = 'Session seems to be done';
     closeMsg.textContent = 'Can we close the tab now?';
     confirmBtn.disabled = false;
