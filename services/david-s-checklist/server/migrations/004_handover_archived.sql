@@ -1,0 +1,2 @@
+-- Added by idempotent ALTER in Go; this file is a no-op placeholder.
+-- The actual column is added via: ALTER TABLE handovers ADD COLUMN archived INTEGER NOT NULL DEFAULT 0

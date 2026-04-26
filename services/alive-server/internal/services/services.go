@@ -53,8 +53,12 @@ type Service struct {
 	Path         string `json:"path"`
 	Script       string `json:"script"`
 	CheckProcess string `json:"check_process,omitempty"`
-	Installed    bool   `json:"installed"`
-	Running      bool   `json:"running"`
+	// CheckPath, if set, is used instead of Command to decide whether
+	// the service is installed — for static sites / services that don't
+	// install a binary on $PATH.
+	CheckPath string `json:"check_path,omitempty"`
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
 }
 
 var known = []Service{
@@ -75,6 +79,14 @@ var known = []Service{
 	// because users never visit the gateway directly).
 	{ID: "splitsies", Name: "Splitsies", ServiceName: "splitsies", Command: "splitsies",
 		Path: "https://splitsies.attlas.uk/", Script: "install.sh"},
+	// Public static site on its own subdomain (hello.attlas.uk). No
+	// systemd unit or binary — Caddy serves the files directly, so
+	// ServiceName/Command are empty and we look at the webroot instead.
+	{ID: "hello", Name: "Hello", ServiceName: "", Command: "",
+		CheckPath: "/var/www/hello/index.html",
+		Path:      "https://hello.attlas.uk/", Script: "install.sh"},
+	{ID: "david-s-checklist", Name: "David's Checklist", ServiceName: "david-s-checklist", Command: "david-s-checklist",
+		Path: "https://david.attlas.uk/", Script: "install.sh"},
 }
 
 func findService(id string) *Service {
@@ -91,6 +103,12 @@ func findService(id string) *Service {
 func loadInstalled() map[string]bool {
 	state := make(map[string]bool)
 	for _, svc := range known {
+		if svc.CheckPath != "" {
+			if _, err := os.Stat(svc.CheckPath); err == nil {
+				state[svc.ID] = true
+			}
+			continue
+		}
 		if _, err := exec.LookPath(svc.Command); err == nil {
 			state[svc.ID] = true
 		}
@@ -194,12 +212,13 @@ const (
 var terminalSessionRE = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
 type TerminalSession struct {
-	Name      string `json:"name"`
-	Windows   int    `json:"windows"`
-	CreatedAt string `json:"created_at"`
-	Created   string `json:"created_rel"`
-	Attached  bool   `json:"attached"`
-	Activity  string `json:"activity_rel"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Windows     int    `json:"windows"`
+	CreatedAt   string `json:"created_at"`
+	Created     string `json:"created_rel"`
+	Attached    bool   `json:"attached"`
+	Activity    string `json:"activity_rel"`
 }
 
 type TerminalDetail struct {
@@ -283,6 +302,10 @@ func HandleTerminalDetail(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		detail.Error = err.Error()
 	} else {
+		descs := loadTerminalDescriptions()
+		for i := range sessions {
+			sessions[i].Description = descs[sessions[i].Name]
+		}
 		detail.Sessions = sessions
 	}
 	util.SendJSON(w, detail)
@@ -306,7 +329,104 @@ func HandleTerminalKill(w http.ResponseWriter, r *http.Request) {
 		util.SendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
 		return
 	}
+	// Clean up stored description
+	if descs := loadTerminalDescriptions(); descs[name] != "" {
+		delete(descs, name)
+		saveTerminalDescriptions(descs)
+	}
 	util.SendJSON(w, map[string]interface{}{"success": true})
+}
+
+func HandleTerminalRename(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name    string `json:"name"`
+		NewName string `json:"new_name"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	name := strings.TrimSpace(body.Name)
+	newName := strings.TrimSpace(body.NewName)
+
+	if !terminalSessionRE.MatchString(name) {
+		util.SendJSON(w, map[string]interface{}{"error": "Invalid session name"})
+		return
+	}
+	if !terminalSessionRE.MatchString(newName) {
+		util.SendJSON(w, map[string]interface{}{"error": "Invalid new session name"})
+		return
+	}
+	if name == newName {
+		util.SendJSON(w, map[string]interface{}{"success": true})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := tmuxCmd(ctx, "rename-session", "-t", "="+name, newName).CombinedOutput()
+	if err != nil {
+		util.SendJSON(w, map[string]interface{}{"error": strings.TrimSpace(string(out))})
+		return
+	}
+	// Carry description to new name
+	if descs := loadTerminalDescriptions(); descs[name] != "" {
+		descs[newName] = descs[name]
+		delete(descs, name)
+		saveTerminalDescriptions(descs)
+	}
+	util.SendJSON(w, map[string]interface{}{"success": true})
+}
+
+func HandleTerminalDescribe(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	name := strings.TrimSpace(body.Name)
+	if !terminalSessionRE.MatchString(name) {
+		util.SendJSON(w, map[string]interface{}{"error": "Invalid session name"})
+		return
+	}
+	desc := strings.TrimSpace(body.Description)
+	if len(desc) > 200 {
+		desc = desc[:200]
+	}
+
+	descs := loadTerminalDescriptions()
+	if desc == "" {
+		delete(descs, name)
+	} else {
+		descs[name] = desc
+	}
+	if err := saveTerminalDescriptions(descs); err != nil {
+		util.SendJSON(w, map[string]interface{}{"error": err.Error()})
+		return
+	}
+	util.SendJSON(w, map[string]interface{}{"success": true})
+}
+
+func terminalDescriptionsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "terminal-descriptions.json")
+}
+
+func loadTerminalDescriptions() map[string]string {
+	data, err := os.ReadFile(terminalDescriptionsPath())
+	if err != nil {
+		return map[string]string{}
+	}
+	var descs map[string]string
+	if json.Unmarshal(data, &descs) != nil {
+		return map[string]string{}
+	}
+	return descs
+}
+
+func saveTerminalDescriptions(descs map[string]string) error {
+	data, err := json.Marshal(descs)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(terminalDescriptionsPath(), data, 0644)
 }
 
 // --- Claude login helpers ---

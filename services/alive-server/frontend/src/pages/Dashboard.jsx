@@ -140,6 +140,7 @@ const DETAIL_ROUTES = {
   openclaw: '/services/details/openclaw',
   terminal: '/services/details/terminal',
   splitsies: '/services/details/splitsies',
+  'david-s-checklist': '/services/details/david-s-checklist',
 }
 
 function ServiceRow({ svc, busy, onInstall, onUninstall }) {

@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checklist</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f0eb; color: #2d2a26; min-height: 100vh; padding: 1rem;
+  }
+  .container { max-width: 640px; margin: 2rem auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 1.5rem;
+  }
+  h1 { font-size: 1.5rem; }
+  .progress { font-size: 0.85rem; color: #6b6560; }
+  .progress-bar {
+    height: 6px; background: #e0dbd5; border-radius: 3px;
+    margin-bottom: 1.5rem; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; background: #27ae60; border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+  .logout-btn {
+    background: none; border: none; color: #a09890;
+    font-size: 0.8rem; cursor: pointer; text-decoration: underline;
+  }
+
+  /* Handover card */
+  .handover {
+    background: #fff; border-radius: 14px; padding: 1.25rem;
+    margin-bottom: 1.25rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .handover-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+  .handover-title { font-weight: 700; font-size: 1.05rem; }
+  .handover-assignee { font-size: 0.78rem; color: #8a8480; margin-top: 0.1rem; }
+  .handover-desc {
+    font-size: 0.85rem; color: #6b6560; margin-bottom: 0.75rem; line-height: 1.4;
+  }
+  .handover-progress { font-size: 0.78rem; color: #8a8480; }
+  .handover-bar {
+    height: 4px; background: #e0dbd5; border-radius: 2px;
+    margin: 0.35rem 0 0.75rem; overflow: hidden;
+  }
+  .handover-bar-fill {
+    height: 100%; background: #27ae60; border-radius: 2px; transition: width 0.3s;
+  }
+
+  /* Section label */
+  .section-label {
+    font-size: 0.8rem; font-weight: 600; color: #a09890;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 1.5rem 0 0.75rem; padding-left: 0.25rem;
+  }
+
+  /* Todo item */
+  .todo-list { list-style: none; }
+  .todo-item {
+    background: #f9f7f4; border-radius: 10px; padding: 0.75rem 0.85rem;
+    margin-bottom: 0.5rem; display: flex; align-items: flex-start;
+    gap: 0.6rem; transition: transform 0.1s; user-select: text;
+  }
+  .todo-item:hover { transform: translateY(-1px); }
+  .todo-item.done { opacity: 0.45; }
+  .todo-item.done .todo-title { text-decoration: line-through; }
+  .checkbox {
+    flex-shrink: 0; width: 20px; height: 20px;
+    border: 2px solid #c0bab3; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    margin-top: 1px; cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  .todo-item.done .checkbox { background: #27ae60; border-color: #27ae60; }
+  .checkbox svg { display: none; width: 12px; height: 12px; }
+  .todo-item.done .checkbox svg { display: block; }
+  .todo-content { flex: 1; min-width: 0; }
+  .todo-title { font-weight: 600; font-size: 0.92rem; }
+  .todo-desc { font-size: 0.8rem; color: #6b6560; line-height: 1.35; margin-top: 0.1rem; }
+  .todo-desc p { margin: 0.2rem 0; }
+  .todo-desc ul, .todo-desc ol { margin: 0.2rem 0 0.2rem 1.2rem; }
+  .todo-desc code { background: rgba(0,0,0,0.06); padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.78rem; }
+  .todo-desc pre { background: rgba(0,0,0,0.06); padding: 0.5rem; border-radius: 6px; overflow-x: auto; margin: 0.3rem 0; }
+  .todo-desc pre code { background: none; padding: 0; }
+  .todo-desc a { color: #4285f4; }
+  .todo-desc strong { font-weight: 600; }
+  .handover-desc p { margin: 0.2rem 0; }
+  .handover-desc ul, .handover-desc ol { margin: 0.2rem 0 0.2rem 1.2rem; }
+  .handover-desc code { background: rgba(0,0,0,0.06); padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.78rem; }
+  .handover-desc a { color: #4285f4; }
+  .todo-assignee { font-size: 0.72rem; color: #a09890; margin-top: 0.15rem; }
+
+  /* Admin controls */
+  .admin-actions { display: flex; gap: 0.25rem; margin-left: auto; flex-shrink: 0; }
+  .admin-btn {
+    background: none; border: none; cursor: pointer; color: #b0aaa3;
+    font-size: 0.72rem; padding: 0.15rem 0.3rem; border-radius: 4px;
+  }
+  .admin-btn:hover { color: #2d2a26; background: #eee9e3; }
+  .admin-btn.delete:hover { color: #c0392b; }
+
+  /* Forms */
+  input, textarea, select {
+    width: 100%; border: 1px solid #e0dbd5; border-radius: 8px;
+    padding: 0.5rem 0.65rem; font-family: inherit; font-size: 0.85rem;
+    outline: none; transition: border-color 0.2s; background: #fff;
+  }
+  input:focus, textarea:focus, select:focus { border-color: #4285f4; }
+  textarea { resize: vertical; min-height: 45px; }
+  .form-card {
+    background: #fff; border-radius: 12px; padding: 1rem;
+    margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .form-title { font-weight: 600; font-size: 0.88rem; margin-bottom: 0.6rem; }
+  .form-row { display: flex; gap: 0.5rem; margin-bottom: 0.45rem; }
+  .form-row > * { flex: 1; }
+  .mb { margin-bottom: 0.45rem; }
+  .btn {
+    background: #4285f4; color: #fff; border: none;
+    padding: 0.42rem 0.9rem; border-radius: 8px; font-size: 0.82rem;
+    cursor: pointer; font-weight: 500; transition: background 0.2s;
+    display: inline-flex; align-items: center; gap: 0.3rem;
+  }
+  .btn:hover { background: #3367d6; }
+  .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.78rem; }
+  .btn-ghost {
+    background: none; color: #4285f4; border: 1px dashed #c5d5f0;
+  }
+  .btn-ghost:hover { background: #eef3fc; border-style: solid; }
+
+  /* Inline add-task form inside handover */
+  .add-task-area { margin-top: 0.6rem; }
+  .add-task-form { display: none; margin-top: 0.5rem; }
+  .add-task-form.open { display: block; }
+
+  /* Archived */
+  .handover.archived { opacity: 0.5; }
+  .archived-toggle {
+    display: flex; align-items: center; gap: 0.5rem;
+    color: #a09890; font-size: 0.82rem; cursor: pointer;
+    margin: 1rem 0 0.75rem; padding-left: 0.25rem; user-select: text;
+  }
+  .archived-toggle:hover { color: #6b6560; }
+  .archived-section { display: none; }
+  .archived-section.open { display: block; }
+
+  /* Floating action button */
+  .fab {
+    position: fixed; bottom: 1.5rem; right: 1.5rem;
+    width: 52px; height: 52px; border-radius: 50%;
+    background: #4285f4; color: #fff; border: none;
+    font-size: 1.6rem; cursor: pointer;
+    box-shadow: 0 4px 16px rgba(66,133,244,0.4);
+    display: flex; align-items: center; justify-content: center;
+    transition: transform 0.2s, background 0.2s;
+    z-index: 50;
+  }
+  .fab:hover { background: #3367d6; transform: scale(1.08); }
+  .fab.open { transform: rotate(45deg); background: #c0392b; }
+  .fab.open:hover { background: #a93226; }
+  .create-panel {
+    display: none; position: fixed; bottom: 5rem; right: 1.5rem;
+    width: min(380px, calc(100vw - 2rem));
+    max-height: 70vh; overflow-y: auto;
+    z-index: 49;
+  }
+  .create-panel.open { display: block; }
+
+  /* Dark theme */
+  @media (prefers-color-scheme: dark) {
+    body { background: #1a1a1a; color: #e0dbd5; }
+    .handover, .form-card, .todo-item { background: #262626; }
+    .todo-item { background: #2a2a2a; }
+    .handover-desc, .todo-desc { color: #9a9590; }
+    .handover-assignee, .todo-assignee, .progress, .handover-progress { color: #8a8480; }
+    .progress-bar, .handover-bar { background: #333; }
+    .checkbox { border-color: #555; }
+    input, textarea, select { background: #333; border-color: #444; color: #e0dbd5; }
+    input:focus, textarea:focus, select:focus { border-color: #4285f4; }
+    .admin-btn { color: #777; }
+    .admin-btn:hover { color: #e0dbd5; background: #333; }
+    .admin-btn.delete:hover { color: #e74c3c; }
+    .btn-ghost { color: #6aa3f4; border-color: #3a5580; }
+    .btn-ghost:hover { background: #2a3a50; }
+    .modal { background: #262626; }
+    .modal-overlay { background: rgba(0,0,0,0.6); }
+    .section-label { color: #666; }
+    .logout-btn { color: #666; }
+    .archived-toggle { color: #666; }
+    .archived-toggle:hover { color: #999; }
+    .empty { color: #666; }
+    .fab { box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+    .todo-desc code, .handover-desc code { background: rgba(255,255,255,0.08); }
+    .todo-desc pre { background: rgba(255,255,255,0.06); }
+    .todo-desc a, .handover-desc a { color: #6aa3f4; }
+  }
+
+  .empty {
+    text-align: center; color: #a09890; padding: 3rem 1rem; font-size: 0.95rem;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: #fff; border-radius: 16px; padding: 1.5rem;
+    max-width: 450px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  }
+  .modal h2 { font-size: 1.05rem; margin-bottom: 0.75rem; }
+  .modal-buttons { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.75rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Checklist</h1>
+    <div style="text-align:right">
+      <span class="progress">{{.Done}} of {{.Total}} done</span><br>
+      <form method="POST" action="/auth/logout" style="display:inline">
+        <button class="logout-btn" type="submit">sign out ({{.Email}})</button>
+      </form>
+    </div>
+  </header>
+
+  {{if .Total}}
+  <div class="progress-bar">
+    <div class="progress-bar-fill" id="bar" style="width:{{.Percent}}%"></div>
+  </div>
+  {{end}}
+
+  <!-- Handovers -->
+  {{range .Handovers}}
+  <div class="handover" data-handover-id="{{.ID}}">
+    <div class="handover-header">
+      <div>
+        <div class="handover-title">{{.Title}}</div>
+        <div class="handover-assignee">{{.Assignee}}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem">
+        <span class="handover-progress">{{.Done}}/{{.Total}}</span>
+        {{if $.IsAdmin}}
+        <button class="admin-btn" onclick="archiveHandover({{.ID}})">archive</button>
+        <button class="admin-btn delete" onclick="deleteHandover({{.ID}})">delete</button>
+        {{end}}
+      </div>
+    </div>
+    {{if .Description}}<div class="handover-desc md">{{.Description}}</div>{{end}}
+    {{if .Total}}
+    <div class="handover-bar"><div class="handover-bar-fill" style="width:{{.Percent}}%"></div></div>
+    {{end}}
+
+    <ul class="todo-list">
+      {{range .Todos}}
+      <li class="todo-item{{if .Completed}} done{{end}}" data-id="{{.ID}}">
+        <div class="checkbox" onclick="toggleTodo(event, {{.ID}})">
+          <svg viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="2.5 7 5.5 10.5 11.5 3.5"/>
+          </svg>
+        </div>
+        <div class="todo-content">
+          <div class="todo-title">{{.Title}}</div>
+          {{if .Description}}<div class="todo-desc md">{{.Description}}</div>{{end}}
+        </div>
+        {{if $.IsAdmin}}
+        <div class="admin-actions">
+          <button class="admin-btn" onclick="editTodo(event, {{.ID}})">edit</button>
+          <button class="admin-btn delete" onclick="deleteTodo(event, {{.ID}})">del</button>
+        </div>
+        {{end}}
+      </li>
+      {{end}}
+    </ul>
+
+    {{if $.IsAdmin}}
+    <div class="add-task-area">
+      <button class="btn btn-ghost btn-sm add-task-toggle" onclick="toggleAddTask(this)">+ Add task</button>
+      <div class="add-task-form">
+        <input type="text" class="at-title mb" placeholder="Task title">
+        <textarea class="at-desc mb" placeholder="Description (optional)"></textarea>
+        <button class="btn btn-sm" onclick="addToHandover({{.ID}}, this)">Add</button>
+      </div>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  <!-- Standalone tasks -->
+  {{if .StandaloneTodos}}
+  {{if .Handovers}}<div class="section-label">Standalone Tasks</div>{{end}}
+  <ul class="todo-list">
+    {{range .StandaloneTodos}}
+    <li class="todo-item{{if .Completed}} done{{end}}" data-id="{{.ID}}" style="background:#fff; box-shadow:0 2px 8px rgba(0,0,0,0.04)">
+      <div class="checkbox" onclick="toggleTodo(event, {{.ID}})">
+        <svg viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="2.5 7 5.5 10.5 11.5 3.5"/>
+        </svg>
+      </div>
+      <div class="todo-content">
+        <div class="todo-title">{{.Title}}</div>
+        {{if .Description}}<div class="todo-desc md">{{.Description}}</div>{{end}}
+        {{if and $.IsAdmin .Assignee}}<div class="todo-assignee">{{.Assignee}}</div>{{end}}
+      </div>
+      {{if $.IsAdmin}}
+      <div class="admin-actions">
+        <button class="admin-btn" onclick="editTodo(event, {{.ID}})">edit</button>
+        <button class="admin-btn delete" onclick="deleteTodo(event, {{.ID}})">del</button>
+      </div>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{end}}
+
+  {{if and (not .Handovers) (not .StandaloneTodos) (not .IsAdmin)}}
+  <div class="empty">Nothing here for you yet. Check back soon!</div>
+  {{end}}
+
+  {{if and .IsAdmin .ArchivedHandovers}}
+  <div class="archived-toggle" onclick="document.getElementById('archived').classList.toggle('open'); this.querySelector('span').textContent = document.getElementById('archived').classList.contains('open') ? 'Hide archived' : 'Show archived ({{len .ArchivedHandovers}})'">
+    <span>Show archived ({{len .ArchivedHandovers}})</span>
+  </div>
+  <div class="archived-section" id="archived">
+    {{range .ArchivedHandovers}}
+    <div class="handover archived" data-handover-id="{{.ID}}">
+      <div class="handover-header">
+        <div>
+          <div class="handover-title">{{.Title}}</div>
+          <div class="handover-assignee">{{.Assignee}}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <span class="handover-progress">{{.Done}}/{{.Total}}</span>
+          <button class="admin-btn" onclick="archiveHandover({{.ID}})">unarchive</button>
+          <button class="admin-btn delete" onclick="deleteHandover({{.ID}})">delete</button>
+        </div>
+      </div>
+      {{if .Description}}<div class="handover-desc md">{{.Description}}</div>{{end}}
+      <ul class="todo-list">
+        {{range .Todos}}
+        <li class="todo-item{{if .Completed}} done{{end}}" data-id="{{.ID}}">
+          <div class="checkbox" onclick="toggleTodo(event, {{.ID}})">
+            <svg viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="2.5 7 5.5 10.5 11.5 3.5"/>
+            </svg>
+          </div>
+          <div class="todo-content">
+            <div class="todo-title">{{.Title}}</div>
+            {{if .Description}}<div class="todo-desc md">{{.Description}}</div>{{end}}
+          </div>
+        </li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+{{if .IsAdmin}}
+<!-- Floating action button + create panel -->
+<button class="fab" id="fab" onclick="toggleCreatePanel()">+</button>
+<div class="create-panel" id="create-panel">
+  <div class="form-card">
+    <div class="form-title">Create a Handover</div>
+    <div class="form-row">
+      <input type="text" id="ho-title" placeholder="Title (e.g. Summer vacation)">
+      <select id="ho-assignee">
+        <option value="" disabled selected>Assign to...</option>
+        {{range .Assignees}}<option value="{{.}}">{{.}}</option>{{end}}
+        <option value="__new__">+ New email...</option>
+      </select>
+    </div>
+    <input type="text" id="ho-assignee-new" placeholder="Type new email..." class="mb" style="display:none">
+    <textarea id="ho-desc" placeholder="Description (optional)" class="mb"></textarea>
+    <button class="btn btn-sm" onclick="addHandover()">Create handover</button>
+  </div>
+  <div class="form-card">
+    <div class="form-title">Add Standalone Task</div>
+    <div class="form-row">
+      <input type="text" id="new-title" placeholder="Task title">
+      <select id="new-assignee">
+        <option value="" disabled selected>Assign to...</option>
+        {{range .Assignees}}<option value="{{.}}">{{.}}</option>{{end}}
+        <option value="__new__">+ New email...</option>
+      </select>
+    </div>
+    <input type="text" id="new-assignee-new" placeholder="Type new email..." class="mb" style="display:none">
+    <textarea id="new-desc" placeholder="Description (optional)" class="mb"></textarea>
+    <button class="btn btn-sm" onclick="addStandalone()">Add task</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <h2>Edit task</h2>
+    <input type="hidden" id="edit-id">
+    <input type="text" id="edit-title" placeholder="Title" class="mb">
+    <textarea id="edit-desc" placeholder="Description"></textarea>
+    <div class="modal-buttons">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn" onclick="saveTodo()">Save</button>
+    </div>
+  </div>
+</div>
+{{end}}
+
+<script>
+// Render markdown in all .md elements.
+if (typeof marked !== 'undefined') {
+  marked.setOptions({ breaks: true, gfm: true });
+  document.querySelectorAll('.md').forEach(el => {
+    el.innerHTML = marked.parse(el.textContent);
+  });
+}
+
+// Dropdown: show text input when "+ New email..." is selected.
+document.querySelectorAll('select').forEach(sel => {
+  sel.addEventListener('change', () => {
+    const newInput = document.getElementById(sel.id + '-new');
+    if (newInput) newInput.style.display = sel.value === '__new__' ? '' : 'none';
+  });
+});
+
+function getAssignee(selectId) {
+  const sel = document.getElementById(selectId);
+  if (sel.value === '__new__') {
+    return document.getElementById(selectId + '-new').value.trim().toLowerCase();
+  }
+  return sel.value;
+}
+
+async function toggleTodo(e, id) {
+  e.stopPropagation();
+  const item = document.querySelector(`[data-id="${id}"]`);
+  item.classList.toggle('done');
+  try {
+    const r = await fetch(`/api/toggle/${id}`, { method: 'POST' });
+    if (!r.ok) item.classList.toggle('done');
+  } catch { item.classList.toggle('done'); }
+}
+
+async function addHandover() {
+  const title = document.getElementById('ho-title').value.trim();
+  const assignee = getAssignee('ho-assignee');
+  const desc = document.getElementById('ho-desc').value.trim();
+  if (!title || !assignee) return alert('Title and assignee are required.');
+  const r = await fetch('/api/handovers', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc, assignee })
+  });
+  if (r.ok) location.reload();
+}
+
+function toggleCreatePanel() {
+  document.getElementById('fab').classList.toggle('open');
+  document.getElementById('create-panel').classList.toggle('open');
+}
+
+async function archiveHandover(id) {
+  const r = await fetch(`/api/handovers/${id}/archive`, { method: 'POST' });
+  if (r.ok) location.reload();
+}
+
+async function deleteHandover(id) {
+  if (!confirm('Delete this handover and all its tasks?')) return;
+  const r = await fetch(`/api/handovers/${id}`, { method: 'DELETE' });
+  if (r.ok) location.reload();
+}
+
+function toggleAddTask(btn) {
+  const form = btn.nextElementSibling;
+  form.classList.toggle('open');
+  if (form.classList.contains('open')) {
+    form.querySelector('.at-title').focus();
+  }
+}
+
+async function addToHandover(hid, btn) {
+  const form = btn.closest('.add-task-form');
+  const title = form.querySelector('.at-title').value.trim();
+  const desc = form.querySelector('.at-desc').value.trim();
+  if (!title) return;
+  const card = form.closest('.handover');
+  const assignee = card.querySelector('.handover-assignee').textContent.trim();
+  const r = await fetch('/api/todos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc, assignee, handover_id: hid })
+  });
+  if (r.ok) location.reload();
+}
+
+async function addStandalone() {
+  const title = document.getElementById('new-title').value.trim();
+  const assignee = getAssignee('new-assignee');
+  const desc = document.getElementById('new-desc').value.trim();
+  if (!title) return;
+  const r = await fetch('/api/todos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc, assignee })
+  });
+  if (r.ok) location.reload();
+}
+
+function editTodo(e, id) {
+  e.stopPropagation();
+  const item = document.querySelector(`[data-id="${id}"]`);
+  const title = item.querySelector('.todo-title').textContent;
+  const descEl = item.querySelector('.todo-desc');
+  document.getElementById('edit-id').value = id;
+  document.getElementById('edit-title').value = title;
+  document.getElementById('edit-desc').value = descEl ? descEl.textContent : '';
+  document.getElementById('edit-modal').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('edit-modal').classList.remove('active');
+}
+
+async function saveTodo() {
+  const id = document.getElementById('edit-id').value;
+  const title = document.getElementById('edit-title').value.trim();
+  const desc = document.getElementById('edit-desc').value.trim();
+  if (!title) return;
+  const r = await fetch(`/api/todos/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, description: desc })
+  });
+  if (r.ok) location.reload();
+  closeModal();
+}
+
+async function deleteTodo(e, id) {
+  e.stopPropagation();
+  if (!confirm('Delete this task?')) return;
+  const r = await fetch(`/api/todos/${id}`, { method: 'DELETE' });
+  if (r.ok) location.reload();
+}
+</script>
+</body>
+</html>

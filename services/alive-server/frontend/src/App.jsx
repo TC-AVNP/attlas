@@ -8,6 +8,7 @@ import InfrastructureDetail from './pages/detail/Infrastructure.jsx'
 import CostsDetail from './pages/detail/Costs.jsx'
 import TerminalDetail from './pages/detail/Terminal.jsx'
 import SplitsiesDetail from './pages/detail/Splitsies.jsx'
+import DavidChecklistDetail from './pages/detail/DavidChecklist.jsx'
 
 // ── Shared status context ─────────────────────────────────────────────
 // /api/status is the backend's firehose: vm, user, claude, services,
@@ -90,6 +91,7 @@ export default function App() {
             <Route path="/services/details/openclaw" element={<OpenclawDetail />} />
             <Route path="/services/details/terminal" element={<TerminalDetail />} />
             <Route path="/services/details/splitsies" element={<SplitsiesDetail />} />
+            <Route path="/services/details/david-s-checklist" element={<DavidChecklistDetail />} />
             <Route path="/services/details/costs" element={<CostsDetail />} />
           </Route>
         </Routes>

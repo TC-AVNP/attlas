@@ -12,6 +12,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Project, ProjectDetail, Status } from "../api/types";
 import PriorityPill from "../components/PriorityPill";
+import ExportModal from "../components/ExportModal";
 import { formatHours } from "../lib/format";
 import CanvasUniverse from "../canvas/CanvasUniverse";
 
@@ -38,6 +39,7 @@ function totalsFor(p: Project): { done: number; total: number } {
 
 export default function Universe() {
   const [view, setView] = useState<ViewMode>("canvas");
+  const [showExport, setShowExport] = useState(false);
   const openTodos = useOpenTodoCount();
 
   const { data, isLoading, error } = useQuery({
@@ -68,6 +70,14 @@ export default function Universe() {
           <p className="text-xs text-neutral-500">the universe</p>
         </div>
         <div className="flex items-center gap-2 text-xs">
+          <button
+            type="button"
+            onClick={() => setShowExport(true)}
+            disabled={projects.length === 0}
+            className="px-3 py-1 rounded border border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200 disabled:opacity-40 disabled:cursor-default"
+          >
+            export
+          </button>
           <Link
             to="/todos"
             className="px-3 py-1 rounded border border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-200 flex items-center gap-1.5"
@@ -127,6 +137,13 @@ export default function Universe() {
 
       {data && view === "list" && (
         <ListView projects={data.projects} />
+      )}
+
+      {showExport && Object.keys(details).length > 0 && (
+        <ExportModal
+          projects={Object.values(details)}
+          onClose={() => setShowExport(false)}
+        />
       )}
     </main>
   );

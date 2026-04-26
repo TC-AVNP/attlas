@@ -1,0 +1,5 @@
+hello.attlas.uk {
+	# Public site — no forward_auth, no authorization.
+	root * /var/www/hello
+	file_server
+}

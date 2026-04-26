@@ -20,6 +20,10 @@ export default function TerminalDetail() {
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(null) // session name being acted on
   const [confirmKill, setConfirmKill] = useState(null) // session name pending confirmation
+  const [renaming, setRenaming] = useState(null) // session name being renamed
+  const [renameValue, setRenameValue] = useState('')
+  const [editingDesc, setEditingDesc] = useState(null) // session name whose description is being edited
+  const [descValue, setDescValue] = useState('')
   const inputRef = useRef(null)
 
   // promptMode is set by the Caddy redirect on bare /terminal/. When
@@ -96,6 +100,59 @@ export default function TerminalDetail() {
     } finally {
       setBusy(null)
       setConfirmKill(null)
+    }
+  }
+
+  const renameSession = async (oldName, newNameRaw) => {
+    const trimmed = newNameRaw.trim()
+    if (!trimmed || trimmed === oldName) {
+      setRenaming(null)
+      return
+    }
+    if (!NAME_RE.test(trimmed)) {
+      showToast('name must match [a-zA-Z0-9_-]{1,32}', 'error')
+      return
+    }
+    setBusy(oldName)
+    try {
+      const res = await fetch('/api/services/terminal/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: oldName, new_name: trimmed }),
+      })
+      const j = await res.json()
+      if (j.success) {
+        showToast(`renamed → ${trimmed}`, 'success')
+        load()
+      } else {
+        showToast(j.error || 'rename failed', 'error')
+      }
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setBusy(null)
+      setRenaming(null)
+    }
+  }
+
+  const describeSession = async (name, description) => {
+    const trimmed = description.trim()
+    try {
+      const res = await fetch('/api/services/terminal/describe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: trimmed }),
+      })
+      const j = await res.json()
+      if (j.success) {
+        load()
+      } else {
+        showToast(j.error || 'describe failed', 'error')
+      }
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setEditingDesc(null)
     }
   }
 
@@ -196,7 +253,61 @@ export default function TerminalDetail() {
                     title={s.attached ? 'attached' : 'detached'}
                   />
                   <div className="svc-main">
-                    <span className="svc-name mono">{s.name}</span>
+                    {renaming === s.name ? (
+                      <input
+                        className="input mono"
+                        style={{ fontSize: '0.9rem', padding: '0.15rem 0.4rem', width: '12rem' }}
+                        autoFocus
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') renameSession(s.name, renameValue)
+                          if (e.key === 'Escape') setRenaming(null)
+                        }}
+                        onBlur={() => renameSession(s.name, renameValue)}
+                        disabled={busy === s.name}
+                      />
+                    ) : (
+                      <span
+                        className="svc-name mono"
+                        title="click to rename"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => { setRenaming(s.name); setRenameValue(s.name) }}
+                      >
+                        {s.name}
+                      </span>
+                    )}
+                    {editingDesc === s.name ? (
+                      <input
+                        className="input"
+                        style={{ fontSize: '0.85rem', padding: '0.15rem 0.4rem', width: '100%', marginTop: '0.2rem' }}
+                        autoFocus
+                        placeholder="add a description…"
+                        value={descValue}
+                        onChange={e => setDescValue(e.target.value)}
+                        maxLength={200}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') describeSession(s.name, descValue)
+                          if (e.key === 'Escape') setEditingDesc(null)
+                        }}
+                        onBlur={() => describeSession(s.name, descValue)}
+                      />
+                    ) : (
+                      <span
+                        className="svc-desc"
+                        style={{
+                          display: 'block',
+                          fontSize: '0.85rem',
+                          color: s.description ? 'var(--fg)' : 'var(--muted)',
+                          cursor: 'pointer',
+                          marginTop: '0.1rem',
+                        }}
+                        title="click to edit description"
+                        onClick={() => { setEditingDesc(s.name); setDescValue(s.description || '') }}
+                      >
+                        {s.description || 'no description — click to add'}
+                      </span>
+                    )}
                     <span className="svc-path">
                       {s.windows} {s.windows === 1 ? 'window' : 'windows'}
                       {' · created '}{s.created_rel || '—'}
@@ -208,6 +319,14 @@ export default function TerminalDetail() {
                     <a href={attachUrl(s.name)} target="_blank" rel="noopener noreferrer">
                       attach ↗
                     </a>
+                    <button
+                      className="link-btn"
+                      disabled={busy === s.name}
+                      onClick={() => { setRenaming(s.name); setRenameValue(s.name) }}
+                      title={`rename ${s.name}`}
+                    >
+                      rename
+                    </button>
                     {confirmKill === s.name ? (
                       <>
                         <button
