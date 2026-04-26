@@ -763,8 +763,8 @@ body.mk-selecting #mk-sel-overlay { display:block; }
     if (active) return;
     active = true;
 
-    // Send the close message to the terminal
-    sendToTerm('Thanks claude, lets close this session\r');
+    // Invoke the /bye skill which writes diary, commits, and pushes
+    sendToTerm('/bye\r');
 
     // Show modal in waiting state
     closeTitle.textContent = 'Closing session\u2026';
