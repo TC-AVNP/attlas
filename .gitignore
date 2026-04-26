@@ -8,6 +8,9 @@
 *.pem
 *.key
 
+# Session transcripts (stored in GCS, not git)
+*.jsonl
+
 # Go build artifacts
 /base-setup/alive-server/alive-server
 /base-setup/alive-server/attlas-server
