@@ -772,10 +772,14 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   }
 
   if (confirmBtn) confirmBtn.addEventListener('click', function() {
-    // Kill the shell (and tmux session), then close the tab
-    sendToTerm('exit\r');
+    // Exit Claude Code CLI first, then kill the shell (and tmux session)
+    sendToTerm('/exit\r');
+    setTimeout(function() {
+      sendToTerm('exit\r');
+    }, 1000);
     cleanup();
-    window.close();
+    // Give time for both exits before trying to close the tab
+    setTimeout(function() { window.close(); }, 2000);
     // window.close() only works for script-opened windows.
     // If it didn't work, tell the user.
     setTimeout(function() {
