@@ -230,7 +230,7 @@ export default function CostsDetail() {
   if (error) {
     return (
       <div className="detail-page">
-        <Link to="/" className="back-link">&larr; back to dashboard</Link>
+        <Link to="/" className="back-link">← back to dashboard</Link>
         <h1 className="detail-title">costs</h1>
         <div className="muted">Failed to load: {error}</div>
       </div>
@@ -240,7 +240,7 @@ export default function CostsDetail() {
   if (!infra || !spend) {
     return (
       <div className="detail-page">
-        <Link to="/" className="back-link">&larr; back to dashboard</Link>
+        <Link to="/" className="back-link">← back to dashboard</Link>
         <div className="loading" style={{ minHeight: '20vh' }}>
           <StatusDot color="green" pulse />
           <span>loading...</span>
@@ -257,7 +257,7 @@ export default function CostsDetail() {
 
   return (
     <div className="detail-page">
-      <Link to="/" className="back-link">&larr; back to dashboard</Link>
+      <Link to="/" className="back-link">← back to dashboard</Link>
       <h1 className="detail-title">costs</h1>
       <div className="detail-sub">infrastructure costs &middot; {month}</div>
 

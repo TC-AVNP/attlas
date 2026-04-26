@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import Card from '../../components/Card.jsx'
 import Button from '../../components/Button.jsx'
 import { useStatus } from '../../App.jsx'
@@ -108,19 +109,19 @@ export default function SplitsiesDetail() {
 
   if (error) {
     return (
-      <div>
-        <h1>Splitsies</h1>
-        <Card label="error">
-          <p>Could not load users: {error}</p>
-        </Card>
+      <div className="detail-page">
+        <Link to="/" className="back-link">← back to dashboard</Link>
+        <h1 className="detail-title">splitsies</h1>
+        <div className="muted">Failed to load: {error}</div>
       </div>
     )
   }
 
   if (!users) {
     return (
-      <div>
-        <h1>Splitsies</h1>
+      <div className="detail-page">
+        <Link to="/" className="back-link">← back to dashboard</Link>
+        <h1 className="detail-title">splitsies</h1>
         <Card label="loading"><p>Loading users…</p></Card>
       </div>
     )
@@ -130,8 +131,9 @@ export default function SplitsiesDetail() {
   const revoked = users.filter(u => !u.is_active)
 
   return (
-    <div>
-      <h1>Splitsies</h1>
+    <div className="detail-page">
+      <Link to="/" className="back-link">← back to dashboard</Link>
+      <h1 className="detail-title">splitsies</h1>
       <p className="muted">
         Super-admin panel. Splitsies is at{' '}
         <a href="https://splitsies.attlas.uk/" target="_blank" rel="noopener noreferrer">
