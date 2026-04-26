@@ -69,6 +69,8 @@ if [[ ! -s "${CUSTOM_INDEX}.tmp" ]]; then
   echo "WARNING: could not extract ttyd HTML, skipping keyboard injection." >&2
   rm -f "${CUSTOM_INDEX}.tmp"
 else
+  # Inject viewport meta to prevent zoom on mobile.
+  sed -i 's|<head>|<head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">|' "${CUSTOM_INDEX}.tmp"
   # Strip the closing </body></html>, append keyboard, re-close.
   sed -i 's|</body></html>$||' "${CUSTOM_INDEX}.tmp"
   cat "$SCRIPT_DIR/ttyd-mobile-keyboard.html" >> "${CUSTOM_INDEX}.tmp"
