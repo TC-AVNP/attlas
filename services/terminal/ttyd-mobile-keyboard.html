@@ -87,16 +87,36 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 #mk-input-modal .mk-input-bar .mk-send { background:#3478f6; color:#fff; }
 #mk-input-modal .mk-input-bar .mk-cancel { background:#333; color:#ccc; }
 
-/* ── Desktop scroll button (always visible) ────────────────────── */
-#mk-scroll-desktop { position:fixed; top:12px; right:12px; z-index:9999;
-  padding:8px 16px; border-radius:6px; border:1px solid #555;
+/* ── Desktop top-right buttons (scroll + close) ───────────────── */
+#mk-desktop-btns { position:fixed; top:12px; right:12px; z-index:9999;
+  display:flex; gap:8px; }
+@media (hover:none) and (pointer:coarse) { #mk-desktop-btns { display:none; } }
+#mk-desktop-btns button { padding:8px 16px; border-radius:6px; border:1px solid #555;
   background:#222; color:#999; font-family:-apple-system,'SF Pro',system-ui,sans-serif;
   font-size:14px; cursor:pointer; user-select:none;
   -webkit-tap-highlight-color:transparent; }
-#mk-scroll-desktop:hover { background:#333; color:#fff; }
+#mk-desktop-btns button:hover { background:#333; color:#fff; }
 #mk-scroll-desktop.held { background:#7aa2f7; color:#000; border-color:#7aa2f7; font-weight:600; }
-/* Hide on mobile — the top bar already has Scrl */
-@media (hover:none) and (pointer:coarse) { #mk-scroll-desktop { display:none; } }
+#mk-close-desktop { color:#e06c75 !important; }
+#mk-close-desktop:hover { background:#e06c75 !important; color:#fff !important; border-color:#e06c75 !important; }
+
+/* ── Close session modal ───────────────────────────────────────── */
+#mk-close-modal { display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+  z-index:20000; background:rgba(0,0,0,0.7); align-items:center; justify-content:center; }
+#mk-close-modal.open { display:flex; }
+#mk-close-modal .mk-close-card { background:#1e1e1e; border:1px solid #444; border-radius:12px;
+  padding:32px; max-width:400px; width:90%; text-align:center;
+  font-family:-apple-system,'SF Pro',system-ui,sans-serif; color:#ccc; }
+#mk-close-modal .mk-close-card h3 { margin:0 0 12px; font-size:18px; color:#fff; }
+#mk-close-modal .mk-close-card p { margin:0 0 24px; font-size:14px; line-height:1.5; }
+#mk-close-modal .mk-close-btns { display:flex; gap:12px; justify-content:center; }
+#mk-close-modal .mk-close-btns button { padding:12px 24px; border-radius:8px; border:none;
+  font-size:16px; font-weight:600; cursor:pointer;
+  font-family:-apple-system,'SF Pro',system-ui,sans-serif; }
+#mk-close-modal .mk-close-confirm { background:#e06c75; color:#fff; }
+#mk-close-modal .mk-close-confirm:disabled { background:#555; color:#888; cursor:not-allowed; }
+#mk-close-modal .mk-close-cancel { background:#333; color:#ccc; }
+#mk-close-modal .mk-close-cancel:hover { background:#444; }
 
 /* ── Terminal resize ────────────────────────────────────────────── */
 @media (hover:none) and (pointer:coarse) {
@@ -296,7 +316,21 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 <div id="mk-sel-overlay"><textarea id="mk-sel-text"></textarea></div>
 <div id="mk-toast"></div>
 
-<button id="mk-scroll-desktop" title="Toggle scroll (tmux copy-mode)">Scroll</button>
+<div id="mk-desktop-btns">
+  <button id="mk-close-desktop" title="Close session">Close</button>
+  <button id="mk-scroll-desktop" title="Toggle scroll (tmux copy-mode)">Scroll</button>
+</div>
+
+<div id="mk-close-modal">
+  <div class="mk-close-card">
+    <h3 id="mk-close-title">Closing session...</h3>
+    <p id="mk-close-msg">Waiting for Claude to finish the diary entry.</p>
+    <div class="mk-close-btns">
+      <button class="mk-close-cancel" id="mk-close-cancel">Not yet</button>
+      <button class="mk-close-confirm" id="mk-close-confirm" disabled>Close Tab</button>
+    </div>
+  </div>
+</div>
 
 <div id="mk-input-modal">
   <textarea id="mk-input-text" placeholder="Type or dictate, then press Send..." autocomplete="off" autocorrect="on" spellcheck="true"></textarea>
@@ -307,6 +341,7 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 </div>
 
 <div id="mk-toggles">
+  <button id="mk-close-mobile" title="Close session" style="color:#e06c75;border-color:#e06c75;">&#x2717;</button>
   <button id="mk-toggle-native" title="Type or dictate text">Aa</button>
   <button id="mk-toggle-custom" title="Toggle custom keyboard">&#x2328;</button>
 </div>
@@ -679,5 +714,117 @@ body.mk-selecting #mk-sel-overlay { display:block; }
   if (scrollBtnDesktop) {
     scrollBtnDesktop.addEventListener('click', function() { window._mkToggleScroll(); });
   }
+})();
+</script>
+
+<!-- Close session — sends goodbye, waits for diary, offers to close tab -->
+<script>
+(function() {
+  'use strict';
+
+  var closeModal = document.getElementById('mk-close-modal');
+  var closeTitle = document.getElementById('mk-close-title');
+  var closeMsg   = document.getElementById('mk-close-msg');
+  var confirmBtn = document.getElementById('mk-close-confirm');
+  var cancelBtn  = document.getElementById('mk-close-cancel');
+  var closeBtnD  = document.getElementById('mk-close-desktop');
+  var closeBtnM  = document.getElementById('mk-close-mobile');
+
+  if (!closeModal) return;
+
+  function sendToTerm(data) {
+    var t = window.term;
+    if (!t) return;
+    if (t._core && t._core.coreService) {
+      t._core.coreService.triggerDataEvent(data, true);
+    } else if (t._core && t._core._onData) {
+      t._core._onData.fire(data);
+    }
+  }
+
+  var silenceTimer = null;
+  var maxTimer = null;
+  var active = false;
+
+  function showReady() {
+    closeTitle.textContent = 'Session seems to be done';
+    closeMsg.textContent = 'Can we close the tab now?';
+    confirmBtn.disabled = false;
+  }
+
+  function cleanup() {
+    if (silenceTimer) { clearInterval(silenceTimer); silenceTimer = null; }
+    if (maxTimer) { clearTimeout(maxTimer); maxTimer = null; }
+    closeModal.classList.remove('open');
+    active = false;
+  }
+
+  function initiateClose() {
+    if (active) return;
+    active = true;
+
+    // Send the close message to the terminal
+    sendToTerm('Thanks claude, lets close this session\r');
+
+    // Show modal in waiting state
+    closeTitle.textContent = 'Closing session\u2026';
+    closeMsg.textContent = 'Waiting for Claude to finish the diary entry.';
+    confirmBtn.disabled = true;
+    closeModal.classList.add('open');
+
+    // Monitor terminal for silence — poll cursor position every 2s.
+    // When the cursor hasn't moved for 15s, Claude is likely done.
+    var lastCursorY = -1, lastCursorX = -1, lastChange = Date.now();
+
+    silenceTimer = setInterval(function() {
+      var buf = window.term && window.term.buffer && window.term.buffer.active;
+      if (buf) {
+        var cy = buf.cursorY + buf.baseY;
+        var cx = buf.cursorX;
+        if (cy !== lastCursorY || cx !== lastCursorX) {
+          lastCursorY = cy; lastCursorX = cx;
+          lastChange = Date.now();
+        }
+      }
+      if (Date.now() - lastChange > 15000) {
+        if (silenceTimer) clearInterval(silenceTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+        showReady();
+      }
+    }, 2000);
+
+    // Safety cap: after 3 minutes, show ready regardless
+    maxTimer = setTimeout(function() {
+      if (silenceTimer) clearInterval(silenceTimer);
+      showReady();
+    }, 180000);
+  }
+
+  if (closeBtnD) closeBtnD.addEventListener('click', initiateClose);
+  if (closeBtnM) {
+    closeBtnM.addEventListener('touchstart', function(e) {
+      e.preventDefault(); initiateClose();
+    }, { passive: false });
+    closeBtnM.addEventListener('click', initiateClose);
+  }
+
+  if (confirmBtn) confirmBtn.addEventListener('click', function() {
+    cleanup();
+    window.close();
+    // window.close() only works for script-opened windows.
+    // If it didn't work, tell the user.
+    setTimeout(function() {
+      closeTitle.textContent = 'Please close this tab manually';
+      closeMsg.textContent = 'The browser only allows tabs opened by scripts to be closed automatically.';
+      confirmBtn.style.display = 'none';
+      cancelBtn.textContent = 'OK';
+      closeModal.classList.add('open');
+      active = true;
+    }, 500);
+  });
+
+  if (cancelBtn) cancelBtn.addEventListener('click', function() {
+    cleanup();
+  });
 })();
 </script>
