@@ -17,6 +17,7 @@ import (
 	"attlas-server/internal/auth"
 	"attlas-server/internal/config"
 	"attlas-server/internal/costs"
+	"attlas-server/internal/diary"
 	"attlas-server/internal/infra"
 	"attlas-server/internal/openclaw"
 	"attlas-server/internal/services"
@@ -129,6 +130,7 @@ func main() {
 	status.SetAttlasDir(attlasDir)
 	services.SetAttlasDir(attlasDir)
 	services.SetDistDir(distDir)
+	diary.SetAttlasDir(attlasDir)
 
 	mux := http.NewServeMux()
 
@@ -162,6 +164,7 @@ func main() {
 	mux.HandleFunc("GET /api/cloud-spend", costs.HandleCloudSpend)
 	mux.HandleFunc("GET /api/costs/breakdown", costs.HandleBreakdown)
 	mux.HandleFunc("POST /api/vm/stop", infra.HandleStopVM)
+	mux.HandleFunc("GET /api/diary/effort", diary.HandleEffort)
 
 	// Diary (Hugo static site)
 	diaryDir := filepath.Join(attlasDir, "services", "diary", "public")

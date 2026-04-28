@@ -185,6 +185,38 @@ function ServiceRow({ svc, busy, onInstall, onUninstall }) {
   )
 }
 
+// ── Total effort card ─────────────────────────────────────────────────
+
+function EffortCard() {
+  const [data, setData] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/diary/effort')
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setData(d) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
+  if (!data || data.sessions === 0) return null
+
+  return (
+    <Card label="total effort · all sessions" className="full">
+      <div className="effort-split">
+        <div className="effort-col">
+          <div className="card-headline">{data.total_hours}h</div>
+          <div className="card-headline-sub">invested</div>
+        </div>
+        <div className="effort-col">
+          <div className="card-headline">{data.sessions}</div>
+          <div className="card-headline-sub">sessions</div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 // ── System load card ──────────────────────────────────────────────────
 // Shown first on the dashboard — CPU and memory are the two numbers
 // you want to glance at before anything else. Headline percentages
@@ -483,8 +515,10 @@ export default function Dashboard() {
 
       {/* Card grid */}
       <div className="card-grid">
-        {/* System load — first and full width, this is what the user
-            wants to see before anything else on the home page. */}
+        {/* Total effort — topmost card, shows cumulative hours invested */}
+        <EffortCard />
+
+        {/* System load — full width, live CPU/memory */}
         <SystemLoadCard load={system_load} />
 
         {/* Cloud spend — full width */}
