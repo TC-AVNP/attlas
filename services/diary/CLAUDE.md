@@ -28,6 +28,21 @@ alive-server serves `${ATTLAS_DIR}/services/diary/public` at
 `/diary/`; no service restart is needed after a rebuild, just
 refreshing the page.
 
+## MCP server
+
+`mcp/` contains a stdio-based MCP server (Go) that lets Claude Code
+query diary entries without filesystem access. Configured in
+`~/.claude.json` under `mcpServers.diary`.
+
+Tools: `search_by_project`, `search_by_keyword`, `list_entries`,
+`get_entry`.
+
+Rebuild after changes:
+```bash
+cd services/diary/mcp
+/usr/local/go/bin/go build -o diary-mcp .
+```
+
 ## Writing entries
 
 Entry files are `content/YYYY-MM-DD.md`. Run the `hugo` build command

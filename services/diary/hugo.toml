@@ -5,5 +5,8 @@ title = 'Attlas diary 🚀'
 [params]
   description = 'Daily log of work on the Attlas project'
 
+[taxonomies]
+  project = 'projects'
+
 [markup.goldmark.renderer]
   unsafe = true

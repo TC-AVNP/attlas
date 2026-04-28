@@ -1,6 +1,15 @@
 {{ define "main" }}
 <a href="{{ .Site.BaseURL }}" class="back">&larr; cd ..</a>
 <h1>{{ .Title }}</h1>
-<div class="gray" style="margin-bottom: 1.5rem;">{{ .Date.Format "2006-01-02" }}</div>
+<div class="gray" style="margin-bottom: 0.4rem;">{{ .Date.Format "2006-01-02" }}</div>
+{{ with .Params.projects }}
+<div style="margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem;">
+    {{ range . }}
+    <a href="{{ $.Site.BaseURL }}projects/{{ . | urlize }}/" style="background: #1a1a1a; padding: 0.1rem 0.5rem; border-radius: 3px; font-size: 0.8rem;">{{ . }}</a>
+    {{ end }}
+</div>
+{{ else }}
+<div style="margin-bottom: 1.5rem;"></div>
+{{ end }}
 {{ .Content }}
 {{ end }}

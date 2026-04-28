@@ -1,0 +1,12 @@
+{{ define "main" }}
+<a href="{{ .Site.BaseURL }}" class="back">&larr; cd ..</a>
+<h1>Projects</h1>
+<div style="margin-top: 1rem;">
+{{ range .Pages.ByTitle }}
+<div style="margin-bottom: 0.6rem;">
+    <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+    <span class="gray">({{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }})</span>
+</div>
+{{ end }}
+</div>
+{{ end }}
