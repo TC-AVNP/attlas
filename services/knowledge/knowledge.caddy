@@ -1,0 +1,3 @@
+knowledge.attlas.uk {
+	reverse_proxy 127.0.0.1:7694
+}

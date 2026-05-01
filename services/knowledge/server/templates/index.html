@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>knowledge graph</title>
+<style>
+:root {
+  --bg: #0c0c0c; --fg: #c0c0c0; --border: #333; --accent: #00ff00;
+  --brand: #ff8700; --header: #ffff00; --muted: #8a8a8a; --surface: #1a1a1a;
+  --danger: #ff5555; --warning: #ffcc00; --btn-on-accent: #000;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="light"] {
+  --bg: #fafafa; --fg: #1a1a1a; --border: #e5e5e5; --accent: #007a00;
+  --brand: #d56800; --header: #9a5200; --muted: #6b6b6b; --surface: #ffffff;
+  --danger: #dc2626; --warning: #b45309; --btn-on-accent: #ffffff;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 15px; line-height: 1.6; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+.page-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2rem; flex-wrap: wrap; gap: 0.5rem; }
+.page-header h1 { font-family: var(--font-mono); color: var(--brand); font-size: 1.8rem; font-weight: 700; }
+.page-header .meta { font-size: 0.85rem; color: var(--muted); font-family: var(--font-mono); }
+
+.section-label { display: flex; align-items: center; gap: 0.8rem; margin: 2rem 0 1rem; font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--header); }
+.section-label::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; }
+
+.graph-container { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 2rem; }
+#graph-canvas { display: block; width: 100%; cursor: grab; }
+#graph-canvas:active { cursor: grabbing; }
+
+.entry-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+.entry-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.2rem; transition: border-color 0.12s; }
+.entry-card:hover { border-color: var(--accent); }
+.entry-card h3 { font-family: var(--font-mono); font-size: 0.95rem; margin-bottom: 0.3rem; }
+.entry-card h3 a { color: var(--fg); }
+.entry-card h3 a:hover { color: var(--accent); }
+.entry-card .placeholder-badge { display: inline-block; font-size: 0.7rem; background: var(--border); color: var(--muted); padding: 0.1rem 0.4rem; border-radius: 4px; margin-left: 0.4rem; font-family: var(--font-mono); }
+.entry-card .snippet { font-size: 0.85rem; color: var(--muted); line-height: 1.4; }
+
+.btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 1.1rem; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--fg); font-family: var(--font-mono); font-size: 0.8rem; cursor: pointer; transition: all 0.12s; }
+.btn:hover { border-color: var(--fg); }
+.btn-primary { background: var(--accent); color: var(--btn-on-accent); border-color: var(--accent); }
+.btn-primary:hover { opacity: 0.85; }
+
+.theme-toggle { position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--fg); cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; z-index: 100; }
+
+.toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+
+.empty { text-align: center; padding: 3rem; color: var(--muted); font-family: var(--font-mono); }
+
+.footer { text-align: center; padding: 2rem 0; font-size: 0.75rem; color: var(--muted); font-family: var(--font-mono); }
+.footer a { color: var(--muted); }
+
+@media (max-width: 640px) {
+  .page { padding: 1rem; }
+  .page-header h1 { font-size: 1.3rem; }
+  .entry-list { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="toggleTheme()" id="theme-btn" title="Toggle theme"></button>
+
+<div class="page">
+  <div class="page-header">
+    <h1>knowledge graph</h1>
+    <div class="meta">{{.Email}} · <a href="/auth/logout">logout</a></div>
+  </div>
+
+  <div class="section-label">graph</div>
+  <div class="graph-container">
+    <canvas id="graph-canvas" width="1060" height="500"></canvas>
+  </div>
+
+  <div class="section-label">entries</div>
+  {{if .Entries}}
+  <div class="entry-list">
+    {{range .Entries}}
+    <div class="entry-card">
+      <h3><a href="/entry/{{.Slug}}">{{.Title}}</a>{{if .Placeholder}}<span class="placeholder-badge">placeholder</span>{{end}}</h3>
+      <div class="snippet">{{if .Content}}{{if gt (len .Content) 120}}{{slice .Content 0 120}}...{{else}}{{.Content}}{{end}}{{else}}<em>No content yet</em>{{end}}</div>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="empty">No entries yet. Create the first one.</div>
+  {{end}}
+
+  <div class="footer">
+    <a href="https://attlas.uk/">attlas</a> · knowledge
+  </div>
+</div>
+
+<script>
+// Theme toggle.
+function toggleTheme() {
+  const t = document.documentElement.getAttribute('data-theme') === 'light' ? '' : 'light';
+  document.documentElement.setAttribute('data-theme', t);
+  localStorage.setItem('theme', t);
+  updateThemeBtn();
+}
+function updateThemeBtn() {
+  document.getElementById('theme-btn').textContent =
+    document.documentElement.getAttribute('data-theme') === 'light' ? '\u263e' : '\u2600';
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  updateThemeBtn();
+})();
+
+// Force-directed graph.
+(function() {
+  const canvas = document.getElementById('graph-canvas');
+  const ctx = canvas.getContext('2d');
+  const graphData = {{.Graph}};
+
+  if (!graphData.nodes || graphData.nodes.length === 0) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  // Build node map.
+  const nodeMap = {};
+  const nodes = graphData.nodes.map((n, i) => {
+    const node = {
+      ...n,
+      x: W/2 + (Math.random() - 0.5) * W * 0.6,
+      y: H/2 + (Math.random() - 0.5) * H * 0.6,
+      vx: 0, vy: 0
+    };
+    nodeMap[n.id] = node;
+    return node;
+  });
+
+  const edges = (graphData.edges || []).map(e => ({
+    source: nodeMap[e.source],
+    target: nodeMap[e.target],
+    label: e.label
+  })).filter(e => e.source && e.target);
+
+  // Colors from CSS.
+  const getVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  let dragging = null;
+  let offsetX = 0, offsetY = 0;
+
+  function simulate() {
+    // Repulsion.
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        let dx = nodes[j].x - nodes[i].x;
+        let dy = nodes[j].y - nodes[i].y;
+        let d = Math.sqrt(dx*dx + dy*dy) || 1;
+        let force = 8000 / (d * d);
+        let fx = (dx / d) * force;
+        let fy = (dy / d) * force;
+        nodes[i].vx -= fx; nodes[i].vy -= fy;
+        nodes[j].vx += fx; nodes[j].vy += fy;
+      }
+    }
+
+    // Attraction along edges.
+    for (const e of edges) {
+      let dx = e.target.x - e.source.x;
+      let dy = e.target.y - e.source.y;
+      let d = Math.sqrt(dx*dx + dy*dy) || 1;
+      let force = (d - 150) * 0.01;
+      let fx = (dx / d) * force;
+      let fy = (dy / d) * force;
+      e.source.vx += fx; e.source.vy += fy;
+      e.target.vx -= fx; e.target.vy -= fy;
+    }
+
+    // Center gravity.
+    for (const n of nodes) {
+      n.vx += (W/2 - n.x) * 0.001;
+      n.vy += (H/2 - n.y) * 0.001;
+    }
+
+    // Apply velocity with damping.
+    for (const n of nodes) {
+      if (n === dragging) continue;
+      n.vx *= 0.85; n.vy *= 0.85;
+      n.x += n.vx; n.y += n.vy;
+      n.x = Math.max(60, Math.min(W - 60, n.x));
+      n.y = Math.max(30, Math.min(H - 30, n.y));
+    }
+  }
+
+  function draw() {
+    const bg = getVar('--bg');
+    const fg = getVar('--fg');
+    const accent = getVar('--accent');
+    const brand = getVar('--brand');
+    const muted = getVar('--muted');
+    const border = getVar('--border');
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = getVar('--surface');
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw edges.
+    for (const e of edges) {
+      ctx.beginPath();
+      ctx.moveTo(e.source.x, e.source.y);
+      ctx.lineTo(e.target.x, e.target.y);
+      ctx.strokeStyle = border;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Arrow.
+      const angle = Math.atan2(e.target.y - e.source.y, e.target.x - e.source.x);
+      const arrowLen = 10;
+      const midX = (e.source.x + e.target.x) / 2;
+      const midY = (e.source.y + e.target.y) / 2;
+      ctx.beginPath();
+      ctx.moveTo(midX + arrowLen * Math.cos(angle), midY + arrowLen * Math.sin(angle));
+      ctx.lineTo(midX - arrowLen * Math.cos(angle - 0.4), midY - arrowLen * Math.sin(angle - 0.4));
+      ctx.lineTo(midX - arrowLen * Math.cos(angle + 0.4), midY - arrowLen * Math.sin(angle + 0.4));
+      ctx.closePath();
+      ctx.fillStyle = muted;
+      ctx.fill();
+
+      // Edge label.
+      if (e.label) {
+        ctx.font = '10px ' + getVar('--font-mono');
+        ctx.fillStyle = muted;
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, midX, midY - 8);
+      }
+    }
+
+    // Draw nodes.
+    for (const n of nodes) {
+      const r = n.placeholder ? 18 : 24;
+
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = n.placeholder ? border : accent;
+      ctx.fill();
+      ctx.strokeStyle = n === hovered ? brand : fg;
+      ctx.lineWidth = n === hovered ? 2.5 : 1;
+      ctx.stroke();
+
+      // Label.
+      ctx.font = (n === hovered ? 'bold ' : '') + '11px ' + getVar('--font-mono');
+      ctx.fillStyle = fg;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const label = n.title.length > 25 ? n.title.substring(0, 22) + '...' : n.title;
+      ctx.fillText(label, n.x, n.y + r + 5);
+    }
+  }
+
+  let hovered = null;
+
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+
+    if (dragging) {
+      dragging.x = mx; dragging.y = my;
+      dragging.vx = 0; dragging.vy = 0;
+      return;
+    }
+
+    hovered = null;
+    for (const n of nodes) {
+      const rad = n.placeholder ? 18 : 24;
+      if (Math.hypot(mx - n.x, my - n.y) < rad + 5) {
+        hovered = n;
+        canvas.style.cursor = 'pointer';
+        break;
+      }
+    }
+    if (!hovered) canvas.style.cursor = 'grab';
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (hovered) { dragging = hovered; canvas.style.cursor = 'grabbing'; }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    if (dragging && hovered === dragging) {
+      window.location.href = '/entry/' + dragging.slug;
+    }
+    dragging = null;
+  });
+
+  function tick() {
+    simulate();
+    draw();
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

@@ -87,6 +87,8 @@ var known = []Service{
 		Path:      "https://hello.attlas.uk/", Script: "install.sh"},
 	{ID: "david-s-checklist", Name: "David's Checklist", ServiceName: "david-s-checklist", Command: "david-s-checklist",
 		Path: "https://david.attlas.uk/", Script: "install.sh"},
+	{ID: "knowledge", Name: "Knowledge Base", ServiceName: "knowledge", Command: "knowledge",
+		Path: "https://knowledge.attlas.uk/", Script: "install.sh"},
 }
 
 func findService(id string) *Service {
