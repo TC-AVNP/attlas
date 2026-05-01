@@ -7,6 +7,7 @@
 // Claude Code is editing via MCP from another client.
 
 import { Routes, Route } from "react-router-dom";
+import Kanban from "./pages/Kanban";
 import Universe from "./pages/Universe";
 import ProjectDetail from "./pages/ProjectDetail";
 import Todos from "./pages/Todos";
@@ -16,7 +17,8 @@ export default function App() {
   useLiveUpdates();
   return (
     <Routes>
-      <Route path="/" element={<Universe />} />
+      <Route path="/" element={<Kanban />} />
+      <Route path="/universe" element={<Universe />} />
       <Route path="/p/:slug" element={<ProjectDetail />} />
       <Route path="/todos" element={<Todos />} />
     </Routes>

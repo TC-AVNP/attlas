@@ -9,11 +9,13 @@
 import type {
   EffortLog,
   Feature,
+  Interest,
   ListProjectsResponse,
   ListTodosResponse,
   Priority,
   Project,
   ProjectDetail,
+  Stage,
   Status,
   Todo,
 } from "./types";
@@ -61,6 +63,8 @@ export interface UpdateProjectBody {
   problem?: string;
   description?: string;
   priority?: Priority;
+  stage?: Stage;
+  interest?: Interest;
   color?: string;
   canvas_x?: number;
   canvas_y?: number;
