@@ -29,6 +29,8 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		Description *string           `json:"description"`
 		Color       *string           `json:"color"`
 		RepoPath    *string           `json:"repo_path"`
+		Stage       *service.Stage    `json:"stage"`
+		Interest    *service.Interest `json:"interest"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -41,6 +43,8 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 		Color:       body.Color,
 		RepoPath:    body.RepoPath,
+		Stage:       body.Stage,
+		Interest:    body.Interest,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -69,6 +73,8 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		Problem     *string           `json:"problem"`
 		Description *string           `json:"description"`
 		Priority    *service.Priority `json:"priority"`
+		Stage       *service.Stage    `json:"stage"`
+		Interest    *service.Interest `json:"interest"`
 		Color       *string           `json:"color"`
 		RepoPath    *string           `json:"repo_path"`
 		CanvasX     *float64          `json:"canvas_x"`
@@ -84,6 +90,8 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		Problem:     body.Problem,
 		Description: body.Description,
 		Priority:    body.Priority,
+		Stage:       body.Stage,
+		Interest:    body.Interest,
 		Color:       body.Color,
 		RepoPath:    body.RepoPath,
 		CanvasX:     body.CanvasX,

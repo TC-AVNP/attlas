@@ -5,6 +5,10 @@
 
 export type Priority = "high" | "medium" | "low";
 
+export type Stage = "idea" | "live" | "completed";
+
+export type Interest = "excited" | "meh" | "bored";
+
 export type Status = "backlog" | "in_progress" | "done" | "dropped";
 
 export interface Project {
@@ -14,6 +18,8 @@ export interface Project {
   problem: string;
   description?: string;
   priority: Priority;
+  stage: Stage;
+  interest: Interest;
   color: string;
   created_at: number; // unix seconds
   archived_at?: number;

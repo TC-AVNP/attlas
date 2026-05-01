@@ -148,6 +148,8 @@ func toolDefinitions() []map[string]any {
 					"description": map[string]any{"type": "string"},
 					"color":       map[string]any{"type": "string"},
 					"repo_path":   map[string]any{"type": "string"},
+					"stage":       map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
+					"interest":    map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
 				},
 			},
 		},
@@ -165,6 +167,8 @@ func toolDefinitions() []map[string]any {
 					"priority":    map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"color":       map[string]any{"type": "string"},
 					"repo_path":   map[string]any{"type": "string"},
+					"stage":       map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
+					"interest":    map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
 					"archived":    map[string]any{"type": "boolean"},
 				},
 			},
@@ -303,12 +307,14 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 
 	case "create_project":
 		var args struct {
-			Name        string           `json:"name"`
-			Problem     string           `json:"problem"`
-			Priority    service.Priority `json:"priority"`
-			Description *string          `json:"description"`
-			Color       *string          `json:"color"`
-			RepoPath    *string          `json:"repo_path"`
+			Name        string            `json:"name"`
+			Problem     string            `json:"problem"`
+			Priority    service.Priority  `json:"priority"`
+			Description *string           `json:"description"`
+			Color       *string           `json:"color"`
+			RepoPath    *string           `json:"repo_path"`
+			Stage       *service.Stage    `json:"stage"`
+			Interest    *service.Interest `json:"interest"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
@@ -320,6 +326,8 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Description: args.Description,
 			Color:       args.Color,
 			RepoPath:    args.RepoPath,
+			Stage:       args.Stage,
+			Interest:    args.Interest,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
@@ -336,6 +344,8 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Problem     *string           `json:"problem"`
 			Description *string           `json:"description"`
 			Priority    *service.Priority `json:"priority"`
+			Stage       *service.Stage    `json:"stage"`
+			Interest    *service.Interest `json:"interest"`
 			Color       *string           `json:"color"`
 			RepoPath    *string           `json:"repo_path"`
 			Archived    *bool             `json:"archived"`
@@ -348,6 +358,8 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Problem:     args.Problem,
 			Description: args.Description,
 			Priority:    args.Priority,
+			Stage:       args.Stage,
+			Interest:    args.Interest,
 			Color:       args.Color,
 			RepoPath:    args.RepoPath,
 			Archived:    args.Archived,

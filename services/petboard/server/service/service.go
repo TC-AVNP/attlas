@@ -80,7 +80,8 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	}
 	rows, err := s.DB.Query(`
 		SELECT p.id, p.slug, p.name, p.problem, p.description, p.priority,
-		       p.color, p.created_at, p.archived_at, p.repo_path, p.canvas_x, p.canvas_y
+		       p.stage, p.interest, p.color, p.created_at, p.archived_at,
+		       p.repo_path, p.canvas_x, p.canvas_y
 		FROM projects p
 		` + where + `
 		ORDER BY p.created_at DESC
@@ -95,7 +96,8 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 		var p Project
 		if err := rows.Scan(
 			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
-			&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.RepoPath, &p.CanvasX, &p.CanvasY,
+			&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
+			&p.RepoPath, &p.CanvasX, &p.CanvasY,
 		); err != nil {
 			return nil, err
 		}
@@ -181,13 +183,14 @@ func (s *Service) effortTotals() (map[int64]int64, error) {
 func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	var p Project
 	err := s.DB.QueryRow(`
-		SELECT id, slug, name, problem, description, priority, color,
-		       created_at, archived_at, repo_path, canvas_x, canvas_y
+		SELECT id, slug, name, problem, description, priority, stage, interest,
+		       color, created_at, archived_at, repo_path, canvas_x, canvas_y
 		FROM projects
 		WHERE slug = ?
 	`, slug).Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
-		&p.Color, &p.CreatedAt, &p.ArchivedAt, &p.RepoPath, &p.CanvasX, &p.CanvasY,
+		&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
+		&p.RepoPath, &p.CanvasX, &p.CanvasY,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -312,11 +315,20 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 		color = *in.Color
 	}
 
+	stage := StageIdea
+	if in.Stage != nil && ValidStage(*in.Stage) {
+		stage = *in.Stage
+	}
+	interest := InterestMeh
+	if in.Interest != nil && ValidInterest(*in.Interest) {
+		interest = *in.Interest
+	}
+
 	now := s.now()
 	res, err := s.DB.Exec(`
-		INSERT INTO projects (slug, name, problem, description, priority, color, repo_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, slug, in.Name, in.Problem, in.Description, in.Priority, color, in.RepoPath, now)
+		INSERT INTO projects (slug, name, problem, description, priority, stage, interest, color, repo_path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, slug, in.Name, in.Problem, in.Description, in.Priority, stage, interest, color, in.RepoPath, now)
 	if err != nil {
 		return nil, err
 	}
@@ -331,6 +343,8 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 		Problem:     in.Problem,
 		Description: in.Description,
 		Priority:    in.Priority,
+		Stage:       stage,
+		Interest:    interest,
 		Color:       color,
 		RepoPath:    in.RepoPath,
 		CreatedAt:   now,
@@ -371,6 +385,20 @@ func (s *Service) UpdateProject(slug string, in UpdateProjectInput) (*ProjectDet
 		}
 		sets = append(sets, "priority = ?")
 		args = append(args, *in.Priority)
+	}
+	if in.Stage != nil {
+		if !ValidStage(*in.Stage) {
+			return nil, fmt.Errorf("%w: stage must be idea/live/completed", ErrInvalidInput)
+		}
+		sets = append(sets, "stage = ?")
+		args = append(args, *in.Stage)
+	}
+	if in.Interest != nil {
+		if !ValidInterest(*in.Interest) {
+			return nil, fmt.Errorf("%w: interest must be excited/meh/bored", ErrInvalidInput)
+		}
+		sets = append(sets, "interest = ?")
+		args = append(args, *in.Interest)
 	}
 	if in.Color != nil {
 		sets = append(sets, "color = ?")

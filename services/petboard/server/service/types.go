@@ -15,6 +15,24 @@ const (
 	PriorityLow    Priority = "low"
 )
 
+// Stage is the lifecycle stage of a project on the kanban board.
+type Stage string
+
+const (
+	StageIdea      Stage = "idea"
+	StageLive      Stage = "live"
+	StageCompleted Stage = "completed"
+)
+
+// Interest is a personal engagement signal for prioritization.
+type Interest string
+
+const (
+	InterestExcited Interest = "excited"
+	InterestMeh     Interest = "meh"
+	InterestBored   Interest = "bored"
+)
+
 // Status is the canonical set of feature statuses. Transitions between
 // them auto-set the matching timestamp on the feature row.
 type Status string
@@ -35,6 +53,8 @@ type Project struct {
 	Problem     string   `json:"problem"`
 	Description *string  `json:"description,omitempty"`
 	Priority    Priority `json:"priority"`
+	Stage       Stage    `json:"stage"`
+	Interest    Interest `json:"interest"`
 	Color       string   `json:"color"`
 	CreatedAt   int64    `json:"created_at"`
 	ArchivedAt  *int64   `json:"archived_at,omitempty"`
@@ -104,6 +124,8 @@ type CreateProjectInput struct {
 	Description *string
 	Color       *string // optional override; derived from slug if empty
 	RepoPath    *string
+	Stage       *Stage
+	Interest    *Interest
 }
 
 // UpdateProjectInput holds the nullable fields accepted by PATCH. Only
@@ -113,6 +135,8 @@ type UpdateProjectInput struct {
 	Problem     *string
 	Description *string
 	Priority    *Priority
+	Stage       *Stage
+	Interest    *Interest
 	Color       *string
 	RepoPath    *string
 	CanvasX     *float64
@@ -179,6 +203,24 @@ func ValidPriority(p Priority) bool {
 func ValidStatus(s Status) bool {
 	switch s {
 	case StatusBacklog, StatusInProgress, StatusDone, StatusDropped:
+		return true
+	}
+	return false
+}
+
+// ValidStage reports whether st is a known lifecycle stage.
+func ValidStage(st Stage) bool {
+	switch st {
+	case StageIdea, StageLive, StageCompleted:
+		return true
+	}
+	return false
+}
+
+// ValidInterest reports whether i is a known interest level.
+func ValidInterest(i Interest) bool {
+	switch i {
+	case InterestExcited, InterestMeh, InterestBored:
 		return true
 	}
 	return false
