@@ -10,10 +10,8 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
-    "konva": "^9.3.20",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-konva": "^18.2.10",
     "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
