@@ -33,7 +33,7 @@ a:hover { text-decoration: underline; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; }
 
-.graph-container { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 2rem; }
+.graph-container { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 2rem; touch-action: none; }
 #graph-canvas { display: block; width: 100%; cursor: grab; }
 #graph-canvas:active { cursor: grabbing; }
 
@@ -118,7 +118,7 @@ function updateThemeBtn() {
   updateThemeBtn();
 })();
 
-// Force-directed graph.
+// Force-directed graph with touch support.
 (function() {
   const canvas = document.getElementById('graph-canvas');
   const ctx = canvas.getContext('2d');
@@ -126,16 +126,48 @@ function updateThemeBtn() {
 
   if (!graphData.nodes || graphData.nodes.length === 0) return;
 
+  // Responsive canvas sizing.
   const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * dpr;
-  canvas.height = rect.height * dpr;
-  ctx.scale(dpr, dpr);
-  const W = rect.width, H = rect.height;
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Set canvas height based on viewport — taller on mobile so nodes aren't cramped.
+  function setCanvasHeight() {
+    const vw = window.innerWidth;
+    canvas.style.height = (vw < 640 ? '70vh' : '500px');
+  }
+  setCanvasHeight();
+  resize();
+
+  let W = canvas.getBoundingClientRect().width;
+  let H = canvas.getBoundingClientRect().height;
+
+  window.addEventListener('resize', () => {
+    setCanvasHeight();
+    resize();
+    W = canvas.getBoundingClientRect().width;
+    H = canvas.getBoundingClientRect().height;
+  });
+
+  // Pan & zoom state.
+  let panX = 0, panY = 0, zoom = 1;
+
+  // Convert screen coords to graph coords.
+  function toGraph(sx, sy) {
+    return { x: (sx - panX) / zoom, y: (sy - panY) / zoom };
+  }
+  // Convert graph coords to screen coords.
+  function toScreen(gx, gy) {
+    return { x: gx * zoom + panX, y: gy * zoom + panY };
+  }
 
   // Build node map.
   const nodeMap = {};
-  const nodes = graphData.nodes.map((n, i) => {
+  const nodes = graphData.nodes.map((n) => {
     const node = {
       ...n,
       x: W/2 + (Math.random() - 0.5) * W * 0.6,
@@ -152,14 +184,22 @@ function updateThemeBtn() {
     label: e.label
   })).filter(e => e.source && e.target);
 
-  // Colors from CSS.
   const getVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
   let dragging = null;
-  let offsetX = 0, offsetY = 0;
+  let hovered = null;
 
+  // Hit-test: find node under graph-space point.
+  function nodeAt(gx, gy) {
+    for (const n of nodes) {
+      const r = (n.placeholder ? 18 : 24) + 8; // generous touch target
+      if (Math.hypot(gx - n.x, gy - n.y) < r) return n;
+    }
+    return null;
+  }
+
+  // --- Simulation ---
   function simulate() {
-    // Repulsion.
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         let dx = nodes[j].x - nodes[i].x;
@@ -172,8 +212,6 @@ function updateThemeBtn() {
         nodes[j].vx += fx; nodes[j].vy += fy;
       }
     }
-
-    // Attraction along edges.
     for (const e of edges) {
       let dx = e.target.x - e.source.x;
       let dy = e.target.y - e.source.y;
@@ -184,25 +222,19 @@ function updateThemeBtn() {
       e.source.vx += fx; e.source.vy += fy;
       e.target.vx -= fx; e.target.vy -= fy;
     }
-
-    // Center gravity.
     for (const n of nodes) {
       n.vx += (W/2 - n.x) * 0.001;
       n.vy += (H/2 - n.y) * 0.001;
     }
-
-    // Apply velocity with damping.
     for (const n of nodes) {
       if (n === dragging) continue;
       n.vx *= 0.85; n.vy *= 0.85;
       n.x += n.vx; n.y += n.vy;
-      n.x = Math.max(60, Math.min(W - 60, n.x));
-      n.y = Math.max(30, Math.min(H - 30, n.y));
     }
   }
 
+  // --- Drawing ---
   function draw() {
-    const bg = getVar('--bg');
     const fg = getVar('--fg');
     const accent = getVar('--accent');
     const brand = getVar('--brand');
@@ -213,16 +245,19 @@ function updateThemeBtn() {
     ctx.fillStyle = getVar('--surface');
     ctx.fillRect(0, 0, W, H);
 
-    // Draw edges.
+    ctx.save();
+    ctx.translate(panX, panY);
+    ctx.scale(zoom, zoom);
+
+    // Edges.
     for (const e of edges) {
       ctx.beginPath();
       ctx.moveTo(e.source.x, e.source.y);
       ctx.lineTo(e.target.x, e.target.y);
       ctx.strokeStyle = border;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.5 / zoom;
       ctx.stroke();
 
-      // Arrow.
       const angle = Math.atan2(e.target.y - e.source.y, e.target.x - e.source.x);
       const arrowLen = 10;
       const midX = (e.source.x + e.target.x) / 2;
@@ -235,7 +270,6 @@ function updateThemeBtn() {
       ctx.fillStyle = muted;
       ctx.fill();
 
-      // Edge label.
       if (e.label) {
         ctx.font = '10px ' + getVar('--font-mono');
         ctx.fillStyle = muted;
@@ -244,55 +278,68 @@ function updateThemeBtn() {
       }
     }
 
-    // Draw nodes.
+    // Nodes.
     for (const n of nodes) {
       const r = n.placeholder ? 18 : 24;
+      const isActive = n === hovered || n === dragging;
 
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fillStyle = n.placeholder ? border : accent;
       ctx.fill();
-      ctx.strokeStyle = n === hovered ? brand : fg;
-      ctx.lineWidth = n === hovered ? 2.5 : 1;
+      ctx.strokeStyle = isActive ? brand : fg;
+      ctx.lineWidth = (isActive ? 2.5 : 1) / zoom;
       ctx.stroke();
 
-      // Label.
-      ctx.font = (n === hovered ? 'bold ' : '') + '11px ' + getVar('--font-mono');
+      ctx.font = (isActive ? 'bold ' : '') + '11px ' + getVar('--font-mono');
       ctx.fillStyle = fg;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       const label = n.title.length > 25 ? n.title.substring(0, 22) + '...' : n.title;
       ctx.fillText(label, n.x, n.y + r + 5);
     }
+
+    ctx.restore();
   }
 
-  let hovered = null;
-
+  // --- Mouse events (desktop) ---
   canvas.addEventListener('mousemove', (e) => {
     const r = canvas.getBoundingClientRect();
-    const mx = e.clientX - r.left;
-    const my = e.clientY - r.top;
+    const g = toGraph(e.clientX - r.left, e.clientY - r.top);
 
     if (dragging) {
-      dragging.x = mx; dragging.y = my;
+      dragging.x = g.x; dragging.y = g.y;
       dragging.vx = 0; dragging.vy = 0;
       return;
     }
 
-    hovered = null;
-    for (const n of nodes) {
-      const rad = n.placeholder ? 18 : 24;
-      if (Math.hypot(mx - n.x, my - n.y) < rad + 5) {
-        hovered = n;
-        canvas.style.cursor = 'pointer';
-        break;
-      }
-    }
-    if (!hovered) canvas.style.cursor = 'grab';
+    hovered = nodeAt(g.x, g.y);
+    canvas.style.cursor = hovered ? 'pointer' : 'grab';
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    if (hovered) { dragging = hovered; canvas.style.cursor = 'grabbing'; }
+    const r = canvas.getBoundingClientRect();
+    const g = toGraph(e.clientX - r.left, e.clientY - r.top);
+    const hit = nodeAt(g.x, g.y);
+    if (hit) {
+      dragging = hit;
+      canvas.style.cursor = 'grabbing';
+    } else {
+      // Start panning.
+      dragging = null;
+      canvas.dataset.panning = '1';
+      canvas.dataset.panStartX = e.clientX;
+      canvas.dataset.panStartY = e.clientY;
+      canvas.dataset.panOriginX = panX;
+      canvas.dataset.panOriginY = panY;
+    }
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (canvas.dataset.panning === '1') {
+      panX = parseFloat(canvas.dataset.panOriginX) + (e.clientX - parseFloat(canvas.dataset.panStartX));
+      panY = parseFloat(canvas.dataset.panOriginY) + (e.clientY - parseFloat(canvas.dataset.panStartY));
+    }
   });
 
   canvas.addEventListener('mouseup', () => {
@@ -300,8 +347,110 @@ function updateThemeBtn() {
       window.location.href = '/entry/' + dragging.slug;
     }
     dragging = null;
+    canvas.dataset.panning = '0';
   });
 
+  // Mouse wheel zoom.
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.min(3, Math.max(0.3, zoom * delta));
+    // Zoom toward cursor.
+    panX = mx - (mx - panX) * (newZoom / zoom);
+    panY = my - (my - panY) * (newZoom / zoom);
+    zoom = newZoom;
+  }, { passive: false });
+
+  // --- Touch events (mobile) ---
+  let touchState = null; // { type: 'node'|'pan'|'pinch', ... }
+  let tapCandidate = null; // for detecting taps vs drags
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const touches = e.touches;
+
+    if (touches.length === 1) {
+      const sx = touches[0].clientX - r.left;
+      const sy = touches[0].clientY - r.top;
+      const g = toGraph(sx, sy);
+      const hit = nodeAt(g.x, g.y);
+
+      tapCandidate = { x: sx, y: sy, time: Date.now(), node: hit };
+
+      if (hit) {
+        dragging = hit;
+        hovered = hit;
+        touchState = { type: 'node' };
+      } else {
+        touchState = { type: 'pan', startX: sx, startY: sy, originX: panX, originY: panY };
+      }
+    } else if (touches.length === 2) {
+      // Pinch-to-zoom.
+      tapCandidate = null;
+      dragging = null;
+      const dx = touches[1].clientX - touches[0].clientX;
+      const dy = touches[1].clientY - touches[0].clientY;
+      const cx = (touches[0].clientX + touches[1].clientX) / 2 - r.left;
+      const cy = (touches[0].clientY + touches[1].clientY) / 2 - r.top;
+      touchState = { type: 'pinch', dist: Math.hypot(dx, dy), cx, cy, startZoom: zoom, startPanX: panX, startPanY: panY };
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const touches = e.touches;
+
+    if (touchState && touchState.type === 'node' && touches.length === 1 && dragging) {
+      const sx = touches[0].clientX - r.left;
+      const sy = touches[0].clientY - r.top;
+      const g = toGraph(sx, sy);
+      dragging.x = g.x; dragging.y = g.y;
+      dragging.vx = 0; dragging.vy = 0;
+      // If finger moved far enough, it's a drag not a tap.
+      if (tapCandidate) {
+        const moved = Math.hypot(sx - tapCandidate.x, sy - tapCandidate.y);
+        if (moved > 10) tapCandidate = null;
+      }
+    } else if (touchState && touchState.type === 'pan' && touches.length === 1) {
+      const sx = touches[0].clientX - r.left;
+      const sy = touches[0].clientY - r.top;
+      panX = touchState.originX + (sx - touchState.startX);
+      panY = touchState.originY + (sy - touchState.startY);
+      if (tapCandidate) {
+        const moved = Math.hypot(sx - tapCandidate.x, sy - tapCandidate.y);
+        if (moved > 10) tapCandidate = null;
+      }
+    } else if (touchState && touchState.type === 'pinch' && touches.length === 2) {
+      const dx = touches[1].clientX - touches[0].clientX;
+      const dy = touches[1].clientY - touches[0].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / touchState.dist;
+      const newZoom = Math.min(3, Math.max(0.3, touchState.startZoom * scale));
+      panX = touchState.cx - (touchState.cx - touchState.startPanX) * (newZoom / touchState.startZoom);
+      panY = touchState.cy - (touchState.cy - touchState.startPanY) * (newZoom / touchState.startZoom);
+      zoom = newZoom;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    // Tap detection: short duration, small movement, hit a node.
+    if (tapCandidate && tapCandidate.node && (Date.now() - tapCandidate.time) < 300) {
+      window.location.href = '/entry/' + tapCandidate.node.slug;
+      return;
+    }
+    dragging = null;
+    hovered = null;
+    touchState = null;
+    tapCandidate = null;
+  }, { passive: false });
+
+  // --- Animation loop ---
   function tick() {
     simulate();
     draw();
