@@ -3,12 +3,12 @@
 <h1>{{ .Title }}</h1>
 <div class="gray" style="margin-bottom: 1.5rem;">{{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }}</div>
 {{ range .Pages.ByDate.Reverse }}
-<div style="margin-bottom: 0.8rem; padding: 0.6rem 0; border-bottom: 1px solid #222;">
+<div style="margin-bottom: 1.2rem; padding: 0.8rem 0; border-bottom: 1px solid #222;">
     <div>
         <span class="gray">{{ .Date.Format "2006-01-02" }}</span>
         <a href="{{ .RelPermalink }}">{{ .Title }}</a>
     </div>
-    {{ with .Params.summary }}<div class="gray" style="margin-top: 0.2rem; font-size: 0.85rem;">{{ . }}</div>{{ end }}
+    {{ with .Params.summary }}<div class="gray" style="margin-top: 0.3rem; font-size: 0.85rem;">{{ . }}</div>{{ end }}
 </div>
 {{ end }}
 {{ end }}

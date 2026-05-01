@@ -253,6 +253,10 @@ func searchByProject(project string) (string, error) {
 				if e.Summary != "" {
 					sb.WriteString(e.Summary + "\n")
 				}
+				// Show per-project summary if available (preferred over full entry)
+				if projSummary := extractProjectSummary(e.Body, project); projSummary != "" {
+					sb.WriteString("\n### What happened\n" + projSummary + "\n")
+				}
 				// Extract lessons section if present
 				if lessons := extractSection(e.Body, "Lessons"); lessons != "" {
 					sb.WriteString("\n### Lessons\n" + lessons)
@@ -392,6 +396,37 @@ func extractSection(body, heading string) string {
 		}
 		if strings.Contains(strings.ToLower(line), "## "+strings.ToLower(heading)) {
 			inSection = true
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// extractProjectSummary extracts the per-project summary block from the
+// "## Project Summaries" section. Each project has a ### heading matching
+// its slug, followed by a summary paragraph and a **Lines:** reference.
+func extractProjectSummary(body, projectSlug string) string {
+	summaries := extractSection(body, "Project Summaries")
+	if summaries == "" {
+		return ""
+	}
+
+	lines := strings.Split(summaries, "\n")
+	var sb strings.Builder
+	inProject := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "### ") {
+			slug := strings.TrimSpace(strings.TrimPrefix(line, "### "))
+			if strings.EqualFold(slug, projectSlug) {
+				inProject = true
+				continue
+			} else if inProject {
+				break
+			}
+		}
+		if inProject {
+			sb.WriteString(line + "\n")
 		}
 	}
 
