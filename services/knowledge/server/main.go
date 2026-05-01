@@ -52,13 +52,14 @@ const emailCtxKey contextKey = "email"
 // --- Data types ---
 
 type Entry struct {
-	ID          int    `json:"id"`
-	Slug        string `json:"slug"`
-	Title       string `json:"title"`
-	Content     string `json:"content"`
-	Placeholder bool   `json:"placeholder"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID           int    `json:"id"`
+	Slug         string `json:"slug"`
+	Title        string `json:"title"`
+	ContentLLM   string `json:"content_llm"`
+	ContentHuman string `json:"content_human"`
+	Placeholder  bool   `json:"placeholder"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type Link struct {
@@ -88,12 +89,13 @@ type GraphData struct {
 }
 
 type EntryPage struct {
-	Entry       Entry
-	Children    []Entry
-	Parents     []Entry
-	Email       string
-	IsAdmin     bool
-	ContentHTML template.HTML
+	Entry          Entry
+	Children       []Entry
+	Parents        []Entry
+	Email          string
+	IsAdmin        bool
+	ContentLLMHTML template.HTML
+	ContentHumanHTML template.HTML
 }
 
 type IndexPage struct {
@@ -399,12 +401,13 @@ func (a *App) handleEntry(w http.ResponseWriter, r *http.Request) {
 	parents, _ := a.parentEntries(entry.ID)
 
 	a.tmpl.ExecuteTemplate(w, "entry.html", EntryPage{
-		Entry:       entry,
-		Children:    children,
-		Parents:     parents,
-		Email:       email,
-		IsAdmin:     email == a.adminEmail,
-		ContentHTML: template.HTML(renderMarkdown(entry.Content)),
+		Entry:            entry,
+		Children:         children,
+		Parents:          parents,
+		Email:            email,
+		IsAdmin:          email == a.adminEmail,
+		ContentLLMHTML:   template.HTML(renderMarkdown(entry.ContentLLM)),
+		ContentHumanHTML: template.HTML(renderMarkdown(entry.ContentHuman)),
 	})
 }
 
@@ -422,10 +425,11 @@ func (a *App) handleGraphAPI(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Slug        string `json:"slug"`
-		Title       string `json:"title"`
-		Content     string `json:"content"`
-		Placeholder bool   `json:"placeholder"`
+		Slug         string `json:"slug"`
+		Title        string `json:"title"`
+		ContentLLM   string `json:"content_llm"`
+		ContentHuman string `json:"content_human"`
+		Placeholder  bool   `json:"placeholder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -442,8 +446,8 @@ func (a *App) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.db.Exec(
-		"INSERT INTO entries (slug, title, content, placeholder) VALUES (?, ?, ?, ?)",
-		req.Slug, req.Title, req.Content, placeholder)
+		"INSERT INTO entries (slug, title, content_llm, content_human, placeholder) VALUES (?, ?, ?, ?, ?)",
+		req.Slug, req.Title, req.ContentLLM, req.ContentHuman, placeholder)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -460,9 +464,10 @@ func (a *App) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 
 	var req struct {
-		Title       *string `json:"title"`
-		Content     *string `json:"content"`
-		Placeholder *bool   `json:"placeholder"`
+		Title        *string `json:"title"`
+		ContentLLM   *string `json:"content_llm"`
+		ContentHuman *string `json:"content_human"`
+		Placeholder  *bool   `json:"placeholder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
@@ -472,8 +477,11 @@ func (a *App) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	if req.Title != nil {
 		a.db.Exec("UPDATE entries SET title = ?, updated_at = datetime('now') WHERE id = ?", *req.Title, id)
 	}
-	if req.Content != nil {
-		a.db.Exec("UPDATE entries SET content = ?, updated_at = datetime('now') WHERE id = ?", *req.Content, id)
+	if req.ContentLLM != nil {
+		a.db.Exec("UPDATE entries SET content_llm = ?, updated_at = datetime('now') WHERE id = ?", *req.ContentLLM, id)
+	}
+	if req.ContentHuman != nil {
+		a.db.Exec("UPDATE entries SET content_human = ?, updated_at = datetime('now') WHERE id = ?", *req.ContentHuman, id)
 	}
 	if req.Placeholder != nil {
 		p := 0
@@ -531,7 +539,7 @@ func (a *App) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
 // --- Data access ---
 
 func (a *App) allEntries() ([]Entry, error) {
-	rows, err := a.db.Query("SELECT id, slug, title, content, placeholder, created_at, updated_at FROM entries ORDER BY created_at")
+	rows, err := a.db.Query("SELECT id, slug, title, content_llm, content_human, placeholder, created_at, updated_at FROM entries ORDER BY created_at")
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +549,7 @@ func (a *App) allEntries() ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var p int
-		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.Content, &p, &e.CreatedAt, &e.UpdatedAt)
+		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.ContentLLM, &e.ContentHuman, &p, &e.CreatedAt, &e.UpdatedAt)
 		e.Placeholder = p == 1
 		entries = append(entries, e)
 	}
@@ -551,8 +559,8 @@ func (a *App) allEntries() ([]Entry, error) {
 func (a *App) entryBySlug(slug string) (Entry, error) {
 	var e Entry
 	var p int
-	err := a.db.QueryRow("SELECT id, slug, title, content, placeholder, created_at, updated_at FROM entries WHERE slug = ?", slug).
-		Scan(&e.ID, &e.Slug, &e.Title, &e.Content, &p, &e.CreatedAt, &e.UpdatedAt)
+	err := a.db.QueryRow("SELECT id, slug, title, content_llm, content_human, placeholder, created_at, updated_at FROM entries WHERE slug = ?", slug).
+		Scan(&e.ID, &e.Slug, &e.Title, &e.ContentLLM, &e.ContentHuman, &p, &e.CreatedAt, &e.UpdatedAt)
 	e.Placeholder = p == 1
 	return e, err
 }
@@ -560,15 +568,15 @@ func (a *App) entryBySlug(slug string) (Entry, error) {
 func (a *App) entryByID(id int) (Entry, error) {
 	var e Entry
 	var p int
-	err := a.db.QueryRow("SELECT id, slug, title, content, placeholder, created_at, updated_at FROM entries WHERE id = ?", id).
-		Scan(&e.ID, &e.Slug, &e.Title, &e.Content, &p, &e.CreatedAt, &e.UpdatedAt)
+	err := a.db.QueryRow("SELECT id, slug, title, content_llm, content_human, placeholder, created_at, updated_at FROM entries WHERE id = ?", id).
+		Scan(&e.ID, &e.Slug, &e.Title, &e.ContentLLM, &e.ContentHuman, &p, &e.CreatedAt, &e.UpdatedAt)
 	e.Placeholder = p == 1
 	return e, err
 }
 
 func (a *App) childEntries(parentID int) ([]Entry, error) {
 	rows, err := a.db.Query(`
-		SELECT e.id, e.slug, e.title, e.content, e.placeholder, e.created_at, e.updated_at
+		SELECT e.id, e.slug, e.title, e.content_llm, e.content_human, e.placeholder, e.created_at, e.updated_at
 		FROM entries e JOIN links l ON e.id = l.target_id
 		WHERE l.source_id = ? ORDER BY e.title`, parentID)
 	if err != nil {
@@ -580,7 +588,7 @@ func (a *App) childEntries(parentID int) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var p int
-		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.Content, &p, &e.CreatedAt, &e.UpdatedAt)
+		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.ContentLLM, &e.ContentHuman, &p, &e.CreatedAt, &e.UpdatedAt)
 		e.Placeholder = p == 1
 		entries = append(entries, e)
 	}
@@ -589,7 +597,7 @@ func (a *App) childEntries(parentID int) ([]Entry, error) {
 
 func (a *App) parentEntries(childID int) ([]Entry, error) {
 	rows, err := a.db.Query(`
-		SELECT e.id, e.slug, e.title, e.content, e.placeholder, e.created_at, e.updated_at
+		SELECT e.id, e.slug, e.title, e.content_llm, e.content_human, e.placeholder, e.created_at, e.updated_at
 		FROM entries e JOIN links l ON e.id = l.source_id
 		WHERE l.target_id = ? ORDER BY e.title`, childID)
 	if err != nil {
@@ -601,7 +609,7 @@ func (a *App) parentEntries(childID int) ([]Entry, error) {
 	for rows.Next() {
 		var e Entry
 		var p int
-		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.Content, &p, &e.CreatedAt, &e.UpdatedAt)
+		rows.Scan(&e.ID, &e.Slug, &e.Title, &e.ContentLLM, &e.ContentHuman, &p, &e.CreatedAt, &e.UpdatedAt)
 		e.Placeholder = p == 1
 		entries = append(entries, e)
 	}

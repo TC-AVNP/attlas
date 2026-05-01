@@ -87,7 +87,7 @@ a:hover { text-decoration: underline; }
     {{range .Entries}}
     <div class="entry-card">
       <h3><a href="/entry/{{.Slug}}">{{.Title}}</a>{{if .Placeholder}}<span class="placeholder-badge">placeholder</span>{{end}}</h3>
-      <div class="snippet">{{if .Content}}{{if gt (len .Content) 120}}{{slice .Content 0 120}}...{{else}}{{.Content}}{{end}}{{else}}<em>No content yet</em>{{end}}</div>
+      <div class="snippet">{{if .ContentHuman}}{{if gt (len .ContentHuman) 120}}{{slice .ContentHuman 0 120}}...{{else}}{{.ContentHuman}}{{end}}{{else if .ContentLLM}}<em>LLM content only</em>{{else}}<em>No content yet</em>{{end}}</div>
     </div>
     {{end}}
   </div>

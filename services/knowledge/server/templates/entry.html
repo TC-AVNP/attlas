@@ -37,6 +37,11 @@ a:hover { text-decoration: underline; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; }
 
+.view-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-family: var(--font-mono); font-size: 0.75rem; margin-left: auto; }
+.view-toggle button { padding: 0.35rem 0.8rem; border: none; background: transparent; color: var(--muted); cursor: pointer; transition: all 0.12s; }
+.view-toggle button.active { background: var(--accent); color: var(--btn-on-accent); }
+.view-toggle button:hover:not(.active) { color: var(--fg); }
+
 .content { line-height: 1.8; }
 .content h1 { font-size: 1.4rem; color: var(--brand); font-family: var(--font-mono); margin: 1.5rem 0 0.5rem; }
 .content h2 { font-size: 1.2rem; color: var(--brand); font-family: var(--font-mono); margin: 1.3rem 0 0.5rem; }
@@ -89,13 +94,32 @@ a:hover { text-decoration: underline; }
   </div>
   {{end}}
 
-  <div class="section-label">content</div>
+  <div class="section-label">
+    <span>content</span>
+    <div class="view-toggle">
+      <button id="btn-human" class="active" onclick="setView('human')">human</button>
+      <button id="btn-llm" onclick="setView('llm')">llm</button>
+    </div>
+  </div>
   <div class="card">
-    {{if .Entry.Content}}
-    <div class="content">{{.ContentHTML}}</div>
-    {{else}}
-    <div class="empty-content">This entry is a placeholder — content coming soon.</div>
-    {{end}}
+    <div id="content-human" class="content">
+      {{if .Entry.ContentHuman}}
+      {{.ContentHumanHTML}}
+      {{else if .Entry.ContentLLM}}
+      <div class="empty-content">No human version yet. Switch to LLM view.</div>
+      {{else}}
+      <div class="empty-content">This entry is a placeholder — content coming soon.</div>
+      {{end}}
+    </div>
+    <div id="content-llm" class="content" style="display:none">
+      {{if .Entry.ContentLLM}}
+      {{.ContentLLMHTML}}
+      {{else if .Entry.ContentHuman}}
+      <div class="empty-content">No LLM version yet. Switch to human view.</div>
+      {{else}}
+      <div class="empty-content">This entry is a placeholder — content coming soon.</div>
+      {{end}}
+    </div>
   </div>
 
   {{if .Children}}
@@ -115,6 +139,20 @@ a:hover { text-decoration: underline; }
 </div>
 
 <script>
+// View toggle.
+function setView(view) {
+  document.getElementById('content-human').style.display = view === 'human' ? '' : 'none';
+  document.getElementById('content-llm').style.display = view === 'llm' ? '' : 'none';
+  document.getElementById('btn-human').className = view === 'human' ? 'active' : '';
+  document.getElementById('btn-llm').className = view === 'llm' ? 'active' : '';
+  localStorage.setItem('knowledge-view', view);
+}
+(function() {
+  const saved = localStorage.getItem('knowledge-view');
+  if (saved === 'llm') setView('llm');
+})();
+
+// Theme toggle.
 function toggleTheme() {
   const t = document.documentElement.getAttribute('data-theme') === 'light' ? '' : 'light';
   document.documentElement.setAttribute('data-theme', t);
