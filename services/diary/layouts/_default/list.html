@@ -8,14 +8,14 @@
 </div>
 {{ end }}
 {{ with .Site.Taxonomies.projects }}
-<div style="margin-bottom: 1.5rem;">
-    <h2 style="margin-top: 0;">Browse by project</h2>
-    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem;">
+<details style="margin-bottom: 1rem;">
+    <summary style="cursor: pointer; font-size: 0.85rem; color: #ff8700;">Filter by project <span class="gray">({{ len . }})</span></summary>
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem;">
     {{ range .Alphabetical }}
         <a href="{{ .Page.RelPermalink }}" style="background: #1a1a1a; padding: 0.2rem 0.6rem; border-radius: 3px; font-size: 0.85rem;">{{ .Page.Title }} <span class="gray">({{ .Count }})</span></a>
     {{ end }}
     </div>
-</div>
+</details>
 {{ end }}
 {{ $entries := where .Pages "Layout" "ne" "catalog" }}
 {{ range $entries.ByDate.Reverse }}
@@ -23,6 +23,7 @@
     <div>
         <span class="gray">{{ .Date.Format "2006-01-02" }}</span>
         <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+        {{ with .Params.duration }}<span class="gray" style="font-size: 0.8rem; margin-left: 0.4rem;">{{ . }}</span>{{ end }}
     </div>
     {{ with .Params.summary }}<div class="gray" style="margin-top: 0.2rem; font-size: 0.85rem;">{{ . }}</div>{{ end }}
 </div>
