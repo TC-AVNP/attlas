@@ -135,7 +135,7 @@ export default function ProjectDetail() {
     return (
       <main className="min-h-screen bg-neutral-950 text-neutral-100 p-8">
         <Link to="/" className="text-sm text-neutral-400 hover:text-neutral-200">
-          ← back to universe
+          ← back
         </Link>
         <div className="mt-4 rounded border border-red-500/40 bg-red-500/10 p-4 text-red-300">
           failed to load project: {(error as Error).message}
@@ -159,7 +159,7 @@ export default function ProjectDetail() {
           to="/"
           className="text-sm text-neutral-400 hover:text-neutral-200"
         >
-          ← back to universe
+          ← back
         </Link>
 
         {/* Header */}
@@ -207,6 +207,14 @@ export default function ProjectDetail() {
           <span className="text-sm text-neutral-500">
             · {doneCount}/{totalEffort} done
           </span>
+          <a
+            href={`/terminal/${encodeURIComponent(slug)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto px-3 py-1.5 text-sm rounded border border-emerald-600/50 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-800/40 hover:border-emerald-500/60 transition-colors"
+          >
+            Start building →
+          </a>
         </header>
 
         {/* Problem block */}
