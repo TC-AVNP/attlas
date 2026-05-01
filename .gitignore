@@ -19,3 +19,4 @@
 /services/*/cmd/*/main
 /services/splitsies/server/splitsies
 /services/splitsies-gateway/splitsies-gateway
+/services/petboard/server/petboard

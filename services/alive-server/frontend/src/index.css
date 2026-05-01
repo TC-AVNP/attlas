@@ -852,22 +852,6 @@ a:hover { text-decoration: underline; }
   .load-split { grid-template-columns: 1fr; gap: 1.4rem; }
 }
 
-/* ── Effort card ───────────────────────────────────────────────────── */
-
-.effort-split {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-}
-.effort-col {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-}
-@media (max-width: 640px) {
-  .effort-split { grid-template-columns: 1fr; gap: 1.4rem; }
-}
-
 /* ── Theme toggle (fixed top-right) ─────────────────────────────────── */
 /*
  * Floating in the top-right of the viewport so it's reachable from
