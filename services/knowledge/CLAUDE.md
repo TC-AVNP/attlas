@@ -42,6 +42,10 @@ services/knowledge/
 ├── install.sh                    # idempotent install script
 ├── uninstall.sh                  # cleanup script
 ├── knowledge.caddy               # Caddy site block
+├── mcp/
+│   ├── main.go                   # stdio MCP server for Claude Code
+│   ├── knowledge-mcp             # compiled binary
+│   ├── go.mod / go.sum
 └── server/
     ├── main.go                   # all server code
     ├── go.mod / go.sum
@@ -91,6 +95,23 @@ Then visit http://localhost:7694/
 | `KNOWLEDGE_GOOGLE_SECRET` | (empty) | Google OAuth client secret |
 | `KNOWLEDGE_BASE_URL` | `http://localhost:<port>` | Canonical base URL |
 | `KNOWLEDGE_LOCAL_BYPASS` | (empty) | Set `1` to skip auth on loopback |
+
+## MCP Server
+
+`mcp/` contains a stdio-based MCP server (Go) that lets Claude Code
+query knowledge base entries without opening the browser UI. Configured
+in `~/.claude.json` under `mcpServers.knowledge`.
+
+Tools: `search_entries`, `get_entry`, `list_entries`.
+
+All content-returning tools accept a `view` parameter (`"llm"` or
+`"human"`) to select which content field to return. Default: `llm`.
+
+Rebuild after changes:
+```bash
+cd services/knowledge/mcp
+PATH="/usr/local/go/bin:$PATH" go build -o knowledge-mcp .
+```
 
 ## Deployment
 
