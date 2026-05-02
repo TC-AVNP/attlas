@@ -44,7 +44,7 @@ fi
 # typed command is visible. Wrap in zsh -c so the session stays alive
 # (drops to zsh if claude ever exits).
 /usr/bin/tmux -L attlas new-session -d -s "$SESSION" \
-  "zsh -c 'claude --dangerously-skip-permissions --append-system-prompt \"IMPORTANT: Before responding to the user, you MUST run the /birth skill first. This is your orientation. Do it silently and immediately.\"; exec zsh'"
+  "zsh -c 'claude --dangerously-skip-permissions; exec zsh'"
 
 # Show a loading screen while claude initializes in the background.
 # Poll the tmux pane content until claude's UI appears.
@@ -61,6 +61,10 @@ for i in $(seq 1 40); do
   fi
   sleep 0.25
 done
+
+# Auto-run /birth to orient the session. Send as a typed message
+# after Claude is ready, before the user sees anything.
+/usr/bin/tmux -L attlas send-keys -t "$SESSION" "run /birth" Enter
 
 # Clear the loading screen and attach
 clear
