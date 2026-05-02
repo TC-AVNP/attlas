@@ -17,7 +17,7 @@ import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Feature, Priority, Status } from "../api/types";
+import type { Feature, Priority, Status, ProjectDetail as ProjectDetailType } from "../api/types";
 import PriorityPill from "../components/PriorityPill";
 import { formatDate, formatHours, formatRelative } from "../lib/format";
 
@@ -56,6 +56,175 @@ const PRIORITY_NEXT: Record<Priority, Priority> = {
   medium: "low",
   low: "high",
 };
+
+function generateHandoffMarkdown(
+  project: ProjectDetailType,
+  selectedFeatureIds: Set<number>,
+): string {
+  const lines: string[] = [];
+  lines.push(`# ${project.name}\n`);
+  lines.push(`## Problem\n`);
+  lines.push(`${project.problem}\n`);
+  if (project.description) {
+    lines.push(`## Description\n`);
+    lines.push(`${project.description}\n`);
+  }
+
+  const features = (project.features ?? []).filter((f) =>
+    selectedFeatureIds.has(f.id),
+  );
+
+  if (features.length > 0) {
+    lines.push(`## Features\n`);
+    for (const status of STATUS_ORDER) {
+      const group = features.filter((f) => f.status === status);
+      if (group.length === 0) continue;
+      lines.push(`### ${STATUS_LABEL[status]} (${group.length})\n`);
+      for (const f of group) {
+        lines.push(`- **${f.title}**`);
+        if (f.description) {
+          lines.push(`  ${f.description}`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function downloadMarkdown(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function HandoffModal({ project, onClose }: { project: ProjectDetailType; onClose: () => void }) {
+  const allFeatureIds = new Set((project.features ?? []).map((f) => f.id));
+  const [selected, setSelected] = useState<Set<number>>(allFeatureIds);
+  const [showDetails, setShowDetails] = useState(false);
+
+  useEffect(() => {
+    setSelected(new Set((project.features ?? []).map((f) => f.id)));
+  }, [project.features]);
+
+  const doExport = () => {
+    const md = generateHandoffMarkdown(project, selected);
+    downloadMarkdown(md, `${project.slug}-handoff.md`);
+    onClose();
+  };
+
+  const toggle = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === allFeatureIds.size) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(allFeatureIds));
+    }
+  };
+
+  const totalFeatures = allFeatureIds.size;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-lg rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+        <div className="p-5 border-b border-zinc-800">
+          <h2 className="text-lg font-semibold text-zinc-100">Handoff</h2>
+          <p className="mt-2 text-sm text-zinc-400 leading-relaxed">
+            Download a markdown file with <strong>{project.name}</strong>'s full context
+            — problem statement, description, and all {totalFeatures} features with their
+            statuses. Hand it to another agent so they understand exactly what this
+            project is, why it exists, and what's been built.
+          </p>
+        </div>
+
+        <div className="border-b border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setShowDetails(!showDetails)}
+            className="w-full px-5 py-3 text-sm text-left text-zinc-300 hover:bg-zinc-800/40 flex items-center justify-between"
+          >
+            <span>Select details ({selected.size}/{totalFeatures} features)</span>
+            <svg
+              className={`w-4 h-4 text-zinc-500 transition-transform ${showDetails ? "rotate-180" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showDetails && (
+            <div className="px-5 pb-4">
+              <div className="flex justify-end mb-2">
+                <button
+                  type="button"
+                  onClick={toggleAll}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  {selected.size === allFeatureIds.size ? "Deselect all" : "Select all"}
+                </button>
+              </div>
+              <div className="max-h-52 overflow-y-auto space-y-1 rounded border border-zinc-800 bg-zinc-950/50 p-2">
+                {(project.features ?? []).map((f) => (
+                  <label
+                    key={f.id}
+                    className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-zinc-800/60 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(f.id)}
+                      onChange={() => toggle(f.id)}
+                      className="mt-0.5 accent-blue-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-sm text-zinc-200 truncate">{f.title}</div>
+                      <div className="text-xs text-zinc-500">{STATUS_LABEL[f.status]}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 text-sm rounded border border-zinc-700 text-zinc-400 hover:bg-zinc-800 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={doExport}
+            className="px-4 py-2 text-sm rounded border border-blue-600/50 bg-blue-900/30 text-blue-300 hover:bg-blue-800/40 transition-colors"
+          >
+            Download
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function groupByStatus(features: Feature[]): Record<Status, Feature[]> {
   const groups: Record<Status, Feature[]> = {
@@ -120,6 +289,7 @@ export default function ProjectDetail() {
   const [effortNote, setEffortNote] = useState("");
   const [editingProblem, setEditingProblem] = useState(false);
   const [editingName, setEditingName] = useState(false);
+  const [showHandoff, setShowHandoff] = useState(false);
 
   // ----- render --------------------------------------------------------
 
@@ -207,14 +377,21 @@ export default function ProjectDetail() {
           <span className="text-sm text-neutral-500">
             · {doneCount}/{totalEffort} done
           </span>
-          <a
-            href={`/terminal/${encodeURIComponent(slug)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-auto px-3 py-1.5 text-sm rounded border border-emerald-600/50 bg-emerald-900/30 text-emerald-300 hover:bg-emerald-800/40 hover:border-emerald-500/60 transition-colors"
-          >
-            Start building →
-          </a>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowHandoff(true)}
+              className="px-3 py-1.5 text-sm rounded border border-blue-600/50 bg-blue-900/30 text-blue-300 hover:bg-blue-800/40 hover:border-blue-500/60 transition-colors"
+            >
+              Handoff
+            </button>
+            <span
+              className="px-3 py-1.5 text-sm rounded border border-zinc-700/40 bg-zinc-800/30 text-zinc-600 cursor-not-allowed"
+              title="Coming soon"
+            >
+              Work on it
+            </span>
+          </div>
         </header>
 
         {/* Problem block */}
@@ -370,6 +547,10 @@ export default function ProjectDetail() {
           )}
         </section>
       </div>
+
+      {showHandoff && (
+        <HandoffModal project={data} onClose={() => setShowHandoff(false)} />
+      )}
     </main>
   );
 }
