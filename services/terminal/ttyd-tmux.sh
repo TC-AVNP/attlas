@@ -47,25 +47,33 @@ fi
   "zsh -c 'claude --dangerously-skip-permissions; exec zsh'"
 
 # Show a loading screen while claude initializes in the background.
-# Poll the tmux pane content until claude's UI appears.
 clear
 printf '\n'
 printf '   \033[1;34m◆\033[0m Starting Claude...\n'
 printf '\n'
 
+# Wait for Claude's prompt to appear.
 for i in $(seq 1 40); do
   CONTENT=$(/usr/bin/tmux -L attlas capture-pane -t "$SESSION" -p 2>/dev/null || true)
-  # Claude shows its prompt marker (◆ or >) once ready
   if printf '%s' "$CONTENT" | grep -qE '[◆>❯]'; then
     break
   fi
   sleep 0.25
 done
 
-# Auto-run /birth to orient the session. Send as a typed message
-# after Claude is ready, before the user sees anything.
+# Auto-run /birth to orient the session.
 /usr/bin/tmux -L attlas send-keys -t "$SESSION" "run /birth" Enter
 
-# Clear the loading screen and attach
+# Keep loading screen up until birth completes (looks for "father")
+# or 45s max so we never lock ourselves out.
+for i in $(seq 1 90); do
+  CONTENT=$(/usr/bin/tmux -L attlas capture-pane -t "$SESSION" -p 2>/dev/null || true)
+  if printf '%s' "$CONTENT" | grep -qi 'father'; then
+    break
+  fi
+  sleep 0.5
+done
+
+# Attach — user sees the greeting (or the prompt if birth timed out).
 clear
 exec /usr/bin/tmux -L attlas attach-session -t "$SESSION"
