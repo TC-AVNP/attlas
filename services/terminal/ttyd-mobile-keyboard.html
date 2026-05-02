@@ -342,6 +342,7 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 
 <div id="mk-toggles">
   <button id="mk-close-mobile" title="Close session" style="color:#e06c75;border-color:#e06c75;">&#x2717;</button>
+  <button id="mk-scroll-mobile" title="Toggle scroll (tmux copy-mode)">&#x21F3;</button>
   <button id="mk-toggle-native" title="Type or dictate text">Aa</button>
   <button id="mk-toggle-custom" title="Toggle custom keyboard">&#x2328;</button>
 </div>
@@ -698,12 +699,14 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 
   var scrollBtn = document.getElementById('mk-scroll');
   var scrollBtnDesktop = document.getElementById('mk-scroll-desktop');
+  var scrollBtnMobile = document.getElementById('mk-scroll-mobile');
   var scrolling = false;
 
   window._mkToggleScroll = function() {
     scrolling = !scrolling;
     if (scrollBtn) scrollBtn.classList.toggle('held', scrolling);
     if (scrollBtnDesktop) scrollBtnDesktop.classList.toggle('held', scrolling);
+    if (scrollBtnMobile) scrollBtnMobile.classList.toggle('active', scrolling);
     if (scrolling) {
       sendToTerm('\x02[');
     } else {
@@ -713,6 +716,13 @@ body.mk-selecting #mk-sel-overlay { display:block; }
 
   if (scrollBtnDesktop) {
     scrollBtnDesktop.addEventListener('click', function() { window._mkToggleScroll(); });
+  }
+
+  if (scrollBtnMobile) {
+    scrollBtnMobile.addEventListener('touchstart', function(e) {
+      e.preventDefault(); window._mkToggleScroll();
+    }, { passive: false });
+    scrollBtnMobile.addEventListener('click', function() { window._mkToggleScroll(); });
   }
 })();
 </script>
