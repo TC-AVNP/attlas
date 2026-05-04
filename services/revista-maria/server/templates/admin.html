@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Admin - Revista Maria Tennis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0c0c0c;--fg:#c0c0c0;--border:#333;--accent:#00ff00;--brand:#ff8700;--header:#ffff00;--muted:#8a8a8a;--surface:#1a1a1a;--danger:#ff5555;--warning:#ffcc00;--btn-on-accent:#000;--font-ui:'Inter',-apple-system,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace}
+[data-theme="light"]{--bg:#fafafa;--fg:#1a1a1a;--border:#e5e5e5;--accent:#007a00;--brand:#d56800;--header:#9a5200;--muted:#6b6b6b;--surface:#fff;--danger:#dc2626;--warning:#b45309;--btn-on-accent:#fff}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px}body{font-family:var(--font-ui);font-size:1rem;line-height:1.6;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+.page{max-width:600px;margin:0 auto;padding:1rem}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:.5rem;flex-wrap:wrap}
+h1{font-family:var(--font-mono);color:var(--brand);font-size:1.25rem;font-weight:700}
+.header-links{display:flex;gap:.75rem;align-items:center}
+.header-links a,.header-links button{font-family:var(--font-mono);font-size:.8rem;color:var(--muted);text-decoration:none;background:none;border:none;cursor:pointer;padding:.4rem}
+.status-bar{margin-bottom:1.25rem}
+.status-badge{display:inline-block;padding:.3rem .75rem;border-radius:4px;font-family:var(--font-mono);font-size:.8rem;font-weight:500}
+.status-registration{background:var(--accent);color:var(--btn-on-accent)}.status-in_progress{background:var(--warning);color:#000}.status-finished{background:var(--brand);color:#000}
+.section-label{font-family:var(--font-mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--header);margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:1rem}
+.btn{display:inline-flex;align-items:center;justify-content:center;padding:.7rem 1.25rem;border-radius:6px;font-family:var(--font-mono);font-size:.9rem;font-weight:500;border:none;cursor:pointer;min-height:44px}
+.btn:active{opacity:.7}.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:var(--btn-on-accent)}.btn-danger{background:var(--danger);color:#fff}.btn-warning{background:var(--warning);color:#000}.btn-full{width:100%}
+input[type="text"],input[type="number"]{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:.7rem .75rem;font-family:var(--font-ui);font-size:1rem;width:100%;min-height:44px;-webkit-appearance:none}
+input:focus{outline:none;border-color:var(--accent)}
+.player-row{display:flex;justify-content:space-between;align-items:center;padding:.6rem 0;border-bottom:1px solid var(--border);min-height:44px}
+.player-row:last-child{border-bottom:none}
+.player-name{font-weight:500}.remove-btn{background:none;border:none;color:var(--danger);cursor:pointer;font-size:1.25rem;padding:.5rem;min-width:44px;min-height:44px;display:flex;align-items:center;justify-content:center}
+.add-form{display:flex;gap:.5rem;margin-top:.75rem}.add-form input{flex:1}.add-form .btn{white-space:nowrap}
+.match-admin-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:1rem;margin-bottom:.75rem}
+.match-admin-card.current{border-color:var(--accent);border-width:2px}.match-admin-card.completed{opacity:.5}
+.match-admin-card .match-header{font-family:var(--font-mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.5rem}
+.match-admin-card .match-header.live{color:var(--accent)}
+.match-admin-card .teams-line{font-size:1rem;font-weight:600;margin-bottom:.75rem;text-align:center;word-break:break-word}
+.match-admin-card .vs{display:block;color:var(--muted);font-weight:400;font-size:.8rem;margin:.15rem 0}
+.score-form{display:flex;flex-direction:column;gap:.5rem}
+.score-row{display:flex;align-items:center;gap:.5rem}
+.score-row .team-label{flex:1;font-size:.85rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.score-row input[type="number"]{width:70px;text-align:center;font-size:1.25rem;font-family:var(--font-mono);font-weight:700}
+.result-line{font-family:var(--font-mono);font-size:.85rem;color:var(--accent);text-align:center}
+.champion-card{text-align:center;padding:1.5rem 1rem;border:2px solid var(--brand);border-radius:8px;background:var(--surface);margin-bottom:1rem}
+.champion-card .trophy{font-size:2.5rem}.champion-card .name{font-family:var(--font-mono);font-size:1.3rem;color:var(--brand);font-weight:700}.champion-card .label{color:var(--muted);font-size:.85rem}
+.actions{margin-top:1.5rem;margin-bottom:1rem}
+.toast{position:fixed;bottom:1rem;left:1rem;right:1rem;background:var(--surface);border:1px solid var(--accent);color:var(--accent);padding:.75rem 1rem;border-radius:6px;font-family:var(--font-mono);font-size:.85rem;display:none;z-index:200;text-align:center}
+.toast.error{border-color:var(--danger);color:var(--danger)}
+.theme-toggle{width:2.2rem;height:2.2rem;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--fg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1rem}
+@media(min-width:641px){.page{padding:2rem 1.5rem}h1{font-size:1.6rem}.match-admin-card .vs{display:inline;margin:0 .4rem}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>Admin Panel</h1>
+    <div class="header-links">
+      <button class="theme-toggle" onclick="toggleTheme()"><span id="theme-icon">&#9790;</span></button>
+      <a href="/">Public View</a>
+      <button onclick="document.getElementById('lf').submit()">Logout</button>
+    </div>
+  </div>
+  <form id="lf" method="POST" action="/admin/logout" style="display:none"></form>
+
+  <div class="status-bar"><span class="status-badge status-{{.Status}}">{{if eq .Status "registration"}}Registration{{else if eq .Status "in_progress"}}In Progress{{else}}Finished{{end}}</span></div>
+
+  {{if eq .Status "registration"}}
+  <div class="section-label">Players ({{len .Players}}/8)</div>
+  <div class="card">
+    {{if .Players}}{{range .Players}}<div class="player-row"><span class="player-name">{{.Name}}</span><button class="remove-btn" onclick="removePlayer({{.ID}})">&#10005;</button></div>{{end}}
+    {{else}}<p style="color:var(--muted)">No players yet.</p>{{end}}
+    <div class="add-form">
+      <input type="text" id="player-name" placeholder="Player name" onkeydown="if(event.key==='Enter'){event.preventDefault();addPlayer()}" autocomplete="off" autocapitalize="words">
+      <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+    </div>
+  </div>
+  <div class="actions"><button class="btn btn-warning btn-full" onclick="startTournament()" {{if ne (len .Players) 8}}disabled{{end}}>Start Tournament ({{len .Players}}/8)</button></div>
+  {{end}}
+
+  {{if eq .Status "in_progress"}}
+  <div class="section-label">Matches</div>
+  {{$currentID := 0}}{{if .CurrentMatch}}{{$currentID = .CurrentMatch.ID}}{{end}}
+  {{range .Matches}}
+  <div class="match-admin-card {{.Status}} {{if eq .ID $currentID}}current{{end}}">
+    <div class="match-header {{if eq .Status "in_progress"}}live{{end}}">
+      {{if eq .Status "in_progress"}}&#9679; Now Playing{{else if eq .Status "completed"}}Completed{{else}}Pending{{end}}
+      — {{if eq .Round 1}}Semi-Final {{.Position}}{{else if eq .Position 2}}3rd Place{{else}}Final{{end}}
+    </div>
+    <div class="teams-line">
+      {{if .Team1}}{{.Team1.Name}}{{else}}TBD{{end}}
+      <span class="vs">vs</span>
+      {{if .Team2}}{{.Team2.Name}}{{else}}TBD{{end}}
+    </div>
+    {{if eq .Status "completed"}}
+    <div class="result-line">{{.Score1}} - {{.Score2}} &rarr; {{if .Winner}}{{.Winner.Name}} wins{{end}}</div>
+    {{else if and (eq .Status "in_progress") .Team1 .Team2}}
+    <div class="score-form">
+      <div class="score-row"><span class="team-label">{{.Team1.Name}}</span><input type="number" id="score1-{{.ID}}" min="0" max="3" value="0" inputmode="numeric"></div>
+      <div class="score-row"><span class="team-label">{{.Team2.Name}}</span><input type="number" id="score2-{{.ID}}" min="0" max="3" value="0" inputmode="numeric"></div>
+      <button class="btn btn-primary btn-full" onclick="recordScore({{.ID}})">Submit Score</button>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{end}}
+
+  {{if eq .Status "finished"}}{{if .Champion}}<div class="champion-card"><div class="trophy">&#127942;</div><div class="label">Champions</div><div class="name">{{.Champion.Name}}</div></div>{{end}}{{end}}
+
+  {{if or (eq .Status "in_progress") (eq .Status "finished")}}
+  <div class="actions"><button class="btn btn-danger btn-full" onclick="resetTournament()">Reset Tournament</button></div>
+  {{end}}
+</div>
+<div class="toast" id="toast"></div>
+<script>
+function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);localStorage.setItem('theme',n);document.getElementById('theme-icon').textContent=n==='dark'?'\u263E':'\u2600'}
+(function(){var s=localStorage.getItem('theme');if(s){document.documentElement.setAttribute('data-theme',s);document.getElementById('theme-icon').textContent=s==='dark'?'\u263E':'\u2600'}})();
+function showToast(m,e){var t=document.getElementById('toast');t.textContent=m;t.className='toast'+(e?' error':'');t.style.display='block';setTimeout(function(){t.style.display='none'},3000)}
+async function addPlayer(){var i=document.getElementById('player-name'),n=i.value.trim();if(!n)return;var r=await fetch('/api/players',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});if(!r.ok){showToast(await r.text(),true);return}i.value='';location.reload()}
+async function removePlayer(id){var r=await fetch('/api/players/'+id,{method:'DELETE'});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
+async function startTournament(){if(!confirm('Start? Random pairs will be created.'))return;var r=await fetch('/api/tournament/start',{method:'POST'});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
+async function resetTournament(){if(!confirm('Reset everything?'))return;var r=await fetch('/api/tournament/reset',{method:'POST'});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
+async function recordScore(id){var s1=parseInt(document.getElementById('score1-'+id).value)||0,s2=parseInt(document.getElementById('score2-'+id).value)||0;if(s1!==6&&s2!==6){showToast('One team must reach 3',true);return}if(s1===6&&s2===6){showToast('Both cannot be 6',true);return}var r=await fetch('/api/matches/'+id+'/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score1:s1,score2:s2})});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
+</script>
+</body>
+</html>

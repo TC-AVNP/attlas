@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
+<title>Bracket - Revista Maria Tennis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0c0c0c;--fg:#c0c0c0;--border:#333;--accent:#00ff00;--brand:#ff8700;--header:#ffff00;--muted:#8a8a8a;--surface:#1a1a1a;--danger:#ff5555;--warning:#ffcc00;--btn-on-accent:#000;--line:#555;--font-ui:'Inter',-apple-system,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace}
+[data-theme="light"]{--bg:#fafafa;--fg:#1a1a1a;--border:#e5e5e5;--accent:#007a00;--brand:#d56800;--header:#9a5200;--muted:#6b6b6b;--surface:#fff;--danger:#dc2626;--warning:#b45309;--btn-on-accent:#fff;--line:#bbb}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--fg)}
+.top-bar{position:fixed;top:0;left:0;right:0;z-index:10;display:flex;justify-content:space-between;align-items:center;padding:.5rem 1rem;background:var(--surface);border-bottom:1px solid var(--border)}
+.top-bar h1{font-family:var(--font-mono);color:var(--brand);font-size:1rem;font-weight:700}
+.top-bar a{font-family:var(--font-mono);font-size:.8rem;color:var(--muted);text-decoration:none;padding:.4rem .75rem;border:1px solid var(--border);border-radius:6px;background:var(--bg)}
+.top-bar .controls{display:flex;gap:.5rem;align-items:center}
+.top-bar button{width:2rem;height:2rem;border-radius:50%;border:1px solid var(--border);background:var(--bg);color:var(--fg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.9rem}
+canvas{display:block;position:fixed;top:0;left:0;width:100%;height:100%;touch-action:none;cursor:grab}
+canvas:active{cursor:grabbing}
+.hint{position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);font-family:var(--font-mono);font-size:.7rem;color:var(--muted);background:var(--surface);padding:.3rem .75rem;border-radius:4px;border:1px solid var(--border);pointer-events:none;z-index:5;transition:opacity .5s}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="top-bar">
+  <h1>Bracket</h1>
+  <div class="controls">
+    <button onclick="zoomIn()">+</button>
+    <button onclick="zoomOut()">&minus;</button>
+    <button onclick="resetView()">&#8634;</button>
+    <button onclick="toggleTheme()"><span id="theme-icon">&#9790;</span></button>
+    <a href="/">Back</a>
+  </div>
+</div>
+<div class="hint" id="hint">Pinch to zoom &middot; Drag to pan</div>
+
+<script>
+var MATCHES=[
+{{range .Matches}}
+{id:{{.ID}},r:{{.Round}},p:{{.Position}},
+t1:{{if .Team1}}"{{.Team1.Name}}"{{else}}null{{end}},
+t2:{{if .Team2}}"{{.Team2.Name}}"{{else}}null{{end}},
+s1:{{.Score1}},s2:{{.Score2}},
+w:{{if .Winner}}"{{.Winner.Name}}"{{else}}null{{end}},st:"{{.Status}}"},
+{{end}}
+];
+var HAS_CHAMP={{if .Champion}}true{{else}}false{{end}};
+var CHAMP_NAME={{if .Champion}}"{{.Champion.Name}}"{{else}}""{{end}};
+
+var canvas=document.getElementById('c'),ctx=canvas.getContext('2d'),dpr=window.devicePixelRatio||1;
+var BAR_H=44,MW=200,MH=60,PH=30,GAP=80,PAD=30,FS=13;
+var camX=0,camY=0,zoom=1,dragging=false,lx=0,ly=0,pDist=0;
+
+// Fixed layout positions for our 4-match bracket:
+// Semi 1 at top-left, Semi 2 at bottom-left
+// Final at top-right, 3rd Place at bottom-right
+var SEMI_GAP = 40; // gap between the two semis
+var FINAL_3RD_GAP = 30; // gap between final and 3rd place
+
+var totalH = 2*MH + SEMI_GAP + 50; // semis height
+var contentW = 2*MW + GAP + PAD*2 + (HAS_CHAMP?180:0);
+var contentH = totalH + PAD*2;
+
+// Match positions (fixed, not computed from tree)
+function getMatchPos(m) {
+  var sx = PAD; // semis x
+  var fx = PAD + MW + GAP; // finals x
+  var topY = PAD + 40;
+
+  if (m.r === 1 && m.p === 1) return {x: sx, y: topY}; // Semi 1
+  if (m.r === 1 && m.p === 2) return {x: sx, y: topY + MH + SEMI_GAP}; // Semi 2
+  if (m.r === 2 && m.p === 1) return {x: fx, y: topY + (MH + SEMI_GAP)/2 - MH/2 - FINAL_3RD_GAP/2 - MH/2 + MH/2}; // Final - centered between semis but shifted up
+  if (m.r === 2 && m.p === 2) return {x: fx, y: topY + MH + SEMI_GAP + MH/2 + 20}; // 3rd place - below
+  return {x: 0, y: 0};
+}
+
+// Recompute content size from actual positions
+(function(){
+  var maxX=0,maxY=0;
+  MATCHES.forEach(function(m){var p=getMatchPos(m);if(p.x+MW>maxX)maxX=p.x+MW;if(p.y+MH>maxY)maxY=p.y+MH});
+  contentW=maxX+PAD+(HAS_CHAMP?180:0);
+  contentH=maxY+PAD+20;
+})();
+
+function W(){return canvas.width/dpr}function H(){return canvas.height/dpr}
+function resize(){canvas.width=window.innerWidth*dpr;canvas.height=window.innerHeight*dpr;canvas.style.width=window.innerWidth+'px';canvas.style.height=window.innerHeight+'px';ctx.setTransform(dpr,0,0,dpr,0,0);fitView()}
+function fitView(){var w=W(),h=H()-BAR_H;var sx=(w-20)/contentW,sy=(h-20)/contentH;zoom=Math.min(sx,sy,2.5);camX=(w-contentW*zoom)/2;camY=BAR_H+(h-contentH*zoom)/2;draw()}
+function resetView(){fitView();hideHint()}
+function zoomIn(){applyZoom(1.3,W()/2,H()/2)}
+function zoomOut(){applyZoom(0.7,W()/2,H()/2)}
+function applyZoom(f,cx,cy){var nz=Math.max(.15,Math.min(5,zoom*f));camX=cx-(cx-camX)*(nz/zoom);camY=cy-(cy-camY)*(nz/zoom);zoom=nz;draw();hideHint()}
+
+function colors(){var s=getComputedStyle(document.documentElement),g=function(n){return s.getPropertyValue(n).trim()};return{bg:g('--bg'),fg:g('--fg'),border:g('--border'),accent:g('--accent'),brand:g('--brand'),header:g('--header'),muted:g('--muted'),surface:g('--surface'),line:g('--line')}}
+
+function draw(){
+  var w=W(),h=H(),c=colors();
+  ctx.clearRect(0,0,w,h);ctx.fillStyle=c.bg;ctx.fillRect(0,0,w,h);
+  ctx.save();ctx.translate(camX,camY);ctx.scale(zoom,zoom);
+
+  // Find matches by type
+  var semi1,semi2,final3,third;
+  MATCHES.forEach(function(m){
+    if(m.r===1&&m.p===1)semi1=m;if(m.r===1&&m.p===2)semi2=m;
+    if(m.r===2&&m.p===1)final3=m;if(m.r===2&&m.p===2)third=m;
+  });
+
+  // Labels
+  ctx.font='bold '+(FS-1)+'px "JetBrains Mono",monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=c.header;
+  if(semi1){var sp=getMatchPos(semi1);ctx.fillText('SEMI-FINALS',sp.x+MW/2,sp.y-14)}
+  if(final3){var fp=getMatchPos(final3);ctx.fillText('FINAL',fp.x+MW/2,fp.y-14)}
+  if(third){var tp=getMatchPos(third);ctx.fillText('3RD PLACE',tp.x+MW/2,tp.y-14)}
+
+  // Connector lines: semis to final
+  ctx.strokeStyle=c.line;ctx.lineWidth=2;
+  if(semi1&&final3){
+    var s1p=getMatchPos(semi1),fp2=getMatchPos(final3);
+    var jx=s1p.x+MW+GAP*0.35;
+    // Semi 1 -> junction
+    ctx.beginPath();ctx.moveTo(s1p.x+MW,s1p.y+MH/2);ctx.lineTo(jx,s1p.y+MH/2);ctx.stroke();
+    if(semi2){
+      var s2p=getMatchPos(semi2);
+      // Semi 2 -> junction
+      ctx.beginPath();ctx.moveTo(s2p.x+MW,s2p.y+MH/2);ctx.lineTo(jx,s2p.y+MH/2);ctx.stroke();
+      // Vertical
+      ctx.beginPath();ctx.moveTo(jx,s1p.y+MH/2);ctx.lineTo(jx,s2p.y+MH/2);ctx.stroke();
+      // Junction -> final
+      var midY=(s1p.y+MH/2+s2p.y+MH/2)/2;
+      ctx.beginPath();ctx.moveTo(jx,midY);ctx.lineTo(fp2.x,fp2.y+MH/2);ctx.stroke();
+    }
+  }
+
+  // Connector lines: semis to 3rd place (dashed)
+  if(semi1&&semi2&&third){
+    var s1p2=getMatchPos(semi1),s2p2=getMatchPos(semi2),tp2=getMatchPos(third);
+    ctx.strokeStyle=c.line;ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
+    var jx2=s1p2.x+MW+GAP*0.6;
+    ctx.beginPath();ctx.moveTo(s1p2.x+MW,s1p2.y+MH/2+8);ctx.lineTo(jx2,tp2.y+MH/2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(s2p2.x+MW,s2p2.y+MH/2-8);ctx.lineTo(jx2,tp2.y+MH/2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(jx2,tp2.y+MH/2);ctx.lineTo(tp2.x,tp2.y+MH/2);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw match boxes
+  MATCHES.forEach(function(m){
+    var pos=getMatchPos(m),x=pos.x,y=pos.y;
+    var live=m.st==='in_progress',done=m.st==='completed';
+    ctx.fillStyle=c.surface;ctx.strokeStyle=live?c.accent:c.border;ctx.lineWidth=live?2.5:1;
+    rrect(x,y,MW,MH,6);ctx.fill();ctx.stroke();
+    if(live){ctx.save();ctx.shadowColor=c.accent;ctx.shadowBlur=12;ctx.strokeStyle=c.accent;ctx.lineWidth=2.5;rrect(x,y,MW,MH,6);ctx.stroke();ctx.restore()}
+    ctx.strokeStyle=c.border;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+1,y+PH);ctx.lineTo(x+MW-1,y+PH);ctx.stroke();
+    ptext(x,y,m.t1,m.s1,done&&m.w===m.t1,done&&m.t1&&m.w!==m.t1,!m.t1&&!done,c);
+    ptext(x,y+PH,m.t2,m.s2,done&&m.w===m.t2,done&&m.t2&&m.w!==m.t2,!m.t2&&!done,c);
+    if(done){ctx.fillStyle=c.bg;ctx.globalAlpha=.25;rrect(x,y,MW,MH,6);ctx.fill();ctx.globalAlpha=1}
+  });
+
+  // Trophy next to final winner
+  if(HAS_CHAMP&&final3){
+    var fp3=getMatchPos(final3);
+    ctx.font='28px serif';ctx.textAlign='left';ctx.textBaseline='middle';
+    ctx.fillText('\uD83C\uDFC6',fp3.x+MW+16,fp3.y+MH/2);
+    ctx.font='bold '+FS+'px "JetBrains Mono",monospace';ctx.fillStyle=c.brand;
+    ctx.fillText(CHAMP_NAME,fp3.x+MW+50,fp3.y+MH/2);
+  }
+
+  ctx.restore();
+  // Top bar bg
+  ctx.fillStyle=c.surface;ctx.fillRect(0,0,w,BAR_H);
+  ctx.strokeStyle=c.border;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,BAR_H);ctx.lineTo(w,BAR_H);ctx.stroke();
+}
+
+function ptext(x,y,name,score,isW,isL,isTbd,c){
+  var tx=x+10,ty=y+PH/2,maxW=MW-34;
+  ctx.textAlign='left';ctx.textBaseline='middle';
+  if(isTbd){ctx.font='italic '+(FS-1)+'px "Inter",sans-serif';ctx.fillStyle=c.muted;ctx.fillText('TBD',tx,ty);return}
+  if(!name)return;
+  ctx.font=(isW?'bold ':'')+FS+'px "Inter",sans-serif';ctx.fillStyle=isW?c.accent:isL?c.muted:c.fg;
+  var dn=name;while(ctx.measureText(dn).width>maxW&&dn.length>2)dn=dn.slice(0,-1);if(dn!==name)dn+='..';
+  ctx.fillText(dn,tx,ty);
+  if(isL){var nw=ctx.measureText(dn).width;ctx.strokeStyle=c.muted;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(tx,ty);ctx.lineTo(tx+nw,ty);ctx.stroke()}
+  if((isW||isL)&&score!==undefined){ctx.font='bold '+FS+'px "JetBrains Mono",monospace';ctx.fillStyle=isW?c.accent:c.muted;ctx.textAlign='right';ctx.fillText(score.toString(),x+MW-10,ty)}
+}
+
+function rrect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.lineTo(x+w-r,y);ctx.quadraticCurveTo(x+w,y,x+w,y+r);ctx.lineTo(x+w,y+h-r);ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);ctx.lineTo(x+r,y+h);ctx.quadraticCurveTo(x,y+h,x,y+h-r);ctx.lineTo(x,y+r);ctx.quadraticCurveTo(x,y,x+r,y);ctx.closePath()}
+
+// Input
+canvas.addEventListener('mousedown',function(e){dragging=true;lx=e.clientX;ly=e.clientY});
+window.addEventListener('mousemove',function(e){if(!dragging)return;camX+=e.clientX-lx;camY+=e.clientY-ly;lx=e.clientX;ly=e.clientY;draw()});
+window.addEventListener('mouseup',function(){dragging=false});
+canvas.addEventListener('wheel',function(e){e.preventDefault();var r=canvas.getBoundingClientRect();applyZoom(e.deltaY<0?1.15:.87,e.clientX-r.left,e.clientY-r.top)},{passive:false});
+canvas.addEventListener('touchstart',function(e){if(e.touches.length===1){dragging=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY}else if(e.touches.length===2){dragging=false;pDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY)}},{passive:true});
+canvas.addEventListener('touchmove',function(e){e.preventDefault();if(e.touches.length===1&&dragging){camX+=e.touches[0].clientX-lx;camY+=e.touches[0].clientY-ly;lx=e.touches[0].clientX;ly=e.touches[0].clientY;draw();hideHint()}else if(e.touches.length===2){var nd=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);var r=canvas.getBoundingClientRect();applyZoom(nd/pDist,(e.touches[0].clientX+e.touches[1].clientX)/2-r.left,(e.touches[0].clientY+e.touches[1].clientY)/2-r.top);pDist=nd}},{passive:false});
+canvas.addEventListener('touchend',function(){dragging=false},{passive:true});
+var lastTap=0;canvas.addEventListener('touchend',function(){var now=Date.now();if(now-lastTap<300)resetView();lastTap=now},{passive:true});
+function hideHint(){var h=document.getElementById('hint');if(h)h.style.opacity='0'}
+function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);localStorage.setItem('theme',n);document.getElementById('theme-icon').textContent=n==='dark'?'\u263E':'\u2600';draw()}
+(function(){var s=localStorage.getItem('theme');if(s){document.documentElement.setAttribute('data-theme',s);document.getElementById('theme-icon').textContent=s==='dark'?'\u263E':'\u2600'}})();
+window.addEventListener('resize',resize);resize();
+setTimeout(function(){location.reload()},15000);
+</script>
+</body>
+</html>

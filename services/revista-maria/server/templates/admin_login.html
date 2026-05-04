@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Admin Login - Revista Maria Tennis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0c0c; --fg: #c0c0c0; --border: #333; --accent: #00ff00;
+  --brand: #ff8700; --muted: #8a8a8a; --surface: #1a1a1a; --danger: #ff5555;
+  --btn-on-accent: #000;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="light"] {
+  --bg: #fafafa; --fg: #1a1a1a; --border: #e5e5e5; --accent: #007a00;
+  --brand: #d56800; --muted: #6b6b6b; --surface: #ffffff; --danger: #dc2626;
+  --btn-on-accent: #ffffff;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--font-ui); font-size: 1rem; line-height: 1.6;
+  background: var(--bg); color: var(--fg);
+  display: flex; align-items: center; justify-content: center;
+  min-height: 100vh; min-height: 100dvh; padding: 1rem;
+  -webkit-font-smoothing: antialiased;
+}
+.login-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.5rem; width: 100%; max-width: 380px;
+}
+h1 {
+  font-family: var(--font-mono); color: var(--brand);
+  font-size: 1.25rem; font-weight: 700; text-align: center;
+  margin-bottom: 0.25rem;
+}
+.subtitle {
+  color: var(--muted); text-align: center; margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+input[type="password"] {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.75rem; font-family: var(--font-mono);
+  font-size: 1rem; width: 100%; margin-bottom: 1rem; min-height: 48px;
+  -webkit-appearance: none; appearance: none;
+}
+input:focus { outline: none; border-color: var(--accent); }
+.btn {
+  display: block; width: 100%; padding: 0.75rem 1.1rem; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 1rem; font-weight: 500;
+  border: none; cursor: pointer; background: var(--accent);
+  color: var(--btn-on-accent); text-align: center; min-height: 48px;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn:active { opacity: 0.7; }
+.error {
+  color: var(--danger); font-size: 0.9rem; text-align: center;
+  margin-bottom: 1rem;
+}
+.back-link {
+  display: block; text-align: center; margin-top: 1.25rem;
+  font-family: var(--font-mono); font-size: 0.85rem;
+  color: var(--muted); text-decoration: none; padding: 0.5rem;
+  -webkit-tap-highlight-color: transparent;
+}
+.back-link:active { color: var(--fg); }
+.theme-toggle {
+  position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
+  border-radius: 50%; border: 1px solid var(--border); background: var(--surface);
+  color: var(--fg); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 1rem;
+  -webkit-tap-highlight-color: transparent;
+}
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+  <span id="theme-icon">&#9790;</span>
+</button>
+
+<div class="login-card">
+  <h1>Revista Maria Tennis</h1>
+  <p class="subtitle">Admin Login</p>
+
+  {{if .}}{{if .Error}}
+  <p class="error">{{.Error}}</p>
+  {{end}}{{end}}
+
+  <form method="POST" action="/admin/login">
+    <input type="password" name="passphrase" placeholder="Enter passphrase" autofocus required autocomplete="current-password">
+    <button type="submit" class="btn">Enter</button>
+  </form>
+  <a href="/" class="back-link">Back to tournament</a>
+</div>
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  document.getElementById('theme-icon').textContent = next === 'dark' ? '\u263E' : '\u2600';
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved) {
+    document.documentElement.setAttribute('data-theme', saved);
+    document.getElementById('theme-icon').textContent = saved === 'dark' ? '\u263E' : '\u2600';
+  }
+})();
+</script>
+</body>
+</html>

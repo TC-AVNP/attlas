@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Revista Maria Tennis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0c0c0c;--fg:#c0c0c0;--border:#333;--accent:#00ff00;--brand:#ff8700;--header:#ffff00;--muted:#8a8a8a;--surface:#1a1a1a;--danger:#ff5555;--warning:#ffcc00;--btn-on-accent:#000;--font-ui:'Inter',-apple-system,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace}
+[data-theme="light"]{--bg:#fafafa;--fg:#1a1a1a;--border:#e5e5e5;--accent:#007a00;--brand:#d56800;--header:#9a5200;--muted:#6b6b6b;--surface:#fff;--danger:#dc2626;--warning:#b45309;--btn-on-accent:#fff}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{font-size:16px;-webkit-text-size-adjust:100%}body{font-family:var(--font-ui);font-size:1rem;line-height:1.6;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+.page{max-width:600px;margin:0 auto;padding:1rem}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:.5rem}
+h1{font-family:var(--font-mono);color:var(--brand);font-size:1.25rem;font-weight:700}
+.admin-link{display:inline-block;padding:.5rem 1rem;border-radius:6px;font-family:var(--font-mono);font-size:.85rem;font-weight:500;color:var(--fg);text-decoration:none;border:1px solid var(--border);background:var(--surface);white-space:nowrap}
+.status-bar{margin-bottom:1.25rem;display:flex;align-items:center;gap:.5rem}
+.status-badge{display:inline-block;padding:.3rem .75rem;border-radius:4px;font-family:var(--font-mono);font-size:.8rem;font-weight:500}
+.status-registration{background:var(--accent);color:var(--btn-on-accent)}.status-in_progress{background:var(--warning);color:#000}.status-finished{background:var(--brand);color:#000}
+.refresh-dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;background:var(--accent);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.section-label{font-family:var(--font-mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--header);margin-bottom:.75rem;padding-bottom:.5rem;border-bottom:1px solid var(--border)}
+.champion{text-align:center;padding:1.5rem 1rem;border:2px solid var(--brand);border-radius:8px;background:var(--surface);margin-bottom:1.25rem}
+.champion .trophy{font-size:2.5rem;margin-bottom:.25rem}
+.champion .name{font-size:1.3rem;font-weight:700;color:var(--brand);font-family:var(--font-mono)}
+.champion .label{color:var(--muted);font-size:.85rem}
+.current-match{border:2px solid var(--accent);background:var(--surface);padding:1.25rem;border-radius:8px;margin-bottom:.75rem}
+.current-match .label{font-family:var(--font-mono);color:var(--accent);font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.5rem}
+.current-match .stage-label{color:var(--muted);font-size:.7rem;text-transform:none;letter-spacing:0;margin-left:.3rem}
+.current-match .teams{font-size:1.1rem;font-weight:700;text-align:center;padding:.75rem 0}
+.current-match .vs{display:block;color:var(--muted);font-weight:400;font-size:.85rem;margin:.4rem 0}
+.next-match{border:1px solid var(--border);background:var(--surface);padding:1rem 1.25rem;border-radius:8px;margin-bottom:1.25rem}
+.next-match .label{font-family:var(--font-mono);color:var(--header);font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.25rem}
+.next-match .teams{font-size:1rem;font-weight:600;text-align:center}
+.next-match .vs{display:block;color:var(--muted);margin:.3rem 0;font-weight:400;font-size:.85rem}
+.players-grid{display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem}
+.player-chip{background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:.4rem .75rem;font-size:.9rem;font-family:var(--font-mono)}
+.empty-state{color:var(--muted);padding:1rem 0}
+.teams-grid{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.25rem}
+.team-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;display:flex;align-items:center;gap:.75rem}
+.team-num{font-family:var(--font-mono);font-size:.75rem;color:var(--muted);min-width:1.5rem}
+.team-name{font-weight:600;font-size:.95rem}
+.bracket-btn{display:block;width:100%;padding:1rem;border-radius:8px;font-family:var(--font-mono);font-size:1rem;font-weight:600;color:var(--btn-on-accent);background:var(--accent);border:none;cursor:pointer;text-align:center;text-decoration:none;min-height:56px;margin-bottom:1rem}
+.bracket-btn:active{opacity:.8}
+.theme-toggle{width:2.2rem;height:2.2rem;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--fg);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:1rem}
+@media(min-width:641px){.page{padding:2rem 1.5rem}h1{font-size:1.6rem}.current-match .teams{font-size:1.3rem}.current-match .vs,.next-match .vs{display:inline;margin:0 .5rem}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <h1>Revista Maria Tennis</h1>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <button class="theme-toggle" onclick="toggleTheme()"><span id="theme-icon">&#9790;</span></button>
+      <a href="/admin/login" class="admin-link">Admin</a>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <span class="status-badge status-{{.Status}}">
+      {{if eq .Status "registration"}}Registration Open
+      {{else if eq .Status "in_progress"}}Tournament In Progress
+      {{else if eq .Status "finished"}}Finished{{end}}
+    </span>
+    <span class="refresh-dot"></span>
+  </div>
+
+  {{if .Champion}}
+  <div class="champion">
+    <div class="trophy">&#127942;</div>
+    <div class="label">Champions</div>
+    <div class="name">{{.Champion.Name}}</div>
+  </div>
+  {{end}}
+
+  {{if .CurrentMatch}}
+  <div class="current-match">
+    <div class="label">&#9679; Now Playing
+      <span class="stage-label">{{if eq .CurrentMatch.Round 1}}(Semi-Final){{else if eq .CurrentMatch.Position 2}}(3rd Place){{else}}(Final){{end}}</span>
+    </div>
+    <div class="teams">
+      {{if .CurrentMatch.Team1}}{{.CurrentMatch.Team1.Name}}{{else}}TBD{{end}}
+      <span class="vs">vs</span>
+      {{if .CurrentMatch.Team2}}{{.CurrentMatch.Team2.Name}}{{else}}TBD{{end}}
+    </div>
+  </div>
+  {{end}}
+
+  {{if .NextMatch}}
+  <div class="next-match">
+    <div class="label">Up Next {{if eq .NextMatch.Round 1}}(Semi-Final){{else if eq .NextMatch.Position 2}}(3rd Place){{else}}(Final){{end}}</div>
+    <div class="teams">
+      {{if .NextMatch.Team1}}{{.NextMatch.Team1.Name}}{{else}}TBD{{end}}
+      <span class="vs">vs</span>
+      {{if .NextMatch.Team2}}{{.NextMatch.Team2.Name}}{{else}}TBD{{end}}
+    </div>
+  </div>
+  {{end}}
+
+  {{if eq .Status "registration"}}
+  <div class="section-label">Players ({{len .Players}}/8)</div>
+  {{if .Players}}
+  <div class="players-grid">
+    {{range .Players}}<span class="player-chip">{{.Name}}</span>{{end}}
+  </div>
+  {{else}}
+  <p class="empty-state">No players registered yet.</p>
+  {{end}}
+  {{end}}
+
+  {{if gt (len .Teams) 0}}
+  <div class="section-label">Teams</div>
+  <div class="teams-grid">
+    {{range $i, $t := .Teams}}
+    <div class="team-card">
+      <span class="team-num">{{add $i 1}}</span>
+      <span class="team-name">{{$t.Name}}</span>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if gt (len .Matches) 0}}
+  <a href="/bracket" class="bracket-btn">View Bracket</a>
+  {{end}}
+</div>
+<script>
+function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',n);localStorage.setItem('theme',n);document.getElementById('theme-icon').textContent=n==='dark'?'\u263E':'\u2600'}
+(function(){var s=localStorage.getItem('theme');if(s){document.documentElement.setAttribute('data-theme',s);document.getElementById('theme-icon').textContent=s==='dark'?'\u263E':'\u2600'}})();
+setTimeout(function(){location.reload()},10000);
+</script>
+</body>
+</html>
