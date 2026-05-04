@@ -1,0 +1,3 @@
+handle /afm* {
+	reverse_proxy localhost:7695
+}
