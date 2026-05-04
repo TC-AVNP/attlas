@@ -1,24 +1,54 @@
 {{ define "main" }}
-<a href="{{ .Site.BaseURL }}" class="back">&larr; cd ..</a>
-<h1>{{ .Title }}</h1>
-<div class="gray" style="margin-bottom: 0.4rem;">{{ .Date.Format "2006-01-02" }}</div>
-{{ with .Params.projects }}
-<div style="margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.4rem;">
-    {{ range . }}
-    <a href="{{ $.Site.BaseURL }}projects/{{ . | urlize }}/" style="background: #1a1a1a; padding: 0.1rem 0.5rem; border-radius: 3px; font-size: 0.8rem;">{{ . }}</a>
-    {{ end }}
+<div class="shell">
+    <div class="detail">
+        <a href="{{ .Site.BaseURL }}" class="back">← back to timeline</a>
+
+        <div class="detail-head">
+            <div class="detail-meta">
+                <span><b>{{ .Date.Format "2 Jan 2006" }}</b></span>
+                <span>{{ .Date.Format "Mon" }}</span>
+                {{ with .Params.duration }}<span>duration <b>{{ . }}</b></span>{{ end }}
+                {{ with .Params.day }}<span>day <b>{{ . }}</b></span>{{ end }}
+            </div>
+            <h1 class="detail-title">{{ .Title }}</h1>
+            {{ with .Summary }}<p class="detail-lede">{{ . | plainify | truncate 300 }}</p>{{ end }}
+            {{ with .Params.projects }}
+            <div class="detail-tags">
+                {{ range . }}
+                <a class="tag" href="{{ $.Site.BaseURL }}projects/{{ . | urlize }}/">
+                    <span class="proj-dot proj-dot-sm" style="background: var(--accent);"></span>
+                    {{ . }}
+                </a>
+                {{ end }}
+            </div>
+            {{ end }}
+        </div>
+
+        <div class="detail-body">
+            {{ $parts := split .RawContent "<!-- detailed -->" }}
+            {{ if gt (len $parts) 1 }}
+                {{ index $parts 0 | markdownify }}
+                <details class="llm-details">
+                    <summary>Full technical details (for LLMs / deep dives)</summary>
+                    <div>{{ index $parts 1 | markdownify }}</div>
+                </details>
+            {{ else }}
+                {{ .Content }}
+            {{ end }}
+
+            {{ with .Params.sessions }}
+            <div class="transcript">
+                <div class="transcript-label">Sessions</div>
+                {{ range . }}
+                <code class="transcript-uri">{{ .gcs }}</code>
+                <div class="transcript-meta">
+                    {{ with .start }}<span>{{ . }}</span>{{ end }}
+                    {{ with .end }}<span>→ {{ . }}</span>{{ end }}
+                </div>
+                {{ end }}
+            </div>
+            {{ end }}
+        </div>
+    </div>
 </div>
-{{ else }}
-<div style="margin-bottom: 1.5rem;"></div>
-{{ end }}
-{{ $parts := split .RawContent "<!-- detailed -->" }}
-{{ if gt (len $parts) 1 }}
-  {{ index $parts 0 | markdownify }}
-  <details class="llm-details">
-    <summary>Full technical details (for LLMs / deep dives)</summary>
-    {{ index $parts 1 | markdownify }}
-  </details>
-{{ else }}
-  {{ .Content }}
-{{ end }}
 {{ end }}

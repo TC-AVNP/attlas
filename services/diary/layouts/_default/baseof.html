@@ -3,54 +3,162 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ if .IsHome }}attlas{{ else }}attlas — {{ .Title }}{{ end }}</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'JetBrains Mono', monospace;
-               background: #0c0c0c; color: #c0c0c0; line-height: 1.7; font-size: 14px; }
-        .container { max-width: 900px; margin: 0 auto; padding: 1.5rem; }
-        a { color: #00ff00; text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        h1 { color: #ff8700; font-size: 1.4rem; font-weight: 700; }
-        h2 { color: #ffff00; font-size: 1.1rem; margin: 1.8rem 0 0.6rem;
-             border-bottom: 1px solid #333; padding-bottom: 0.3rem; }
-        h3 { color: #ff8700; font-size: 1rem; margin: 1.2rem 0 0.4rem; }
-        p { margin-bottom: 0.8rem; }
-        ul, ol { margin: 0.4rem 0 0.8rem 1.5rem; }
-        li { margin-bottom: 0.2rem; }
-        code { background: #1a1a1a; padding: 0.1rem 0.4rem; border-radius: 2px;
-               color: #00ff00; font-family: inherit; font-size: 0.95em; }
-        strong { color: #ff8700; }
-        em { color: #8a8a8a; font-style: normal; }
-        blockquote { border-left: 3px solid #ff8700; padding-left: 1rem; color: #8a8a8a; margin: 0.8rem 0; }
-        .prompt { color: #ff8700; }
-        .path { color: #00ff00; }
-        .gray { color: #8a8a8a; }
-        .header { padding: 1rem 0; margin-bottom: 1rem; border-bottom: 1px solid #333; }
-        .header-line { display: flex; align-items: baseline; gap: 0.5rem; }
-        .header a { color: #ff8700; font-size: 1.2rem; font-weight: 700; }
-        .header .gray { font-size: 0.85rem; }
-        .back { display: inline-block; margin-bottom: 1rem; color: #8a8a8a; font-size: 0.85rem; }
-        .back:hover { color: #00ff00; }
-        hr { border: none; border-top: 1px solid #333; margin: 1.5rem 0; }
-        table { border-collapse: collapse; width: 100%; margin: 0.8rem 0; }
-        th { color: #ff8700; text-align: left; border-bottom: 1px solid #333; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
-        td { border-bottom: 1px solid #1a1a1a; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
-        .llm-details { margin-top: 2rem; border-top: 1px solid #333; padding-top: 1rem; }
-        .llm-details summary { color: #8a8a8a; cursor: pointer; font-size: 0.85rem; }
-        .llm-details summary:hover { color: #00ff00; }
-    </style>
+    <title>{{ if .IsHome }}diary — commonlisp6{{ else }}{{ .Title }} — diary{{ end }}</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&family=Inter+Tight:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="{{ "css/styles.css" | relURL }}">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <a href="{{ .Site.BaseURL }}" style="text-decoration: none; color: inherit;">
-                <span class="prompt">Attlas diary</span>
-                <span>🚀</span>
+    <nav class="nav">
+        <div class="nav-inner">
+            <a class="brand" href="{{ .Site.BaseURL }}">
+                <span class="brand-prompt">commonlisp6</span>
+                <span class="brand-arrow">@</span>
+                <span class="brand-tilde">attlas</span>
+                <span class="brand-arrow">:</span>
+                <span class="brand-name">~/diary</span>
+                <span class="brand-cursor"></span>
             </a>
+            <div class="nav-links">
+                <a class="nav-link{{ if .IsHome }} is-active{{ end }}" href="{{ .Site.BaseURL }}">timeline</a>
+                {{ range where .Site.Pages "Layout" "catalog" }}
+                <a class="nav-link{{ if eq $.RelPermalink .RelPermalink }} is-active{{ end }}" href="{{ .RelPermalink }}">{{ .Title | lower }}</a>
+                {{ end }}
+                <a class="nav-link{{ if eq .Section "projects" }} is-active{{ end }}" href="{{ "projects/" | relURL }}">projects</a>
+            </div>
+            <button class="nav-search" onclick="openPalette()">
+                <span>search...</span>
+                <kbd>&#8984;K</kbd>
+            </button>
+            <button class="theme-switch" onclick="cycleTheme()" id="theme-btn">midnight</button>
         </div>
-        {{ block "main" . }}{{ end }}
+    </nav>
+
+    {{ block "main" . }}{{ end }}
+
+    <footer class="foot">
+        <span>attlas.uk/diary · hugo + mcp · {{ len (where .Site.RegularPages "Layout" "ne" "catalog") }} entries · transcripts in europe-west1</span>
+    </footer>
+
+    <!-- search palette -->
+    <div class="palette-bg hidden" id="palette-bg" onclick="closePalette()">
+        <div class="palette" onclick="event.stopPropagation()">
+            <input class="palette-input" id="palette-input" placeholder="search entries, projects..." autocomplete="off">
+            <div class="palette-list" id="palette-list"></div>
+            <div class="palette-foot">
+                <span><kbd>&uarr;&darr;</kbd> navigate</span>
+                <span><kbd>&crarr;</kbd> open</span>
+                <span><kbd>esc</kbd> close</span>
+            </div>
+        </div>
     </div>
+
+    <!-- search index -->
+    <script>
+    var SEARCH_INDEX = [
+        {{ $entries := where .Site.RegularPages "Layout" "ne" "catalog" }}
+        {{ range $entries }}
+        { kind: "entry", title: {{ .Title }}, url: {{ .RelPermalink }}, meta: {{ .Date.Format "2006-01-02" }}, projects: {{ with .Params.projects }}{{ jsonify . }}{{ else }}[]{{ end }} },
+        {{ end }}
+        {{ range where .Site.Pages "Layout" "catalog" }}
+        { kind: "catalog", title: {{ .Title }}, url: {{ .RelPermalink }}, meta: "catalog" },
+        {{ end }}
+        {{ range .Site.Taxonomies.projects.Alphabetical }}
+        { kind: "project", title: {{ .Page.Title }}, url: {{ .Page.RelPermalink }}, meta: "{{ .Count }} entries" },
+        {{ end }}
+    ];
+    </script>
+
+    <script>
+        /* theme */
+        var themes = ["midnight", "phosphor", "paper"];
+        var ti = parseInt(localStorage.getItem("diary-theme-idx") || "0");
+        applyTheme();
+        function cycleTheme() { ti = (ti + 1) % themes.length; localStorage.setItem("diary-theme-idx", ti); applyTheme(); }
+        function applyTheme() {
+            var t = themes[ti];
+            if (t === "midnight") document.documentElement.removeAttribute("data-theme");
+            else document.documentElement.setAttribute("data-theme", t);
+            var btn = document.getElementById("theme-btn");
+            if (btn) btn.textContent = t;
+        }
+
+        /* search palette */
+        var paletteActive = 0;
+
+        function openPalette() {
+            var bg = document.getElementById("palette-bg");
+            bg.classList.remove("hidden");
+            var inp = document.getElementById("palette-input");
+            inp.value = "";
+            paletteActive = 0;
+            renderResults("");
+            setTimeout(function() { inp.focus(); }, 30);
+        }
+        function closePalette() {
+            document.getElementById("palette-bg").classList.add("hidden");
+        }
+
+        function renderResults(q) {
+            var list = document.getElementById("palette-list");
+            var ql = q.toLowerCase().trim();
+            var results;
+            if (!ql) {
+                results = SEARCH_INDEX.filter(function(r) { return r.kind === "entry"; }).slice(0, 6);
+            } else {
+                results = SEARCH_INDEX.filter(function(r) {
+                    var hay = r.title.toLowerCase() + " " + (r.projects || []).join(" ");
+                    return hay.indexOf(ql) !== -1;
+                }).slice(0, 12);
+            }
+            if (paletteActive >= results.length) paletteActive = Math.max(0, results.length - 1);
+
+            if (results.length === 0) {
+                list.innerHTML = '<div class="palette-empty">no matches</div>';
+                return;
+            }
+            var html = "";
+            for (var i = 0; i < results.length; i++) {
+                var r = results[i];
+                var cls = "palette-row" + (i === paletteActive ? " is-active" : "");
+                html += '<a class="' + cls + '" href="' + r.url + '" data-idx="' + i + '">'
+                    + '<span class="pr-kind">' + r.kind + '</span>'
+                    + '<span class="pr-title">' + r.title + '</span>'
+                    + '<span class="pr-meta">' + r.meta + '</span>'
+                    + '</a>';
+            }
+            list.innerHTML = html;
+            window._paletteResults = results;
+        }
+
+        document.getElementById("palette-input").addEventListener("input", function(e) {
+            paletteActive = 0;
+            renderResults(e.target.value);
+        });
+
+        document.addEventListener("keydown", function(e) {
+            var bg = document.getElementById("palette-bg");
+            var isOpen = !bg.classList.contains("hidden");
+
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+                e.preventDefault();
+                if (isOpen) closePalette(); else openPalette();
+                return;
+            }
+            if (!isOpen) return;
+            if (e.key === "Escape") { closePalette(); return; }
+            var results = window._paletteResults || [];
+            if (e.key === "ArrowDown") { e.preventDefault(); paletteActive = Math.min(paletteActive + 1, results.length - 1); renderResults(document.getElementById("palette-input").value); }
+            if (e.key === "ArrowUp") { e.preventDefault(); paletteActive = Math.max(paletteActive - 1, 0); renderResults(document.getElementById("palette-input").value); }
+            if (e.key === "Enter") {
+                e.preventDefault();
+                var r = results[paletteActive];
+                if (r) window.location.href = r.url;
+            }
+        });
+    </script>
 </body>
 </html>

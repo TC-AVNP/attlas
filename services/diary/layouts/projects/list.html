@@ -1,12 +1,22 @@
 {{ define "main" }}
-<a href="{{ .Site.BaseURL }}" class="back">&larr; cd ..</a>
-<h1>Projects</h1>
-<div style="margin-top: 1rem;">
-{{ range .Pages.ByTitle }}
-<div style="margin-bottom: 0.6rem;">
-    <a href="{{ .RelPermalink }}">{{ .Title }}</a>
-    <span class="gray">({{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }})</span>
-</div>
-{{ end }}
+<div class="shell">
+    <header class="proj-head">
+        <a href="{{ .Site.BaseURL }}" class="back">← back to timeline</a>
+        <div class="proj-head-eyebrow">taxonomy · petboard projects</div>
+        <h1 class="proj-head-title" style="font-size: clamp(48px, 7vw, 80px);">projects</h1>
+        <p class="proj-head-blurb">{{ len .Pages }} projects tracked. Each one links to every diary session where it was worked on.</p>
+    </header>
+
+    <div class="proj-index">
+        {{ range .Pages.ByTitle }}
+        <a class="proj-index-card" href="{{ .RelPermalink }}">
+            <span class="proj-index-name">
+                <span class="proj-dot" style="background: var(--accent);"></span>
+                {{ .Title }}
+            </span>
+            <span class="proj-index-count">{{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }}</span>
+        </a>
+        {{ end }}
+    </div>
 </div>
 {{ end }}

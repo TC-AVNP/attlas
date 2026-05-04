@@ -1,14 +1,53 @@
 {{ define "main" }}
-<a href="{{ .Site.BaseURL }}projects/" class="back">&larr; cd ../projects</a>
-<h1>{{ .Title }}</h1>
-<div class="gray" style="margin-bottom: 1.5rem;">{{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }}</div>
-{{ range .Pages.ByDate.Reverse }}
-<div style="margin-bottom: 1.2rem; padding: 0.8rem 0; border-bottom: 1px solid #222;">
-    <div>
-        <span class="gray">{{ .Date.Format "2006-01-02" }}</span>
-        <a href="{{ .RelPermalink }}">{{ .Title }}</a>
-    </div>
-    {{ with .Params.summary }}<div class="gray" style="margin-top: 0.3rem; font-size: 0.85rem;">{{ . }}</div>{{ end }}
+<div class="shell">
+    <header class="proj-head">
+        <a href="{{ "projects/" | relURL }}" class="back">← all projects</a>
+        <div class="proj-head-eyebrow">project · petboard slug</div>
+        <h1 class="proj-head-title">
+            <span class="proj-head-dot" style="background: var(--accent);"></span>
+            {{ .Title }}
+        </h1>
+        <div class="proj-head-stats">
+            <div>
+                <div class="stat-num">{{ len .Pages }}</div>
+                <div class="stat-label">sessions</div>
+            </div>
+            {{ with index (.Pages.ByDate.Reverse) 0 }}
+            <div>
+                <div class="stat-num">{{ .Date.Format "Jan 2" }}</div>
+                <div class="stat-label">last touched</div>
+            </div>
+            {{ end }}
+        </div>
+    </header>
+
+    <section class="section">
+        <header class="section-head">
+            <span class="section-num">§</span>
+            <h2 class="section-title">Sessions, <em>most recent first</em></h2>
+            <span class="section-aside">{{ len .Pages }} {{ if eq (len .Pages) 1 }}entry{{ else }}entries{{ end }}</span>
+        </header>
+
+        <div class="proj-blocks">
+            {{ range .Pages.ByDate.Reverse }}
+            <a class="proj-block-row" href="{{ .RelPermalink }}">
+                <div class="proj-block-date">
+                    <b>{{ .Date.Format "Jan 2" }}</b>
+                    <span>{{ .Date.Format "Mon" }} · {{ .Date.Format "06" }}</span>
+                    {{ with .Params.duration }}<span style="color: var(--ink-faint);">{{ . }}</span>{{ end }}
+                </div>
+                <div>
+                    <h3 class="proj-block-title">{{ .Title }}</h3>
+                    {{ with .Summary }}<p class="proj-block-summary">{{ . | plainify | truncate 200 }}</p>{{ end }}
+                    {{ with .Params.projects }}
+                    <div class="proj-block-foot">
+                        <span>also touched: {{ delimit . ", " }}</span>
+                    </div>
+                    {{ end }}
+                </div>
+            </a>
+            {{ end }}
+        </div>
+    </section>
 </div>
-{{ end }}
 {{ end }}

@@ -1,7 +1,12 @@
 {{ define "main" }}
-<a href="{{ .Site.BaseURL }}" class="back">&larr; cd ..</a>
-<h1>{{ .Title }}</h1>
-<div style="margin-top: 1rem;">
-{{ .Content }}
+<div class="shell">
+    <header class="proj-head">
+        <div class="proj-head-eyebrow">catalog</div>
+        <h1 class="proj-head-title" style="font-size: clamp(48px, 7vw, 80px);">{{ .Title | lower }}</h1>
+    </header>
+
+    <div class="detail-body" style="padding: 48px 0 96px; max-width: 100%;">
+        {{ .Content }}
+    </div>
 </div>
 {{ end }}
