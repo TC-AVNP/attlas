@@ -225,24 +225,41 @@ function OverviewTab({
         </section>
       )}
 
-      {/* Stats */}
+      {/* Features */}
       <section>
         <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-3">
-          Stats
+          Features
         </h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard label="Total features" value={features.length} />
+          <StatCard label="Total" value={features.length} />
           <StatCard label="Done" value={groups.done.length} color="text-emerald-400" />
           <StatCard label="In progress" value={groups.in_progress.length} color="text-amber-400" />
           <StatCard label="Backlog" value={groups.backlog.length} />
-          <StatCard label="Dropped" value={groups.dropped.length} color="text-neutral-600" />
-          <StatCard label="Time logged" value={formatHours(data.total_minutes)} />
-          <StatCard label="Created" value={formatDate(data.created_at)} />
-          <StatCard label="Stage" value={data.stage} />
-          {data.loc?.total && (
-            <StatCard label="Lines of code" value={data.loc.total.toLocaleString()} />
+          {groups.dropped.length > 0 && (
+            <StatCard label="Dropped" value={groups.dropped.length} color="text-neutral-600" />
           )}
         </div>
+      </section>
+
+      {/* Timeline */}
+      <section>
+        <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-3">
+          Timeline
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <StatCard label="Created" value={formatDate(data.created_at)} />
+          <StatCard label="Time logged" value={formatHours(data.total_minutes)} />
+          <StatCard label="Sessions" value={data.effort?.length ?? 0} />
+          <StatCard label="Stage" value={data.stage} />
+        </div>
+      </section>
+
+      {/* Technical */}
+      <section>
+        <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-3">
+          Technical
+        </h2>
+        <LOCCards loc={data.loc} />
       </section>
     </div>
   );
@@ -263,6 +280,56 @@ function StatCard({
       <div className={`mt-1 text-lg font-semibold ${color || "text-neutral-200"}`}>
         {value}
       </div>
+    </div>
+  );
+}
+
+const LANG_LABELS: Record<string, string> = {
+  go: "Go",
+  ts: "TypeScript",
+  tsx: "TypeScript",
+  js: "JavaScript",
+  sql: "SQL",
+  sh: "Shell",
+  py: "Python",
+  rs: "Rust",
+  dart: "Dart",
+  swift: "Swift",
+  css: "CSS",
+  html: "HTML",
+  tf: "Terraform",
+  md: "Markdown",
+  total: "Total",
+};
+
+function LOCCards({ loc }: { loc?: Record<string, number> }) {
+  if (!loc || !loc.total) {
+    return (
+      <div className="rounded border border-neutral-800 bg-neutral-900/30 p-3">
+        <div className="text-xs text-neutral-500 uppercase tracking-wider">Lines of code</div>
+        <div className="mt-1 text-lg font-semibold text-neutral-500">0</div>
+        <div className="text-xs text-neutral-600 mt-0.5">No code written yet</div>
+      </div>
+    );
+  }
+
+  const total = loc.total;
+  const langs = Object.entries(loc)
+    .filter(([k, v]) => k !== "total" && v > 0)
+    .sort((a, b) => b[1] - a[1]);
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-1">
+      <div className="flex-shrink-0 rounded border border-neutral-800 bg-neutral-900/30 p-3 min-w-[100px]">
+        <div className="text-xs text-neutral-500 uppercase tracking-wider">Total</div>
+        <div className="mt-1 text-lg font-semibold text-neutral-200">{total.toLocaleString()}</div>
+      </div>
+      {langs.map(([lang, count]) => (
+        <div key={lang} className="flex-shrink-0 rounded border border-neutral-800 bg-neutral-900/30 p-3 min-w-[100px]">
+          <div className="text-xs text-neutral-500 uppercase tracking-wider">{LANG_LABELS[lang] || lang}</div>
+          <div className="mt-1 text-lg font-semibold text-neutral-200">{count.toLocaleString()}</div>
+        </div>
+      ))}
     </div>
   );
 }
