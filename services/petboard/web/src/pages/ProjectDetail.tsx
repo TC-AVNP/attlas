@@ -100,6 +100,8 @@ export default function ProjectDetail() {
             {data.name}
           </h1>
           <PriorityPill priority={data.priority} />
+          <StagePill stage={data.stage} />
+          <InterestPill interest={data.interest} />
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -250,7 +252,6 @@ function OverviewTab({
           <StatCard label="Created" value={formatDate(data.created_at)} />
           <StatCard label="Time logged" value={formatHours(data.total_minutes)} />
           <StatCard label="Sessions" value={data.effort?.length ?? 0} />
-          <StatCard label="Stage" value={data.stage} />
         </div>
       </section>
 
@@ -262,6 +263,33 @@ function OverviewTab({
         <LOCCards loc={data.loc} />
       </section>
     </div>
+  );
+}
+
+function StagePill({ stage }: { stage: string }) {
+  const styles: Record<string, string> = {
+    idea: "border-purple-500/40 bg-purple-900/20 text-purple-300",
+    live: "border-emerald-500/40 bg-emerald-900/20 text-emerald-300",
+    completed: "border-neutral-500/40 bg-neutral-800/20 text-neutral-400",
+  };
+  return (
+    <span className={`px-2.5 py-0.5 text-xs rounded-full border ${styles[stage] || styles.idea}`}>
+      {stage}
+    </span>
+  );
+}
+
+function InterestPill({ interest }: { interest: string }) {
+  const styles: Record<string, { css: string; icon: string }> = {
+    excited: { css: "border-amber-500/40 bg-amber-900/20 text-amber-300", icon: "🔥" },
+    meh: { css: "border-neutral-500/40 bg-neutral-800/20 text-neutral-400", icon: "😐" },
+    bored: { css: "border-neutral-600/40 bg-neutral-900/20 text-neutral-600", icon: "😴" },
+  };
+  const s = styles[interest] || styles.meh;
+  return (
+    <span className={`px-2.5 py-0.5 text-xs rounded-full border ${s.css}`}>
+      {s.icon} {interest}
+    </span>
   );
 }
 
