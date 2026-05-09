@@ -5,11 +5,11 @@
 //   2. Backlog  — four-column kanban board + add-feature form
 //   3. Details  — project notes with human/LLM toggle + mermaid diagrams
 
-import { useState, useRef, useEffect } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Feature, Priority, Status, ProjectDetail as ProjectDetailType } from "../api/types";
+import type { Feature, Status, ProjectDetail as ProjectDetailType } from "../api/types";
 import PriorityPill from "../components/PriorityPill";
 import Markdown from "../components/Markdown";
 import { formatDate, formatHours, formatRelative } from "../lib/format";
@@ -22,13 +22,6 @@ const STATUS_LABEL: Record<Status, string> = {
 };
 
 const STATUS_ORDER: Status[] = ["backlog", "in_progress", "done", "dropped"];
-
-const STATUS_NEXT: Record<Status, Status> = {
-  backlog: "in_progress",
-  in_progress: "done",
-  done: "backlog",
-  dropped: "backlog",
-};
 
 const STATUS_BORDER: Record<Status, string> = {
   backlog: "border-neutral-700",
@@ -44,12 +37,6 @@ const STATUS_DOT: Record<Status, string> = {
   dropped: "bg-neutral-700",
 };
 
-const PRIORITY_NEXT: Record<Priority, Priority> = {
-  high: "medium",
-  medium: "low",
-  low: "high",
-};
-
 type Tab = "overview" | "backlog" | "details";
 
 const TABS: { id: Tab; label: string }[] = [
@@ -62,7 +49,6 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function ProjectDetail() {
   const { slug = "" } = useParams();
-  const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("overview");
 
   const { data, isLoading, error } = useQuery({
@@ -71,30 +57,7 @@ export default function ProjectDetail() {
     enabled: slug.length > 0,
   });
 
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["project", slug] });
-    queryClient.invalidateQueries({ queryKey: ["projects"] });
-  };
 
-  const updateProject = useMutation({
-    mutationFn: (body: Parameters<typeof api.updateProject>[1]) =>
-      api.updateProject(slug, body),
-    onSuccess: invalidate,
-  });
-
-  const updateFeature = useMutation({
-    mutationFn: ({ id, body }: { id: number; body: Parameters<typeof api.updateFeature>[1] }) =>
-      api.updateFeature(id, body),
-    onSuccess: invalidate,
-  });
-
-  const deleteFeature = useMutation({
-    mutationFn: (id: number) => api.deleteFeature(id),
-    onSuccess: invalidate,
-  });
-
-  const [editingProblem, setEditingProblem] = useState(false);
-  const [editingName, setEditingName] = useState(false);
   const [showHandoff, setShowHandoff] = useState(false);
 
   if (isLoading) {
@@ -133,33 +96,10 @@ export default function ProjectDetail() {
             style={{ backgroundColor: data.color }}
             aria-hidden
           />
-          {editingName ? (
-            <InlineEdit
-              initial={data.name}
-              onSave={(v) => {
-                if (v && v !== data.name) updateProject.mutate({ name: v });
-                setEditingName(false);
-              }}
-              onCancel={() => setEditingName(false)}
-              className="text-3xl font-semibold tracking-tight bg-neutral-900 border border-neutral-700 rounded px-2 py-0.5"
-            />
-          ) : (
-            <h1
-              className="text-3xl font-semibold tracking-tight cursor-text"
-              onClick={() => setEditingName(true)}
-              title="click to rename"
-            >
-              {data.name}
-            </h1>
-          )}
-          <button
-            type="button"
-            onClick={() => updateProject.mutate({ priority: PRIORITY_NEXT[data.priority] })}
-            className="cursor-pointer"
-            title="click to cycle priority"
-          >
-            <PriorityPill priority={data.priority} />
-          </button>
+          <h1 className="text-3xl font-semibold tracking-tight">
+            {data.name}
+          </h1>
+          <PriorityPill priority={data.priority} />
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
@@ -207,18 +147,11 @@ export default function ProjectDetail() {
               data={data}
               features={features}
               groups={groups}
-              editingProblem={editingProblem}
-              setEditingProblem={setEditingProblem}
-              updateProject={updateProject}
             />
           )}
 
           {tab === "backlog" && (
-            <BacklogTab
-              groups={groups}
-              updateFeature={updateFeature}
-              deleteFeature={deleteFeature}
-            />
+            <BacklogTab groups={groups} />
           )}
 
           {tab === "details" && <DetailsTab data={data} />}
@@ -238,16 +171,10 @@ function OverviewTab({
   data,
   features,
   groups,
-  editingProblem,
-  setEditingProblem,
-  updateProject,
 }: {
   data: ProjectDetailType;
   features: Feature[];
   groups: Record<Status, Feature[]>;
-  editingProblem: boolean;
-  setEditingProblem: (v: boolean) => void;
-  updateProject: { mutate: (body: any) => void };
 }) {
   return (
     <div className="max-w-3xl space-y-8">
@@ -256,26 +183,9 @@ function OverviewTab({
         <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
           Problem
         </h2>
-        {editingProblem ? (
-          <InlineEdit
-            multiline
-            initial={data.problem}
-            onSave={(v) => {
-              if (v.trim() && v !== data.problem) updateProject.mutate({ problem: v });
-              setEditingProblem(false);
-            }}
-            onCancel={() => setEditingProblem(false)}
-            className="w-full bg-neutral-900 border border-neutral-700 rounded p-3 text-neutral-200 leading-relaxed min-h-[120px]"
-          />
-        ) : (
-          <blockquote
-            className="border-l-2 border-neutral-700 pl-4 text-neutral-300 italic leading-relaxed cursor-text hover:border-neutral-500"
-            onClick={() => setEditingProblem(true)}
-            title="click to edit"
-          >
-            {data.problem}
-          </blockquote>
-        )}
+        <blockquote className="border-l-2 border-neutral-700 pl-4 text-neutral-300 italic leading-relaxed">
+          {data.problem}
+        </blockquote>
       </section>
 
       {/* What is this project + screenshot */}
@@ -357,33 +267,16 @@ function StatCard({
   );
 }
 
-function BacklogTab({
-  groups,
-  updateFeature,
-  deleteFeature,
-}: {
-  groups: Record<Status, Feature[]>;
-  updateFeature: { mutate: (args: { id: number; body: any }) => void };
-  deleteFeature: { mutate: (id: number) => void };
-}) {
+function BacklogTab({ groups }: { groups: Record<Status, Feature[]> }) {
   return (
-    <div>
-      {/* Four-column board */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {STATUS_ORDER.map((status) => (
-          <FeatureColumn
-            key={status}
-            status={status}
-            features={groups[status]}
-            onCycleStatus={(f) =>
-              updateFeature.mutate({ id: f.id, body: { status: STATUS_NEXT[f.status] } })
-            }
-            onDelete={(f) => {
-              if (confirm(`Delete "${f.title}"?`)) deleteFeature.mutate(f.id);
-            }}
-          />
-        ))}
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {STATUS_ORDER.map((status) => (
+        <FeatureColumn
+          key={status}
+          status={status}
+          features={groups[status]}
+        />
+      ))}
     </div>
   );
 }
@@ -443,13 +336,9 @@ function DetailsTab({ data }: { data: ProjectDetailType }) {
 function FeatureColumn({
   status,
   features,
-  onCycleStatus,
-  onDelete,
 }: {
   status: Status;
   features: Feature[];
-  onCycleStatus: (f: Feature) => void;
-  onDelete: (f: Feature) => void;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
 
@@ -466,7 +355,7 @@ function FeatureColumn({
         {features.map((f) => (
           <li
             key={f.id}
-            className={`group relative rounded border ${STATUS_BORDER[f.status]} bg-neutral-900/50 px-3 py-2 text-sm cursor-pointer`}
+            className={`rounded border ${STATUS_BORDER[f.status]} bg-neutral-900/50 px-3 py-2 text-sm cursor-pointer`}
             onClick={() => setExpanded(expanded === f.id ? null : f.id)}
           >
             <div className="text-neutral-200">{f.title}</div>
@@ -475,26 +364,8 @@ function FeatureColumn({
                 {f.description}
               </p>
             )}
-            <div className="mt-1 flex items-center justify-between text-xs text-neutral-500">
-              <span>{formatRelative(f.created_at)}</span>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onCycleStatus(f); }}
-                  className="px-1.5 py-0.5 rounded border border-neutral-700 hover:bg-neutral-800"
-                  title={`move to ${STATUS_NEXT[f.status]}`}
-                >
-                  →
-                </button>
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onDelete(f); }}
-                  className="px-1.5 py-0.5 rounded border border-neutral-700 hover:bg-red-900/50"
-                  title="delete"
-                >
-                  ×
-                </button>
-              </div>
+            <div className="mt-1 text-xs text-neutral-500">
+              {formatRelative(f.created_at)}
             </div>
           </li>
         ))}
@@ -503,60 +374,6 @@ function FeatureColumn({
   );
 }
 
-function InlineEdit({
-  initial,
-  onSave,
-  onCancel,
-  className,
-  multiline = false,
-}: {
-  initial: string;
-  onSave: (v: string) => void;
-  onCancel: () => void;
-  className?: string;
-  multiline?: boolean;
-}) {
-  const [value, setValue] = useState(initial);
-  const ref = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    ref.current?.focus();
-    if (ref.current && "select" in ref.current) {
-      (ref.current as HTMLInputElement).select?.();
-    }
-  }, []);
-
-  const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-    if (e.key === "Enter" && !multiline) { e.preventDefault(); onSave(value); }
-    if (e.key === "Enter" && multiline && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(value); }
-  };
-
-  if (multiline) {
-    return (
-      <textarea
-        ref={ref as React.RefObject<HTMLTextAreaElement>}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={() => onSave(value)}
-        onKeyDown={handleKey}
-        className={className}
-        rows={5}
-      />
-    );
-  }
-  return (
-    <input
-      ref={ref as React.RefObject<HTMLInputElement>}
-      type="text"
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={() => onSave(value)}
-      onKeyDown={handleKey}
-      className={className}
-    />
-  );
-}
 
 // ----- handoff modal ---------------------------------------------------------
 
