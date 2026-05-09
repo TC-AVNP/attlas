@@ -31,8 +31,11 @@ function ProjectCard({ project }: { project: Project }) {
   return (
     <Link
       to={`/p/${project.slug}`}
-      className="block rounded-lg border border-zinc-700/50 bg-zinc-800/60 p-3 hover:border-zinc-500/60 transition-colors"
+      className="relative block rounded-lg border border-zinc-700/50 bg-zinc-800/60 p-3 hover:border-zinc-500/60 transition-colors"
     >
+      {project.screenshot_url && (
+        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400" title="has screenshot" />
+      )}
       <div className="flex items-center gap-2 mb-1">
         <span
           className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
