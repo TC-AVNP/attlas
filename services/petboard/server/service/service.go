@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -79,7 +80,8 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 		where = ""
 	}
 	rows, err := s.DB.Query(`
-		SELECT p.id, p.slug, p.name, p.problem, p.description, p.priority,
+		SELECT p.id, p.slug, p.name, p.problem, p.description, p.description_llm,
+		       p.notes, p.notes_llm, p.screenshot_url, p.tags, p.priority,
 		       p.stage, p.interest, p.color, p.created_at, p.archived_at,
 		       p.repo_path, p.canvas_x, p.canvas_y
 		FROM projects p
@@ -94,12 +96,17 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	var projects []Project
 	for rows.Next() {
 		var p Project
+		var tagsJSON *string
 		if err := rows.Scan(
-			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
+			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
+			&p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &p.Priority,
 			&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
 			&p.RepoPath, &p.CanvasX, &p.CanvasY,
 		); err != nil {
 			return nil, err
+		}
+		if tagsJSON != nil {
+			_ = json.Unmarshal([]byte(*tagsJSON), &p.Tags)
 		}
 		projects = append(projects, p)
 	}
@@ -182,16 +189,22 @@ func (s *Service) effortTotals() (map[int64]int64, error) {
 // GetProject fetches a project by slug plus its features and effort log.
 func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	var p Project
+	var tagsJSON *string
 	err := s.DB.QueryRow(`
-		SELECT id, slug, name, problem, description, priority, stage, interest,
+		SELECT id, slug, name, problem, description, description_llm,
+		       notes, notes_llm, screenshot_url, tags, priority, stage, interest,
 		       color, created_at, archived_at, repo_path, canvas_x, canvas_y
 		FROM projects
 		WHERE slug = ?
 	`, slug).Scan(
-		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.Priority,
-		&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
+		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
+		&p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &p.Priority, &p.Stage, &p.Interest,
+		&p.Color, &p.CreatedAt, &p.ArchivedAt,
 		&p.RepoPath, &p.CanvasX, &p.CanvasY,
 	)
+	if tagsJSON != nil {
+		_ = json.Unmarshal([]byte(*tagsJSON), &p.Tags)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -231,7 +244,7 @@ func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 
 func (s *Service) featuresFor(projectID int64) ([]Feature, error) {
 	rows, err := s.DB.Query(`
-		SELECT id, project_id, title, description, status,
+		SELECT id, project_id, title, description, description_llm, status,
 		       created_at, started_at, completed_at, dropped_at
 		FROM features
 		WHERE project_id = ?
@@ -245,7 +258,7 @@ func (s *Service) featuresFor(projectID int64) ([]Feature, error) {
 	for rows.Next() {
 		var f Feature
 		if err := rows.Scan(
-			&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.Status,
+			&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.DescriptionLLM, &f.Status,
 			&f.CreatedAt, &f.StartedAt, &f.CompletedAt, &f.DroppedAt,
 		); err != nil {
 			return nil, err
@@ -325,10 +338,16 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 	}
 
 	now := s.now()
+	var tagsVal *string
+	if len(in.Tags) > 0 {
+		b, _ := json.Marshal(in.Tags)
+		s := string(b)
+		tagsVal = &s
+	}
 	res, err := s.DB.Exec(`
-		INSERT INTO projects (slug, name, problem, description, priority, stage, interest, color, repo_path, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, slug, in.Name, in.Problem, in.Description, in.Priority, stage, interest, color, in.RepoPath, now)
+		INSERT INTO projects (slug, name, problem, description, description_llm, notes, notes_llm, screenshot_url, tags, priority, stage, interest, color, repo_path, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, slug, in.Name, in.Problem, in.Description, in.DescriptionLLM, in.Notes, in.NotesLLM, in.ScreenshotURL, tagsVal, in.Priority, stage, interest, color, in.RepoPath, now)
 	if err != nil {
 		return nil, err
 	}
@@ -337,17 +356,22 @@ func (s *Service) CreateProject(in CreateProjectInput) (*Project, error) {
 		return nil, err
 	}
 	return &Project{
-		ID:          id,
-		Slug:        slug,
-		Name:        in.Name,
-		Problem:     in.Problem,
-		Description: in.Description,
-		Priority:    in.Priority,
-		Stage:       stage,
-		Interest:    interest,
-		Color:       color,
-		RepoPath:    in.RepoPath,
-		CreatedAt:   now,
+		ID:             id,
+		Slug:           slug,
+		Name:           in.Name,
+		Problem:        in.Problem,
+		Description:    in.Description,
+		DescriptionLLM: in.DescriptionLLM,
+		Notes:          in.Notes,
+		NotesLLM:       in.NotesLLM,
+		ScreenshotURL:  in.ScreenshotURL,
+		Tags:           in.Tags,
+		Priority:       in.Priority,
+		Stage:          stage,
+		Interest:       interest,
+		Color:          color,
+		RepoPath:       in.RepoPath,
+		CreatedAt:      now,
 	}, nil
 }
 
@@ -378,6 +402,27 @@ func (s *Service) UpdateProject(slug string, in UpdateProjectInput) (*ProjectDet
 	if in.Description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *in.Description)
+	}
+	if in.DescriptionLLM != nil {
+		sets = append(sets, "description_llm = ?")
+		args = append(args, *in.DescriptionLLM)
+	}
+	if in.Notes != nil {
+		sets = append(sets, "notes = ?")
+		args = append(args, *in.Notes)
+	}
+	if in.NotesLLM != nil {
+		sets = append(sets, "notes_llm = ?")
+		args = append(args, *in.NotesLLM)
+	}
+	if in.ScreenshotURL != nil {
+		sets = append(sets, "screenshot_url = ?")
+		args = append(args, *in.ScreenshotURL)
+	}
+	if in.Tags != nil {
+		b, _ := json.Marshal(*in.Tags)
+		sets = append(sets, "tags = ?")
+		args = append(args, string(b))
 	}
 	if in.Priority != nil {
 		if !ValidPriority(*in.Priority) {
@@ -504,9 +549,9 @@ func (s *Service) CreateFeature(projectSlug string, in CreateFeatureInput) (*Fea
 	}
 	now := s.now()
 	res, err := s.DB.Exec(`
-		INSERT INTO features (project_id, title, description, status, created_at)
-		VALUES (?, ?, ?, 'backlog', ?)
-	`, pid, in.Title, in.Description, now)
+		INSERT INTO features (project_id, title, description, description_llm, status, created_at)
+		VALUES (?, ?, ?, ?, 'backlog', ?)
+	`, pid, in.Title, in.Description, in.DescriptionLLM, now)
 	if err != nil {
 		return nil, err
 	}
@@ -515,12 +560,13 @@ func (s *Service) CreateFeature(projectSlug string, in CreateFeatureInput) (*Fea
 		return nil, err
 	}
 	return &Feature{
-		ID:          id,
-		ProjectID:   pid,
-		Title:       in.Title,
-		Description: in.Description,
-		Status:      StatusBacklog,
-		CreatedAt:   now,
+		ID:             id,
+		ProjectID:      pid,
+		Title:          in.Title,
+		Description:    in.Description,
+		DescriptionLLM: in.DescriptionLLM,
+		Status:         StatusBacklog,
+		CreatedAt:      now,
 	}, nil
 }
 
@@ -531,11 +577,11 @@ func (s *Service) UpdateFeature(id int64, in UpdateFeatureInput) (*Feature, erro
 	// Load the current feature so we can reason about the transition.
 	var f Feature
 	err := s.DB.QueryRow(`
-		SELECT id, project_id, title, description, status,
+		SELECT id, project_id, title, description, description_llm, status,
 		       created_at, started_at, completed_at, dropped_at
 		FROM features WHERE id = ?
 	`, id).Scan(
-		&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.Status,
+		&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.DescriptionLLM, &f.Status,
 		&f.CreatedAt, &f.StartedAt, &f.CompletedAt, &f.DroppedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -559,6 +605,10 @@ func (s *Service) UpdateFeature(id int64, in UpdateFeatureInput) (*Feature, erro
 	if in.Description != nil {
 		sets = append(sets, "description = ?")
 		args = append(args, *in.Description)
+	}
+	if in.DescriptionLLM != nil {
+		sets = append(sets, "description_llm = ?")
+		args = append(args, *in.DescriptionLLM)
 	}
 	if in.Status != nil {
 		next := *in.Status
@@ -611,11 +661,11 @@ func (s *Service) UpdateFeature(id int64, in UpdateFeatureInput) (*Feature, erro
 
 	// Return the fresh row so callers always see canonical state.
 	err = s.DB.QueryRow(`
-		SELECT id, project_id, title, description, status,
+		SELECT id, project_id, title, description, description_llm, status,
 		       created_at, started_at, completed_at, dropped_at
 		FROM features WHERE id = ?
 	`, id).Scan(
-		&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.Status,
+		&f.ID, &f.ProjectID, &f.Title, &f.Description, &f.DescriptionLLM, &f.Status,
 		&f.CreatedAt, &f.StartedAt, &f.CompletedAt, &f.DroppedAt,
 	)
 	if err != nil {

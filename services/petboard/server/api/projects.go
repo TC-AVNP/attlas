@@ -23,28 +23,38 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 // createProject handles POST /api/projects.
 func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string            `json:"name"`
-		Problem     string            `json:"problem"`
-		Priority    service.Priority  `json:"priority"`
-		Description *string           `json:"description"`
-		Color       *string           `json:"color"`
-		RepoPath    *string           `json:"repo_path"`
-		Stage       *service.Stage    `json:"stage"`
-		Interest    *service.Interest `json:"interest"`
+		Name           string            `json:"name"`
+		Problem        string            `json:"problem"`
+		Priority       service.Priority  `json:"priority"`
+		Description    *string           `json:"description"`
+		DescriptionLLM *string           `json:"description_llm"`
+		Notes          *string           `json:"notes"`
+		NotesLLM       *string           `json:"notes_llm"`
+		ScreenshotURL  *string           `json:"screenshot_url"`
+		Tags           []string          `json:"tags"`
+		Color          *string           `json:"color"`
+		RepoPath       *string           `json:"repo_path"`
+		Stage          *service.Stage    `json:"stage"`
+		Interest       *service.Interest `json:"interest"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
 		return
 	}
 	p, err := a.Svc.CreateProject(service.CreateProjectInput{
-		Name:        body.Name,
-		Problem:     body.Problem,
-		Priority:    body.Priority,
-		Description: body.Description,
-		Color:       body.Color,
-		RepoPath:    body.RepoPath,
-		Stage:       body.Stage,
-		Interest:    body.Interest,
+		Name:           body.Name,
+		Problem:        body.Problem,
+		Priority:       body.Priority,
+		Description:    body.Description,
+		DescriptionLLM: body.DescriptionLLM,
+		Notes:          body.Notes,
+		NotesLLM:       body.NotesLLM,
+		ScreenshotURL:  body.ScreenshotURL,
+		Tags:           body.Tags,
+		Color:          body.Color,
+		RepoPath:       body.RepoPath,
+		Stage:          body.Stage,
+		Interest:       body.Interest,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -69,34 +79,44 @@ func (a *API) getProject(w http.ResponseWriter, r *http.Request) {
 func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	var body struct {
-		Name        *string           `json:"name"`
-		Problem     *string           `json:"problem"`
-		Description *string           `json:"description"`
-		Priority    *service.Priority `json:"priority"`
-		Stage       *service.Stage    `json:"stage"`
-		Interest    *service.Interest `json:"interest"`
-		Color       *string           `json:"color"`
-		RepoPath    *string           `json:"repo_path"`
-		CanvasX     *float64          `json:"canvas_x"`
-		CanvasY     *float64          `json:"canvas_y"`
-		Archived    *bool             `json:"archived"`
+		Name           *string           `json:"name"`
+		Problem        *string           `json:"problem"`
+		Description    *string           `json:"description"`
+		DescriptionLLM *string           `json:"description_llm"`
+		Notes          *string           `json:"notes"`
+		NotesLLM       *string           `json:"notes_llm"`
+		ScreenshotURL  *string           `json:"screenshot_url"`
+		Tags           *[]string         `json:"tags"`
+		Priority       *service.Priority `json:"priority"`
+		Stage          *service.Stage    `json:"stage"`
+		Interest       *service.Interest `json:"interest"`
+		Color          *string           `json:"color"`
+		RepoPath       *string           `json:"repo_path"`
+		CanvasX        *float64          `json:"canvas_x"`
+		CanvasY        *float64          `json:"canvas_y"`
+		Archived       *bool             `json:"archived"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
 		return
 	}
 	detail, err := a.Svc.UpdateProject(slug, service.UpdateProjectInput{
-		Name:        body.Name,
-		Problem:     body.Problem,
-		Description: body.Description,
-		Priority:    body.Priority,
-		Stage:       body.Stage,
-		Interest:    body.Interest,
-		Color:       body.Color,
-		RepoPath:    body.RepoPath,
-		CanvasX:     body.CanvasX,
-		CanvasY:     body.CanvasY,
-		Archived:    body.Archived,
+		Name:           body.Name,
+		Problem:        body.Problem,
+		Description:    body.Description,
+		DescriptionLLM: body.DescriptionLLM,
+		Notes:          body.Notes,
+		NotesLLM:       body.NotesLLM,
+		ScreenshotURL:  body.ScreenshotURL,
+		Tags:           body.Tags,
+		Priority:       body.Priority,
+		Stage:          body.Stage,
+		Interest:       body.Interest,
+		Color:          body.Color,
+		RepoPath:       body.RepoPath,
+		CanvasX:        body.CanvasX,
+		CanvasY:        body.CanvasY,
+		Archived:       body.Archived,
 	})
 	if err != nil {
 		writeError(w, err)

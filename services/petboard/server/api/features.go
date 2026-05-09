@@ -10,16 +10,18 @@ import (
 func (a *API) createFeature(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	var body struct {
-		Title       string  `json:"title"`
-		Description *string `json:"description"`
+		Title          string  `json:"title"`
+		Description    *string `json:"description"`
+		DescriptionLLM *string `json:"description_llm"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
 		return
 	}
 	f, err := a.Svc.CreateFeature(slug, service.CreateFeatureInput{
-		Title:       body.Title,
-		Description: body.Description,
+		Title:          body.Title,
+		Description:    body.Description,
+		DescriptionLLM: body.DescriptionLLM,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -37,18 +39,20 @@ func (a *API) updateFeature(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title       *string         `json:"title"`
-		Description *string         `json:"description"`
-		Status      *service.Status `json:"status"`
+		Title          *string         `json:"title"`
+		Description    *string         `json:"description"`
+		DescriptionLLM *string         `json:"description_llm"`
+		Status         *service.Status `json:"status"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
 		return
 	}
 	f, err := a.Svc.UpdateFeature(id, service.UpdateFeatureInput{
-		Title:       body.Title,
-		Description: body.Description,
-		Status:      body.Status,
+		Title:          body.Title,
+		Description:    body.Description,
+		DescriptionLLM: body.DescriptionLLM,
+		Status:         body.Status,
 	})
 	if err != nil {
 		writeError(w, err)

@@ -17,6 +17,10 @@ export interface Project {
   name: string;
   problem: string;
   description?: string;
+  description_llm?: string;
+  notes?: string;
+  notes_llm?: string;
+  screenshot_url?: string;
   priority: Priority;
   stage: Stage;
   interest: Interest;
@@ -36,6 +40,7 @@ export interface Feature {
   project_id: number;
   title: string;
   description?: string;
+  description_llm?: string;
   status: Status;
   created_at: number;
   started_at?: number;

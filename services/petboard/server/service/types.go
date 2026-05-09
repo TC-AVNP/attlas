@@ -51,14 +51,19 @@ type Project struct {
 	Slug        string   `json:"slug"`
 	Name        string   `json:"name"`
 	Problem     string   `json:"problem"`
-	Description *string  `json:"description,omitempty"`
-	Priority    Priority `json:"priority"`
-	Stage       Stage    `json:"stage"`
-	Interest    Interest `json:"interest"`
-	Color       string   `json:"color"`
-	CreatedAt   int64    `json:"created_at"`
-	ArchivedAt  *int64   `json:"archived_at,omitempty"`
-	RepoPath    *string  `json:"repo_path,omitempty"`
+	Description    *string  `json:"description,omitempty"`
+	DescriptionLLM *string  `json:"description_llm,omitempty"`
+	Notes          *string  `json:"notes,omitempty"`
+	NotesLLM       *string  `json:"notes_llm,omitempty"`
+	ScreenshotURL  *string  `json:"screenshot_url,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	Priority       Priority `json:"priority"`
+	Stage          Stage    `json:"stage"`
+	Interest       Interest `json:"interest"`
+	Color          string   `json:"color"`
+	CreatedAt      int64    `json:"created_at"`
+	ArchivedAt     *int64   `json:"archived_at,omitempty"`
+	RepoPath       *string  `json:"repo_path,omitempty"`
 	CanvasX     *float64 `json:"canvas_x,omitempty"`
 	CanvasY     *float64 `json:"canvas_y,omitempty"`
 
@@ -71,9 +76,11 @@ type Project struct {
 type Feature struct {
 	ID          int64   `json:"id"`
 	ProjectID   int64   `json:"project_id"`
-	Title       string  `json:"title"`
-	Description *string `json:"description,omitempty"`
-	Status      Status  `json:"status"`
+	Title          string  `json:"title"`
+	Description    *string `json:"description,omitempty"`
+	DescriptionLLM *string `json:"description_llm,omitempty"`
+	Notes          *string `json:"notes,omitempty"`
+	Status         Status  `json:"status"`
 	CreatedAt   int64   `json:"created_at"`
 	StartedAt   *int64  `json:"started_at,omitempty"`
 	CompletedAt *int64  `json:"completed_at,omitempty"`
@@ -118,43 +125,55 @@ type ProjectDetail struct {
 // CreateProjectInput captures the fields required to create a project.
 // `Problem` is mandatory — validation is enforced in the service layer.
 type CreateProjectInput struct {
-	Name        string
-	Problem     string
-	Priority    Priority
-	Description *string
-	Color       *string // optional override; derived from slug if empty
-	RepoPath    *string
-	Stage       *Stage
-	Interest    *Interest
+	Name           string
+	Problem        string
+	Priority       Priority
+	Description    *string
+	DescriptionLLM *string
+	Notes          *string
+	NotesLLM       *string
+	ScreenshotURL  *string
+	Tags           []string
+	Color          *string // optional override; derived from slug if empty
+	RepoPath       *string
+	Stage          *Stage
+	Interest       *Interest
 }
 
 // UpdateProjectInput holds the nullable fields accepted by PATCH. Only
 // non-nil fields are applied.
 type UpdateProjectInput struct {
-	Name        *string
-	Problem     *string
-	Description *string
-	Priority    *Priority
-	Stage       *Stage
-	Interest    *Interest
-	Color       *string
-	RepoPath    *string
-	CanvasX     *float64
-	CanvasY     *float64
-	Archived    *bool
+	Name           *string
+	Problem        *string
+	Description    *string
+	DescriptionLLM *string
+	Notes          *string
+	NotesLLM       *string
+	ScreenshotURL  *string
+	Tags           *[]string
+	Priority       *Priority
+	Stage          *Stage
+	Interest       *Interest
+	Color          *string
+	RepoPath       *string
+	CanvasX        *float64
+	CanvasY        *float64
+	Archived       *bool
 }
 
 // CreateFeatureInput captures the fields required to create a feature.
 type CreateFeatureInput struct {
-	Title       string
-	Description *string
+	Title          string
+	Description    *string
+	DescriptionLLM *string
 }
 
 // UpdateFeatureInput is what PATCH /api/features/:id accepts.
 type UpdateFeatureInput struct {
-	Title       *string
-	Description *string
-	Status      *Status
+	Title          *string
+	Description    *string
+	DescriptionLLM *string
+	Status         *Status
 }
 
 // LogEffortInput is the payload for POST .../effort.

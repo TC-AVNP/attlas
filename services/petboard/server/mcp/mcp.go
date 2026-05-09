@@ -137,52 +137,63 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "create_project",
-			"description": "Create a new project. The 'problem' field is mandatory and must frame the real-world pain the project addresses (not the solution).",
+			"description": "Create a new project. IMPORTANT: All text content must have both a human version (concise, readable) and an LLM version (detailed, technical, for agents). 'description' is the human-readable 'what is this project' summary. 'description_llm' is the detailed version for agents. 'notes' is human-readable project details. 'notes_llm' is detailed technical/architecture notes for agents.",
 			"inputSchema": map[string]any{
 				"type":     "object",
 				"required": []string{"name", "problem", "priority"},
 				"properties": map[string]any{
-					"name":        map[string]any{"type": "string"},
-					"problem":     map[string]any{"type": "string"},
-					"priority":    map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
-					"description": map[string]any{"type": "string"},
-					"color":       map[string]any{"type": "string"},
-					"repo_path":   map[string]any{"type": "string"},
-					"stage":       map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
-					"interest":    map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
+					"name":            map[string]any{"type": "string"},
+					"problem":         map[string]any{"type": "string", "description": "The real-world pain this project addresses (not the solution)"},
+					"priority":        map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
+					"description":     map[string]any{"type": "string", "description": "Human-readable: what is this project, 2-3 sentences"},
+					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed project description with full context for agents"},
+					"notes":           map[string]any{"type": "string", "description": "Human-readable project details, architecture overview, key decisions"},
+					"notes_llm":       map[string]any{"type": "string", "description": "LLM version: detailed technical notes, implementation details, mermaid diagrams"},
+					"screenshot_url":  map[string]any{"type": "string", "description": "URL to a screenshot of the project homepage (if live)"},
+					"tags":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags for the project, e.g. [\"business_case\"]"},
+					"color":           map[string]any{"type": "string"},
+					"repo_path":       map[string]any{"type": "string"},
+					"stage":           map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
+					"interest":        map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
 				},
 			},
 		},
 		{
 			"name":        "update_project",
-			"description": "Patch fields of an existing project (slug-keyed).",
+			"description": "Patch fields of an existing project (slug-keyed). When updating description or notes, ALWAYS provide both the human and LLM versions together.",
 			"inputSchema": map[string]any{
 				"type":     "object",
 				"required": []string{"slug"},
 				"properties": map[string]any{
-					"slug":        map[string]any{"type": "string"},
-					"name":        map[string]any{"type": "string"},
-					"problem":     map[string]any{"type": "string"},
-					"description": map[string]any{"type": "string"},
-					"priority":    map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
-					"color":       map[string]any{"type": "string"},
-					"repo_path":   map[string]any{"type": "string"},
-					"stage":       map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
-					"interest":    map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
-					"archived":    map[string]any{"type": "boolean"},
+					"slug":            map[string]any{"type": "string"},
+					"name":            map[string]any{"type": "string"},
+					"problem":         map[string]any{"type": "string"},
+					"description":     map[string]any{"type": "string", "description": "Human-readable: what is this project, 2-3 sentences"},
+					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed project description with full context for agents"},
+					"notes":           map[string]any{"type": "string", "description": "Human-readable project details, architecture overview, key decisions"},
+					"notes_llm":       map[string]any{"type": "string", "description": "LLM version: detailed technical notes, implementation details, mermaid diagrams"},
+					"screenshot_url":  map[string]any{"type": "string", "description": "URL to a screenshot of the project homepage (if live)"},
+					"tags":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags for the project, e.g. [\"business_case\"]"},
+					"priority":        map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
+					"color":           map[string]any{"type": "string"},
+					"repo_path":       map[string]any{"type": "string"},
+					"stage":           map[string]any{"type": "string", "enum": []string{"idea", "live", "completed"}},
+					"interest":        map[string]any{"type": "string", "enum": []string{"excited", "meh", "bored"}},
+					"archived":        map[string]any{"type": "boolean"},
 				},
 			},
 		},
 		{
 			"name":        "add_feature",
-			"description": "Append a feature to a project's backlog.",
+			"description": "Append a feature to a project's backlog. ALWAYS provide both description (human-readable, concise) and description_llm (detailed, for agents).",
 			"inputSchema": map[string]any{
 				"type":     "object",
 				"required": []string{"slug", "title"},
 				"properties": map[string]any{
-					"slug":        map[string]any{"type": "string"},
-					"title":       map[string]any{"type": "string"},
-					"description": map[string]any{"type": "string"},
+					"slug":            map[string]any{"type": "string"},
+					"title":           map[string]any{"type": "string"},
+					"description":     map[string]any{"type": "string", "description": "Human-readable: what this feature does, 1-2 sentences"},
+					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed feature description with full context for agents"},
 				},
 			},
 		},
@@ -200,14 +211,15 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "update_feature",
-			"description": "Patch fields of an existing feature (title and/or description).",
+			"description": "Patch fields of an existing feature. When updating description, ALWAYS provide both the human and LLM versions together.",
 			"inputSchema": map[string]any{
 				"type":     "object",
 				"required": []string{"feature_id"},
 				"properties": map[string]any{
-					"feature_id":  map[string]any{"type": "integer"},
-					"title":       map[string]any{"type": "string"},
-					"description": map[string]any{"type": "string"},
+					"feature_id":      map[string]any{"type": "integer"},
+					"title":           map[string]any{"type": "string"},
+					"description":     map[string]any{"type": "string", "description": "Human-readable: what this feature does, 1-2 sentences"},
+					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed feature description with full context for agents"},
 				},
 			},
 		},
@@ -307,27 +319,37 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 
 	case "create_project":
 		var args struct {
-			Name        string            `json:"name"`
-			Problem     string            `json:"problem"`
-			Priority    service.Priority  `json:"priority"`
-			Description *string           `json:"description"`
-			Color       *string           `json:"color"`
-			RepoPath    *string           `json:"repo_path"`
-			Stage       *service.Stage    `json:"stage"`
-			Interest    *service.Interest `json:"interest"`
+			Name           string            `json:"name"`
+			Problem        string            `json:"problem"`
+			Priority       service.Priority  `json:"priority"`
+			Description    *string           `json:"description"`
+			DescriptionLLM *string           `json:"description_llm"`
+			Notes          *string           `json:"notes"`
+			NotesLLM       *string           `json:"notes_llm"`
+			ScreenshotURL  *string           `json:"screenshot_url"`
+			Tags           []string          `json:"tags"`
+			Color          *string           `json:"color"`
+			RepoPath       *string           `json:"repo_path"`
+			Stage          *service.Stage    `json:"stage"`
+			Interest       *service.Interest `json:"interest"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
 		}
 		p, err := h.Svc.CreateProject(service.CreateProjectInput{
-			Name:        args.Name,
-			Problem:     args.Problem,
-			Priority:    args.Priority,
-			Description: args.Description,
-			Color:       args.Color,
-			RepoPath:    args.RepoPath,
-			Stage:       args.Stage,
-			Interest:    args.Interest,
+			Name:           args.Name,
+			Problem:        args.Problem,
+			Priority:       args.Priority,
+			Description:    args.Description,
+			DescriptionLLM: args.DescriptionLLM,
+			Notes:          args.Notes,
+			NotesLLM:       args.NotesLLM,
+			ScreenshotURL:  args.ScreenshotURL,
+			Tags:           args.Tags,
+			Color:          args.Color,
+			RepoPath:       args.RepoPath,
+			Stage:          args.Stage,
+			Interest:       args.Interest,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
@@ -339,30 +361,40 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 
 	case "update_project":
 		var args struct {
-			Slug        string            `json:"slug"`
-			Name        *string           `json:"name"`
-			Problem     *string           `json:"problem"`
-			Description *string           `json:"description"`
-			Priority    *service.Priority `json:"priority"`
-			Stage       *service.Stage    `json:"stage"`
-			Interest    *service.Interest `json:"interest"`
-			Color       *string           `json:"color"`
-			RepoPath    *string           `json:"repo_path"`
-			Archived    *bool             `json:"archived"`
+			Slug           string            `json:"slug"`
+			Name           *string           `json:"name"`
+			Problem        *string           `json:"problem"`
+			Description    *string           `json:"description"`
+			DescriptionLLM *string           `json:"description_llm"`
+			Notes          *string           `json:"notes"`
+			NotesLLM       *string           `json:"notes_llm"`
+			ScreenshotURL  *string           `json:"screenshot_url"`
+			Tags           *[]string         `json:"tags"`
+			Priority       *service.Priority `json:"priority"`
+			Stage          *service.Stage    `json:"stage"`
+			Interest       *service.Interest `json:"interest"`
+			Color          *string           `json:"color"`
+			RepoPath       *string           `json:"repo_path"`
+			Archived       *bool             `json:"archived"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
 		}
 		p, err := h.Svc.UpdateProject(args.Slug, service.UpdateProjectInput{
-			Name:        args.Name,
-			Problem:     args.Problem,
-			Description: args.Description,
-			Priority:    args.Priority,
-			Stage:       args.Stage,
-			Interest:    args.Interest,
-			Color:       args.Color,
-			RepoPath:    args.RepoPath,
-			Archived:    args.Archived,
+			Name:           args.Name,
+			Problem:        args.Problem,
+			Description:    args.Description,
+			DescriptionLLM: args.DescriptionLLM,
+			Notes:          args.Notes,
+			NotesLLM:       args.NotesLLM,
+			ScreenshotURL:  args.ScreenshotURL,
+			Tags:           args.Tags,
+			Priority:       args.Priority,
+			Stage:          args.Stage,
+			Interest:       args.Interest,
+			Color:          args.Color,
+			RepoPath:       args.RepoPath,
+			Archived:       args.Archived,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
@@ -374,16 +406,18 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 
 	case "add_feature":
 		var args struct {
-			Slug        string  `json:"slug"`
-			Title       string  `json:"title"`
-			Description *string `json:"description"`
+			Slug           string  `json:"slug"`
+			Title          string  `json:"title"`
+			Description    *string `json:"description"`
+			DescriptionLLM *string `json:"description_llm"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
 		}
 		f, err := h.Svc.CreateFeature(args.Slug, service.CreateFeatureInput{
-			Title:       args.Title,
-			Description: args.Description,
+			Title:          args.Title,
+			Description:    args.Description,
+			DescriptionLLM: args.DescriptionLLM,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
@@ -415,16 +449,18 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 
 	case "update_feature":
 		var args struct {
-			FeatureID   int64   `json:"feature_id"`
-			Title       *string `json:"title"`
-			Description *string `json:"description"`
+			FeatureID      int64   `json:"feature_id"`
+			Title          *string `json:"title"`
+			Description    *string `json:"description"`
+			DescriptionLLM *string `json:"description_llm"`
 		}
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return nil, err
 		}
 		f, err := h.Svc.UpdateFeature(args.FeatureID, service.UpdateFeatureInput{
-			Title:       args.Title,
-			Description: args.Description,
+			Title:          args.Title,
+			Description:    args.Description,
+			DescriptionLLM: args.DescriptionLLM,
 		})
 		if err == nil && h.Events != nil {
 			h.Events.Publish(events.Event{
