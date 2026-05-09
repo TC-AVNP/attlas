@@ -176,6 +176,7 @@ func toolDefinitions() []map[string]any {
 					"notes_llm":       map[string]any{"type": "string", "description": "LLM version: detailed technical notes, implementation details, mermaid diagrams"},
 					"screenshot_url":  map[string]any{"type": "string", "description": "URL to a screenshot of the project homepage (if live)"},
 					"tags":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags for the project, e.g. [\"business_case\"]"},
+					"loc":             map[string]any{"type": "object", "description": "Lines of code breakdown, e.g. {\"go\": 15940, \"ts\": 6992, \"total\": 51432}"},
 					"priority":        map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"color":           map[string]any{"type": "string"},
 					"repo_path":       map[string]any{"type": "string"},
@@ -374,8 +375,9 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Notes          *string           `json:"notes"`
 			NotesLLM       *string           `json:"notes_llm"`
 			ScreenshotURL  *string           `json:"screenshot_url"`
-			Tags           *[]string         `json:"tags"`
-			Priority       *service.Priority `json:"priority"`
+			Tags           *[]string            `json:"tags"`
+			LOC            *map[string]int64   `json:"loc"`
+			Priority       *service.Priority   `json:"priority"`
 			Stage          *service.Stage    `json:"stage"`
 			Interest       *service.Interest `json:"interest"`
 			Color          *string           `json:"color"`
@@ -395,6 +397,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			NotesLLM:       args.NotesLLM,
 			ScreenshotURL:  args.ScreenshotURL,
 			Tags:           args.Tags,
+			LOC:            args.LOC,
 			Priority:       args.Priority,
 			Stage:          args.Stage,
 			Interest:       args.Interest,

@@ -89,8 +89,9 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		Notes          *string           `json:"notes"`
 		NotesLLM       *string           `json:"notes_llm"`
 		ScreenshotURL  *string           `json:"screenshot_url"`
-		Tags           *[]string         `json:"tags"`
-		Priority       *service.Priority `json:"priority"`
+		Tags           *[]string            `json:"tags"`
+		LOC            *map[string]int64   `json:"loc"`
+		Priority       *service.Priority   `json:"priority"`
 		Stage          *service.Stage    `json:"stage"`
 		Interest       *service.Interest `json:"interest"`
 		Color          *string           `json:"color"`
@@ -113,6 +114,7 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		NotesLLM:       body.NotesLLM,
 		ScreenshotURL:  body.ScreenshotURL,
 		Tags:           body.Tags,
+		LOC:            body.LOC,
 		Priority:       body.Priority,
 		Stage:          body.Stage,
 		Interest:       body.Interest,

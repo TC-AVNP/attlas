@@ -329,6 +329,9 @@ function OverviewTab({
           <StatCard label="Time logged" value={formatHours(data.total_minutes)} />
           <StatCard label="Created" value={formatDate(data.created_at)} />
           <StatCard label="Stage" value={data.stage} />
+          {data.loc?.total && (
+            <StatCard label="Lines of code" value={data.loc.total.toLocaleString()} />
+          )}
         </div>
       </section>
     </div>

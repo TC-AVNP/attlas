@@ -81,7 +81,7 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	}
 	rows, err := s.DB.Query(`
 		SELECT p.id, p.slug, p.name, p.problem, p.description, p.description_llm,
-		       p.flow, p.notes, p.notes_llm, p.screenshot_url, p.tags, p.priority,
+		       p.flow, p.notes, p.notes_llm, p.screenshot_url, p.tags, p.loc, p.priority,
 		       p.stage, p.interest, p.color, p.created_at, p.archived_at,
 		       p.repo_path, p.canvas_x, p.canvas_y
 		FROM projects p
@@ -96,10 +96,10 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	var projects []Project
 	for rows.Next() {
 		var p Project
-		var tagsJSON *string
+		var tagsJSON, locJSON *string
 		if err := rows.Scan(
 			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
-			&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &p.Priority,
+			&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &locJSON, &p.Priority,
 			&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
 			&p.RepoPath, &p.CanvasX, &p.CanvasY,
 		); err != nil {
@@ -107,6 +107,9 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 		}
 		if tagsJSON != nil {
 			_ = json.Unmarshal([]byte(*tagsJSON), &p.Tags)
+		}
+		if locJSON != nil {
+			_ = json.Unmarshal([]byte(*locJSON), &p.LOC)
 		}
 		projects = append(projects, p)
 	}
@@ -189,21 +192,24 @@ func (s *Service) effortTotals() (map[int64]int64, error) {
 // GetProject fetches a project by slug plus its features and effort log.
 func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	var p Project
-	var tagsJSON *string
+	var tagsJSON, locJSON *string
 	err := s.DB.QueryRow(`
 		SELECT id, slug, name, problem, description, description_llm,
-		       flow, notes, notes_llm, screenshot_url, tags, priority, stage, interest,
+		       flow, notes, notes_llm, screenshot_url, tags, loc, priority, stage, interest,
 		       color, created_at, archived_at, repo_path, canvas_x, canvas_y
 		FROM projects
 		WHERE slug = ?
 	`, slug).Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
-		&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &p.Priority, &p.Stage, &p.Interest,
+		&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &locJSON, &p.Priority, &p.Stage, &p.Interest,
 		&p.Color, &p.CreatedAt, &p.ArchivedAt,
 		&p.RepoPath, &p.CanvasX, &p.CanvasY,
 	)
 	if tagsJSON != nil {
 		_ = json.Unmarshal([]byte(*tagsJSON), &p.Tags)
+	}
+	if locJSON != nil {
+		_ = json.Unmarshal([]byte(*locJSON), &p.LOC)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -427,6 +433,11 @@ func (s *Service) UpdateProject(slug string, in UpdateProjectInput) (*ProjectDet
 	if in.Tags != nil {
 		b, _ := json.Marshal(*in.Tags)
 		sets = append(sets, "tags = ?")
+		args = append(args, string(b))
+	}
+	if in.LOC != nil {
+		b, _ := json.Marshal(*in.LOC)
+		sets = append(sets, "loc = ?")
 		args = append(args, string(b))
 	}
 	if in.Priority != nil {

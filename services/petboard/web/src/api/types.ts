@@ -22,6 +22,8 @@ export interface Project {
   notes?: string;
   notes_llm?: string;
   screenshot_url?: string;
+  tags?: string[];
+  loc?: Record<string, number>;
   priority: Priority;
   stage: Stage;
   interest: Interest;

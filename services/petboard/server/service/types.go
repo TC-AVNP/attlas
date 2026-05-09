@@ -57,8 +57,9 @@ type Project struct {
 	Notes          *string  `json:"notes,omitempty"`
 	NotesLLM       *string  `json:"notes_llm,omitempty"`
 	ScreenshotURL  *string  `json:"screenshot_url,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
-	Priority       Priority `json:"priority"`
+	Tags           []string          `json:"tags,omitempty"`
+	LOC            map[string]int64 `json:"loc,omitempty"`
+	Priority       Priority         `json:"priority"`
 	Stage          Stage    `json:"stage"`
 	Interest       Interest `json:"interest"`
 	Color          string   `json:"color"`
@@ -154,6 +155,7 @@ type UpdateProjectInput struct {
 	NotesLLM       *string
 	ScreenshotURL  *string
 	Tags           *[]string
+	LOC            *map[string]int64
 	Priority       *Priority
 	Stage          *Stage
 	Interest       *Interest
