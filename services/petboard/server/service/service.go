@@ -198,7 +198,9 @@ func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	err := s.DB.QueryRow(`
 		SELECT id, slug, name, problem, description, description_llm,
 		       flow, notes, notes_llm, screenshot_url, tags, loc, priority, stage, interest,
-		       color, created_at, archived_at, repo_path, canvas_x, canvas_y
+		       color, created_at,
+		       started_at, live_at, completed_at, archived_at,
+		       repo_path, canvas_x, canvas_y
 		FROM projects
 		WHERE slug = ?
 	`, slug).Scan(
