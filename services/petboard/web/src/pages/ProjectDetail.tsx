@@ -250,6 +250,21 @@ function OverviewTab({
         </h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard label="Created" value={formatDate(data.created_at)} />
+          {data.started_at ? (
+            <StatCard label="Started" value={formatDate(data.started_at)} />
+          ) : (
+            <StatCard label="Started" value="—" color="text-neutral-600" />
+          )}
+          {data.live_at ? (
+            <StatCard label="Went live" value={formatDate(data.live_at)} />
+          ) : (
+            <StatCard label="Went live" value="—" color="text-neutral-600" />
+          )}
+          {data.completed_at ? (
+            <StatCard label="Completed" value={formatDate(data.completed_at)} />
+          ) : (
+            <StatCard label="Completed" value="—" color="text-neutral-600" />
+          )}
           <StatCard label="Time logged" value={formatHours(data.total_minutes)} />
           <StatCard label="Sessions" value={data.effort?.length ?? 0} />
         </div>

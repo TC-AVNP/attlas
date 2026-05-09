@@ -82,7 +82,8 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 	rows, err := s.DB.Query(`
 		SELECT p.id, p.slug, p.name, p.problem, p.description, p.description_llm,
 		       p.flow, p.notes, p.notes_llm, p.screenshot_url, p.tags, p.loc, p.priority,
-		       p.stage, p.interest, p.color, p.created_at, p.archived_at,
+		       p.stage, p.interest, p.color, p.created_at,
+		       p.started_at, p.live_at, p.completed_at, p.archived_at,
 		       p.repo_path, p.canvas_x, p.canvas_y
 		FROM projects p
 		` + where + `
@@ -100,7 +101,8 @@ func (s *Service) ListProjects(includeArchived bool) ([]Project, error) {
 		if err := rows.Scan(
 			&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
 			&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &locJSON, &p.Priority,
-			&p.Stage, &p.Interest, &p.Color, &p.CreatedAt, &p.ArchivedAt,
+			&p.Stage, &p.Interest, &p.Color, &p.CreatedAt,
+			&p.StartedAt, &p.LiveAt, &p.CompletedAt, &p.ArchivedAt,
 			&p.RepoPath, &p.CanvasX, &p.CanvasY,
 		); err != nil {
 			return nil, err
@@ -202,7 +204,8 @@ func (s *Service) GetProject(slug string) (*ProjectDetail, error) {
 	`, slug).Scan(
 		&p.ID, &p.Slug, &p.Name, &p.Problem, &p.Description, &p.DescriptionLLM,
 		&p.Flow, &p.Notes, &p.NotesLLM, &p.ScreenshotURL, &tagsJSON, &locJSON, &p.Priority, &p.Stage, &p.Interest,
-		&p.Color, &p.CreatedAt, &p.ArchivedAt,
+		&p.Color, &p.CreatedAt,
+		&p.StartedAt, &p.LiveAt, &p.CompletedAt, &p.ArchivedAt,
 		&p.RepoPath, &p.CanvasX, &p.CanvasY,
 	)
 	if tagsJSON != nil {
@@ -453,6 +456,21 @@ func (s *Service) UpdateProject(slug string, in UpdateProjectInput) (*ProjectDet
 		}
 		sets = append(sets, "stage = ?")
 		args = append(args, *in.Stage)
+		now := s.now()
+		switch *in.Stage {
+		case StageLive:
+			// First time going live — set started_at if not already set.
+			sets = append(sets, "live_at = COALESCE(live_at, ?)")
+			args = append(args, now)
+			sets = append(sets, "started_at = COALESCE(started_at, ?)")
+			args = append(args, now)
+		case StageCompleted:
+			sets = append(sets, "completed_at = COALESCE(completed_at, ?)")
+			args = append(args, now)
+		case StageIdea:
+			// Going back to idea clears live/completed.
+			sets = append(sets, "live_at = NULL", "completed_at = NULL")
+		}
 	}
 	if in.Interest != nil {
 		if !ValidInterest(*in.Interest) {
@@ -739,6 +757,8 @@ func (s *Service) LogEffort(projectSlug string, in LogEffortInput) (*EffortLog, 
 		}
 	}
 	now := s.now()
+	// Set started_at on the project if this is the first effort ever logged.
+	s.DB.Exec(`UPDATE projects SET started_at = ? WHERE id = ? AND started_at IS NULL`, now, pid)
 	res, err := s.DB.Exec(`
 		INSERT INTO effort_logs (project_id, feature_id, minutes, note, logged_at)
 		VALUES (?, ?, ?, ?, ?)

@@ -64,6 +64,9 @@ type Project struct {
 	Interest       Interest `json:"interest"`
 	Color          string   `json:"color"`
 	CreatedAt      int64    `json:"created_at"`
+	StartedAt      *int64   `json:"started_at,omitempty"`
+	LiveAt         *int64   `json:"live_at,omitempty"`
+	CompletedAt    *int64   `json:"completed_at,omitempty"`
 	ArchivedAt     *int64   `json:"archived_at,omitempty"`
 	RepoPath       *string  `json:"repo_path,omitempty"`
 	CanvasX     *float64 `json:"canvas_x,omitempty"`

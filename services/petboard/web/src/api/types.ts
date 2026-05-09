@@ -29,6 +29,9 @@ export interface Project {
   interest: Interest;
   color: string;
   created_at: number; // unix seconds
+  started_at?: number;
+  live_at?: number;
+  completed_at?: number;
   archived_at?: number;
   canvas_x?: number;
   canvas_y?: number;
