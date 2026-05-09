@@ -286,7 +286,7 @@ function OverviewTab({
         <div className={data.screenshot_url ? "flex gap-6 items-start" : ""}>
           <div className="flex-1">
             {data.description ? (
-              <p className="text-neutral-300 leading-relaxed">{data.description}</p>
+              <Markdown content={data.description} />
             ) : (
               <p className="text-neutral-600 italic">No description yet.</p>
             )}
@@ -302,6 +302,18 @@ function OverviewTab({
           )}
         </div>
       </section>
+
+      {/* Flow */}
+      {data.flow && (
+        <section>
+          <h2 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
+            How it works
+          </h2>
+          <div className="rounded border border-neutral-800 bg-neutral-900/30 p-4">
+            <Markdown content={data.flow} />
+          </div>
+        </section>
+      )}
 
       {/* Stats */}
       <section>

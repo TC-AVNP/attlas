@@ -28,6 +28,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		Priority       service.Priority  `json:"priority"`
 		Description    *string           `json:"description"`
 		DescriptionLLM *string           `json:"description_llm"`
+		Flow           *string           `json:"flow"`
 		Notes          *string           `json:"notes"`
 		NotesLLM       *string           `json:"notes_llm"`
 		ScreenshotURL  *string           `json:"screenshot_url"`
@@ -47,6 +48,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		Priority:       body.Priority,
 		Description:    body.Description,
 		DescriptionLLM: body.DescriptionLLM,
+		Flow:           body.Flow,
 		Notes:          body.Notes,
 		NotesLLM:       body.NotesLLM,
 		ScreenshotURL:  body.ScreenshotURL,
@@ -83,6 +85,7 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		Problem        *string           `json:"problem"`
 		Description    *string           `json:"description"`
 		DescriptionLLM *string           `json:"description_llm"`
+		Flow           *string           `json:"flow"`
 		Notes          *string           `json:"notes"`
 		NotesLLM       *string           `json:"notes_llm"`
 		ScreenshotURL  *string           `json:"screenshot_url"`
@@ -105,6 +108,7 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 		Problem:        body.Problem,
 		Description:    body.Description,
 		DescriptionLLM: body.DescriptionLLM,
+		Flow:           body.Flow,
 		Notes:          body.Notes,
 		NotesLLM:       body.NotesLLM,
 		ScreenshotURL:  body.ScreenshotURL,

@@ -53,6 +53,7 @@ type Project struct {
 	Problem     string   `json:"problem"`
 	Description    *string  `json:"description,omitempty"`
 	DescriptionLLM *string  `json:"description_llm,omitempty"`
+	Flow           *string  `json:"flow,omitempty"`
 	Notes          *string  `json:"notes,omitempty"`
 	NotesLLM       *string  `json:"notes_llm,omitempty"`
 	ScreenshotURL  *string  `json:"screenshot_url,omitempty"`
@@ -130,6 +131,7 @@ type CreateProjectInput struct {
 	Priority       Priority
 	Description    *string
 	DescriptionLLM *string
+	Flow           *string
 	Notes          *string
 	NotesLLM       *string
 	ScreenshotURL  *string
@@ -147,6 +149,7 @@ type UpdateProjectInput struct {
 	Problem        *string
 	Description    *string
 	DescriptionLLM *string
+	Flow           *string
 	Notes          *string
 	NotesLLM       *string
 	ScreenshotURL  *string

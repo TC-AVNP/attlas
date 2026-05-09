@@ -18,6 +18,7 @@ export interface Project {
   problem: string;
   description?: string;
   description_llm?: string;
+  flow?: string;
   notes?: string;
   notes_llm?: string;
   screenshot_url?: string;

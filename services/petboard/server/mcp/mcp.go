@@ -137,16 +137,17 @@ func toolDefinitions() []map[string]any {
 		},
 		{
 			"name":        "create_project",
-			"description": "Create a new project. IMPORTANT: All text content must have both a human version (concise, readable) and an LLM version (detailed, technical, for agents). 'description' is the human-readable 'what is this project' summary. 'description_llm' is the detailed version for agents. 'notes' is human-readable project details. 'notes_llm' is detailed technical/architecture notes for agents.",
+			"description": "Create a new project. Three fields are mandatory: problem (the pain), description (what is this project, human-readable), and flow (numbered steps showing how the project solves the problem). All text content must have both human and LLM versions.",
 			"inputSchema": map[string]any{
 				"type":     "object",
-				"required": []string{"name", "problem", "priority"},
+				"required": []string{"name", "problem", "priority", "description", "flow"},
 				"properties": map[string]any{
 					"name":            map[string]any{"type": "string"},
 					"problem":         map[string]any{"type": "string", "description": "The real-world pain this project addresses (not the solution)"},
 					"priority":        map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}},
 					"description":     map[string]any{"type": "string", "description": "Human-readable: what is this project, 2-3 sentences"},
 					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed project description with full context for agents"},
+					"flow":            map[string]any{"type": "string", "description": "Numbered step-by-step walkthrough of how the project solves the problem (5-8 steps, user perspective, markdown)"},
 					"notes":           map[string]any{"type": "string", "description": "Human-readable project details, architecture overview, key decisions"},
 					"notes_llm":       map[string]any{"type": "string", "description": "LLM version: detailed technical notes, implementation details, mermaid diagrams"},
 					"screenshot_url":  map[string]any{"type": "string", "description": "URL to a screenshot of the project homepage (if live)"},
@@ -170,6 +171,7 @@ func toolDefinitions() []map[string]any {
 					"problem":         map[string]any{"type": "string"},
 					"description":     map[string]any{"type": "string", "description": "Human-readable: what is this project, 2-3 sentences"},
 					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed project description with full context for agents"},
+					"flow":            map[string]any{"type": "string", "description": "Numbered step-by-step walkthrough of how the project solves the problem (5-8 steps, user perspective, markdown)"},
 					"notes":           map[string]any{"type": "string", "description": "Human-readable project details, architecture overview, key decisions"},
 					"notes_llm":       map[string]any{"type": "string", "description": "LLM version: detailed technical notes, implementation details, mermaid diagrams"},
 					"screenshot_url":  map[string]any{"type": "string", "description": "URL to a screenshot of the project homepage (if live)"},
@@ -324,6 +326,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Priority       service.Priority  `json:"priority"`
 			Description    *string           `json:"description"`
 			DescriptionLLM *string           `json:"description_llm"`
+			Flow           *string           `json:"flow"`
 			Notes          *string           `json:"notes"`
 			NotesLLM       *string           `json:"notes_llm"`
 			ScreenshotURL  *string           `json:"screenshot_url"`
@@ -342,6 +345,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Priority:       args.Priority,
 			Description:    args.Description,
 			DescriptionLLM: args.DescriptionLLM,
+			Flow:           args.Flow,
 			Notes:          args.Notes,
 			NotesLLM:       args.NotesLLM,
 			ScreenshotURL:  args.ScreenshotURL,
@@ -366,6 +370,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Problem        *string           `json:"problem"`
 			Description    *string           `json:"description"`
 			DescriptionLLM *string           `json:"description_llm"`
+			Flow           *string           `json:"flow"`
 			Notes          *string           `json:"notes"`
 			NotesLLM       *string           `json:"notes_llm"`
 			ScreenshotURL  *string           `json:"screenshot_url"`
@@ -385,6 +390,7 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			Problem:        args.Problem,
 			Description:    args.Description,
 			DescriptionLLM: args.DescriptionLLM,
+			Flow:           args.Flow,
 			Notes:          args.Notes,
 			NotesLLM:       args.NotesLLM,
 			ScreenshotURL:  args.ScreenshotURL,
