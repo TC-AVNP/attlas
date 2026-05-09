@@ -105,7 +105,7 @@ func (s *Service) GetStep(id int64) (*StepDetail, error) {
 
 func (s *Service) listItems(stepID int64) ([]ChecklistItem, error) {
 	rows, err := s.DB.Query(`
-		SELECT id, step_id, name, group_name, budget_cents, actual_cost_cents, status, selected_option_id, created_at
+		SELECT id, step_id, name, group_name, budget_cents, actual_cost_cents, status, selected_option_id, delivery_date, created_at
 		FROM checklist_items WHERE step_id = ?
 		ORDER BY group_name ASC, created_at ASC
 	`, stepID)
@@ -119,7 +119,7 @@ func (s *Service) listItems(stepID int64) ([]ChecklistItem, error) {
 		var it ChecklistItem
 		if err := rows.Scan(
 			&it.ID, &it.StepID, &it.Name, &it.GroupName, &it.BudgetCents, &it.ActualCostCents,
-			&it.Status, &it.SelectedOptionID, &it.CreatedAt,
+			&it.Status, &it.SelectedOptionID, &it.DeliveryDate, &it.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -271,6 +271,43 @@ func (s *Service) getStepRow(id int64) (*Step, error) {
 
 // --- Checklist Items -------------------------------------------------------
 
+// ListAllItems returns every checklist item across all steps, with options loaded.
+func (s *Service) ListAllItems() ([]ChecklistItem, error) {
+	rows, err := s.DB.Query(`
+		SELECT id, step_id, name, group_name, budget_cents, actual_cost_cents, status, selected_option_id, delivery_date, created_at
+		FROM checklist_items
+		ORDER BY delivery_date ASC, created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []ChecklistItem
+	for rows.Next() {
+		var it ChecklistItem
+		if err := rows.Scan(
+			&it.ID, &it.StepID, &it.Name, &it.GroupName, &it.BudgetCents, &it.ActualCostCents,
+			&it.Status, &it.SelectedOptionID, &it.DeliveryDate, &it.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range items {
+		opts, err := s.listOptions(items[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		items[i].Options = opts
+	}
+	return items, nil
+}
+
 func (s *Service) CreateItem(stepID int64, in CreateItemInput) (*ChecklistItem, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -299,10 +336,10 @@ func (s *Service) CreateItem(stepID int64, in CreateItemInput) (*ChecklistItem, 
 func (s *Service) UpdateItem(id int64, in UpdateItemInput) (*ChecklistItem, error) {
 	var it ChecklistItem
 	err := s.DB.QueryRow(`
-		SELECT id, step_id, name, group_name, budget_cents, actual_cost_cents, status, selected_option_id, created_at
+		SELECT id, step_id, name, group_name, budget_cents, actual_cost_cents, status, selected_option_id, delivery_date, created_at
 		FROM checklist_items WHERE id = ?
 	`, id).Scan(&it.ID, &it.StepID, &it.Name, &it.GroupName, &it.BudgetCents, &it.ActualCostCents,
-		&it.Status, &it.SelectedOptionID, &it.CreatedAt)
+		&it.Status, &it.SelectedOptionID, &it.DeliveryDate, &it.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("item %d: %w", id, ErrNotFound)
 	}
@@ -335,12 +372,15 @@ func (s *Service) UpdateItem(id int64, in UpdateItemInput) (*ChecklistItem, erro
 	if in.SelectedOptionID != nil {
 		it.SelectedOptionID = in.SelectedOptionID
 	}
+	if in.DeliveryDate != nil {
+		it.DeliveryDate = *in.DeliveryDate
+	}
 
 	_, err = s.DB.Exec(`
 		UPDATE checklist_items
-		SET name = ?, group_name = ?, budget_cents = ?, actual_cost_cents = ?, status = ?, selected_option_id = ?
+		SET name = ?, group_name = ?, budget_cents = ?, actual_cost_cents = ?, status = ?, selected_option_id = ?, delivery_date = ?
 		WHERE id = ?
-	`, it.Name, it.GroupName, it.BudgetCents, it.ActualCostCents, it.Status, it.SelectedOptionID, id)
+	`, it.Name, it.GroupName, it.BudgetCents, it.ActualCostCents, it.Status, it.SelectedOptionID, it.DeliveryDate, id)
 	if err != nil {
 		return nil, err
 	}

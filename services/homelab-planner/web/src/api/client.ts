@@ -38,6 +38,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // All items (delivery tracker)
+  listAllItems: () => request<{ items: ChecklistItem[] }>("/items"),
+
   // Steps
   listSteps: () => request<{ steps: Step[] }>("/steps"),
   getStep: (id: number) => request<StepDetail>(`/steps/${id}`),
@@ -83,6 +86,7 @@ export const api = {
       actual_cost_cents?: number;
       status?: ItemStatus;
       selected_option_id?: number;
+      delivery_date?: string;
     },
   ) =>
     request<ChecklistItem>(`/items/${id}`, {

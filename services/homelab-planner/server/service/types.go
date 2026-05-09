@@ -62,6 +62,7 @@ type ChecklistItem struct {
 	ActualCostCents  *int64     `json:"actual_cost_cents,omitempty"`
 	Status           ItemStatus `json:"status"`
 	SelectedOptionID *int64     `json:"selected_option_id,omitempty"`
+	DeliveryDate     string     `json:"delivery_date"`
 	CreatedAt        int64      `json:"created_at"`
 
 	Options []ItemOption `json:"options,omitempty"`
@@ -124,6 +125,7 @@ type UpdateItemInput struct {
 	ActualCostCents  *int64
 	Status           *ItemStatus
 	SelectedOptionID *int64
+	DeliveryDate     *string
 }
 
 type CreateOptionInput struct {

@@ -25,6 +25,7 @@ export interface ChecklistItem {
   actual_cost_cents?: number;
   status: ItemStatus;
   selected_option_id?: number;
+  delivery_date: string;
   created_at: number;
   options?: ItemOption[];
 }

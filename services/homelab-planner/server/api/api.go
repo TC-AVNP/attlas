@@ -24,7 +24,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/steps/{id}", a.updateStep)
 	mux.HandleFunc("DELETE /api/steps/{id}", a.deleteStep)
 
-	// Checklist items (nested under steps for create)
+	// Checklist items
+	mux.HandleFunc("GET /api/items", a.listAllItems)
 	mux.HandleFunc("POST /api/steps/{id}/items", a.createItem)
 	mux.HandleFunc("PATCH /api/items/{id}", a.updateItem)
 	mux.HandleFunc("DELETE /api/items/{id}", a.deleteItem)
@@ -141,6 +142,18 @@ func (a *API) deleteStep(w http.ResponseWriter, r *http.Request) {
 
 // --- Checklist Items -------------------------------------------------------
 
+func (a *API) listAllItems(w http.ResponseWriter, r *http.Request) {
+	items, err := a.Svc.ListAllItems()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if items == nil {
+		items = []service.ChecklistItem{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
 func (a *API) createItem(w http.ResponseWriter, r *http.Request) {
 	stepID, err := parseInt64(r.PathValue("id"))
 	if err != nil {
@@ -179,6 +192,7 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request) {
 		ActualCostCents  *int64              `json:"actual_cost_cents"`
 		Status           *service.ItemStatus `json:"status"`
 		SelectedOptionID *int64              `json:"selected_option_id"`
+		DeliveryDate     *string             `json:"delivery_date"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		writeError(w, err)
@@ -187,7 +201,7 @@ func (a *API) updateItem(w http.ResponseWriter, r *http.Request) {
 	item, err := a.Svc.UpdateItem(id, service.UpdateItemInput{
 		Name: body.Name, GroupName: body.GroupName, BudgetCents: body.BudgetCents,
 		ActualCostCents: body.ActualCostCents, Status: body.Status,
-		SelectedOptionID: body.SelectedOptionID,
+		SelectedOptionID: body.SelectedOptionID, DeliveryDate: body.DeliveryDate,
 	})
 	if err != nil {
 		writeError(w, err)
