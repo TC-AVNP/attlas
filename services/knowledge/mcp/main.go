@@ -20,7 +20,7 @@ func main() {
 	}
 
 	var err error
-	db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)&mode=ro")
+	db, err = sql.Open("sqlite", dbPath+"?_pragma=journal_mode(wal)")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "knowledge-mcp: open db: %v\n", err)
 		os.Exit(1)
@@ -106,6 +106,36 @@ func toolDefs() []map[string]any {
 				"properties": map[string]any{},
 			},
 		},
+		{
+			"name":        "create_entry",
+			"description": "Create a new knowledge base entry. Both content_llm and content_human should be provided — llm is detailed for agents, human is concise for people.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"slug", "title"},
+				"properties": map[string]any{
+					"slug":          map[string]any{"type": "string", "description": "URL-safe identifier (e.g. 'how-to-deploy')"},
+					"title":         map[string]any{"type": "string", "description": "Human-readable title"},
+					"content_llm":   map[string]any{"type": "string", "description": "Detailed content for agents (markdown)"},
+					"content_human": map[string]any{"type": "string", "description": "Concise content for humans (markdown)"},
+					"placeholder":   map[string]any{"type": "boolean", "description": "Mark as placeholder (no real content yet)"},
+				},
+			},
+		},
+		{
+			"name":        "update_entry",
+			"description": "Update an existing knowledge base entry by slug. Only provided fields are changed.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"slug"},
+				"properties": map[string]any{
+					"slug":          map[string]any{"type": "string", "description": "Entry slug to update"},
+					"title":         map[string]any{"type": "string", "description": "New title"},
+					"content_llm":   map[string]any{"type": "string", "description": "New detailed content for agents (markdown)"},
+					"content_human": map[string]any{"type": "string", "description": "New concise content for humans (markdown)"},
+					"placeholder":   map[string]any{"type": "boolean", "description": "Update placeholder status"},
+				},
+			},
+		},
 	}
 }
 
@@ -139,6 +169,26 @@ func handleToolCall(req *rpcRequest) {
 		result, err = getEntry(args.Slug, resolveView(args.View))
 	case "list_entries":
 		result, err = listEntries()
+	case "create_entry":
+		var args struct {
+			Slug         string `json:"slug"`
+			Title        string `json:"title"`
+			ContentLLM   string `json:"content_llm"`
+			ContentHuman string `json:"content_human"`
+			Placeholder  bool   `json:"placeholder"`
+		}
+		json.Unmarshal(params.Arguments, &args)
+		result, err = createEntry(args.Slug, args.Title, args.ContentLLM, args.ContentHuman, args.Placeholder)
+	case "update_entry":
+		var args struct {
+			Slug         string  `json:"slug"`
+			Title        *string `json:"title"`
+			ContentLLM   *string `json:"content_llm"`
+			ContentHuman *string `json:"content_human"`
+			Placeholder  *bool   `json:"placeholder"`
+		}
+		json.Unmarshal(params.Arguments, &args)
+		result, err = updateEntry(args.Slug, args.Title, args.ContentLLM, args.ContentHuman, args.Placeholder)
 	default:
 		writeToolResult(req.ID, "unknown tool: "+params.Name, true)
 		return
@@ -305,6 +355,70 @@ func listEntries() (string, error) {
 		return "No entries in the knowledge base.", nil
 	}
 	return fmt.Sprintf("%d entries:\n\n%s", count, sb.String()), nil
+}
+
+func createEntry(slug, title, contentLLM, contentHuman string, placeholder bool) (string, error) {
+	if slug == "" || title == "" {
+		return "", fmt.Errorf("slug and title are required")
+	}
+	ph := 0
+	if placeholder {
+		ph = 1
+	}
+	_, err := db.Exec(
+		"INSERT INTO entries (slug, title, content_llm, content_human, placeholder) VALUES (?, ?, ?, ?, ?)",
+		slug, title, contentLLM, contentHuman, ph)
+	if err != nil {
+		return "", fmt.Errorf("failed to create entry: %v", err)
+	}
+	return fmt.Sprintf("Created entry '%s' (%s).", title, slug), nil
+}
+
+func updateEntry(slug string, title, contentLLM, contentHuman *string, placeholder *bool) (string, error) {
+	if slug == "" {
+		return "", fmt.Errorf("slug is required")
+	}
+
+	sets := make([]string, 0, 4)
+	args := make([]any, 0, 4)
+
+	if title != nil {
+		sets = append(sets, "title = ?")
+		args = append(args, *title)
+	}
+	if contentLLM != nil {
+		sets = append(sets, "content_llm = ?")
+		args = append(args, *contentLLM)
+	}
+	if contentHuman != nil {
+		sets = append(sets, "content_human = ?")
+		args = append(args, *contentHuman)
+	}
+	if placeholder != nil {
+		ph := 0
+		if *placeholder {
+			ph = 1
+		}
+		sets = append(sets, "placeholder = ?")
+		args = append(args, ph)
+	}
+
+	if len(sets) == 0 {
+		return "Nothing to update.", nil
+	}
+
+	sets = append(sets, "updated_at = datetime('now')")
+	args = append(args, slug)
+	query := fmt.Sprintf("UPDATE entries SET %s WHERE slug = ?", strings.Join(sets, ", "))
+	res, err := db.Exec(query, args...)
+	if err != nil {
+		return "", fmt.Errorf("failed to update entry: %v", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return "", fmt.Errorf("entry '%s' not found", slug)
+	}
+	return fmt.Sprintf("Updated entry '%s'.", slug), nil
 }
 
 // --- JSON-RPC output ---
