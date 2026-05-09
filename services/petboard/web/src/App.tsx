@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { Routes, Route } from "react-router-dom";
 import Kanban from "./pages/Kanban";
+import Completed from "./pages/Completed";
 import ProjectDetail from "./pages/ProjectDetail";
 import Todos from "./pages/Todos";
 import { useLiveUpdates } from "./api/events";
@@ -99,6 +100,7 @@ function ClassicShell() {
   return (
     <Routes>
       <Route path="/" element={<Kanban />} />
+      <Route path="/completed" element={<Completed />} />
       <Route path="/p/:slug" element={<ProjectDetail />} />
       <Route path="/todos" element={<Todos />} />
     </Routes>

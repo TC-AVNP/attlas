@@ -53,8 +53,8 @@ function VUMeter({ level }: { level: number }) {
 function CardASCII({ project }: { project: Project }) {
   const vuLevel = INTEREST_VU[project.interest];
   const counts = project.feature_counts ?? {};
-  const total = Object.values(counts).reduce((s, n) => s + n, 0);
   const done = counts.done ?? 0;
+  const total = (counts.done ?? 0) + (counts.backlog ?? 0) + (counts.in_progress ?? 0);
 
   // Find latest effort timestamp from total_minutes as proxy — we don't have last_effort on the list endpoint
   // We'll show idle based on created_at as a fallback
@@ -180,8 +180,8 @@ export default function Kanban() {
 
   const projects = data?.projects ?? [];
   const totalFeatures = projects.reduce((s, p) => {
-    const counts = p.feature_counts ?? {};
-    return s + Object.values(counts).reduce((a, n) => a + n, 0);
+    const c = p.feature_counts ?? {};
+    return s + (c.done ?? 0) + (c.backlog ?? 0) + (c.in_progress ?? 0);
   }, 0);
 
   const byStage = (stage: Stage) =>

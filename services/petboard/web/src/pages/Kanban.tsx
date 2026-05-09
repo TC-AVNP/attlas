@@ -1,65 +1,21 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Project, Stage, Interest } from "../api/types";
+import { ProjectCard } from "../components/ProjectCard";
+
+type InterestFilter = Interest | "all";
 
 const STAGES: { key: Stage; label: string }[] = [
   { key: "idea", label: "Idea" },
   { key: "live", label: "Live" },
-  { key: "completed", label: "Completed" },
 ];
-
-const INTEREST_EMOJI: Record<Interest, string> = {
-  excited: "🔥",
-  meh: "😐",
-  bored: "💤",
-};
 
 const INTEREST_ORDER: Interest[] = ["excited", "meh", "bored"];
 
 function sortByInterest(a: Project, b: Project): number {
   return INTEREST_ORDER.indexOf(a.interest) - INTEREST_ORDER.indexOf(b.interest);
-}
-
-function ProjectCard({ project }: { project: Project }) {
-  const done = project.feature_counts?.done ?? 0;
-  const total = Object.values(project.feature_counts ?? {}).reduce(
-    (s, n) => s + n,
-    0,
-  );
-
-  return (
-    <Link
-      to={`/p/${project.slug}`}
-      className="relative block rounded-lg border border-zinc-700/50 bg-zinc-800/60 p-3 hover:border-zinc-500/60 transition-colors"
-    >
-      {project.screenshot_url && (
-        <span className="absolute -top-1.5 -left-1.5 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-amber-400 text-zinc-900 rounded shadow-md shadow-amber-400/30 z-10">
-          App
-        </span>
-      )}
-      <div className="flex items-center gap-2 mb-1">
-        <span
-          className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-          style={{ backgroundColor: project.color }}
-        />
-        <span className="font-medium text-sm text-zinc-100 truncate">
-          {project.name}
-        </span>
-        <span
-          className="ml-auto text-xs shrink-0"
-          title={project.interest}
-        >
-          {INTEREST_EMOJI[project.interest]}
-        </span>
-      </div>
-      {total > 0 && (
-        <div className="text-xs text-zinc-500">
-          {done}/{total} features
-        </div>
-      )}
-    </Link>
-  );
 }
 
 function KanbanColumn({
@@ -84,15 +40,21 @@ function KanbanColumn({
         if (slug) onDrop(slug, stage.key);
       }}
     >
-      <div className="flex items-center gap-2 mb-3 px-1">
-        <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+      {/* Column header */}
+      <div className="flex items-center gap-2 mb-4 px-0.5">
+        <h2 className="m-0 text-[13px] font-semibold tracking-wide uppercase text-zinc-400">
           {stage.label}
         </h2>
-        <span className="text-xs text-zinc-600 bg-zinc-800 rounded-full px-2 py-0.5">
+        <span
+          className="text-xs px-2 py-0.5 rounded-full text-zinc-100"
+          style={{ background: "#27272A" }}
+        >
           {projects.length}
         </span>
       </div>
-      <div className="flex flex-col gap-2">
+
+      {/* Cards */}
+      <div className="flex flex-col gap-3">
         {projects.sort(sortByInterest).map((p) => (
           <div
             key={p.slug}
@@ -111,10 +73,16 @@ function KanbanColumn({
   );
 }
 
-type FilterInterest = Interest | "all";
+const FILTER_OPTIONS: { key: InterestFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "excited", label: "Excited" },
+  { key: "meh", label: "Meh" },
+  { key: "bored", label: "Bored" },
+];
 
 export default function Kanban() {
   const qc = useQueryClient();
+  const [filter, setFilter] = useState<InterestFilter>("all");
   const { data, isLoading } = useQuery({
     queryKey: ["projects", false],
     queryFn: () => api.listProjects(false),
@@ -127,13 +95,7 @@ export default function Kanban() {
   });
 
   const projects = data?.projects ?? [];
-
-  const interestFilter: FilterInterest = "all";
-
-  const filtered =
-    interestFilter === "all"
-      ? projects
-      : projects.filter((p) => p.interest === interestFilter);
+  const filtered = filter === "all" ? projects : projects.filter((p) => p.interest === filter);
 
   const byStage = (stage: Stage) =>
     filtered.filter((p) => p.stage === stage);
@@ -148,31 +110,62 @@ export default function Kanban() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-screen text-zinc-500">
-        Loading…
+        Loading...
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 text-zinc-100">
+    <div className="min-h-screen" style={{ background: "#121214", fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Header */}
-      <div className="border-b border-zinc-800 px-4 py-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-bold tracking-tight">petboard</h1>
-          <div className="flex items-center gap-3">
-            <Link
-              to="/todos"
-              className="text-xs text-zinc-500 hover:text-zinc-300"
-            >
-              todos
-            </Link>
+      <div className="border-b px-4 py-3" style={{ borderColor: "#27272A" }}>
+        <div className="max-w-[1080px] mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <h1 className="m-0 text-xl font-bold text-green-400" style={{ letterSpacing: "-0.01em" }}>
+              petboard
+            </h1>
+            <nav className="flex items-center gap-1">
+              <span className="text-[13px] font-medium px-3 py-1.5 rounded-full border border-green-500/40 text-green-400 bg-green-500/10">
+                Active
+              </span>
+              <Link
+                to="/completed"
+                className="text-[13px] font-medium px-3 py-1.5 rounded-full no-underline transition-colors border border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+              >
+                Completed
+              </Link>
+            </nav>
           </div>
+          <Link to="/todos" className="text-[13px] font-medium text-zinc-400 no-underline hover:text-zinc-300 transition-colors">
+            Todos
+          </Link>
+        </div>
+      </div>
+
+      {/* Interest filter */}
+      <div className="max-w-[1080px] mx-auto px-4 pt-5 pb-1">
+        <div className="flex items-center gap-2">
+          {FILTER_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setFilter(opt.key)}
+              className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+                filter === opt.key
+                  ? "border-green-500/40 text-green-400 bg-green-500/10"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300"
+              }`}
+              style={{ background: filter === opt.key ? undefined : "transparent" }}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Kanban board */}
-      <div className="max-w-6xl mx-auto p-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="max-w-[1080px] mx-auto px-4 py-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {STAGES.map((stage) => (
             <KanbanColumn
               key={stage.key}
