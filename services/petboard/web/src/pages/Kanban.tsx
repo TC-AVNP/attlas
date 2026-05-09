@@ -34,7 +34,9 @@ function ProjectCard({ project }: { project: Project }) {
       className="relative block rounded-lg border border-zinc-700/50 bg-zinc-800/60 p-3 hover:border-zinc-500/60 transition-colors"
     >
       {project.screenshot_url && (
-        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400" title="has screenshot" />
+        <span className="absolute -top-1.5 -left-1.5 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-amber-400 text-zinc-900 rounded shadow-md shadow-amber-400/30 z-10">
+          App
+        </span>
       )}
       <div className="flex items-center gap-2 mb-1">
         <span
