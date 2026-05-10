@@ -455,17 +455,24 @@ func contains(haystack []string, needle string) bool {
 }
 
 // isAllowedRedirectURI restricts dynamic client registration to local
-// loopback URIs, per OAuth 2.1's recommendations for native/PKCE
-// clients. This means Claude Code's local callback listener works but
-// nobody can register a public-internet redirect that would let them
-// receive other users' codes.
+// loopback URIs and the Claude.ai remote MCP connector callback.
+// Loopback URIs follow OAuth 2.1's recommendations for native/PKCE
+// clients. The claude.ai / claude.com HTTPS callbacks are needed for
+// Claude's web-based remote MCP connector to complete the OAuth flow.
 func isAllowedRedirectURI(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" {
+	if err != nil {
 		return false
 	}
 	host := u.Hostname()
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	switch u.Scheme {
+	case "http":
+		return host == "127.0.0.1" || host == "localhost" || host == "::1"
+	case "https":
+		return host == "claude.ai" || host == "claude.com"
+	default:
+		return false
+	}
 }
 
 func (s *Server) lookupClientRedirectURIs(clientID string) ([]string, error) {
