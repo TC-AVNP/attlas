@@ -12,6 +12,7 @@
 //   add_feature          - POST /projects/:slug/features
 //   set_feature_status   - PATCH /features/:id
 //   update_feature       - PATCH /features/:id
+//   delete_feature       - DELETE /features/:id
 //   log_effort           - POST /projects/:slug/effort
 //
 // All write operations also publish to the events.Broker so the canvas
@@ -223,6 +224,17 @@ func toolDefinitions() []map[string]any {
 					"title":           map[string]any{"type": "string"},
 					"description":     map[string]any{"type": "string", "description": "Human-readable: what this feature does, 1-2 sentences"},
 					"description_llm": map[string]any{"type": "string", "description": "LLM version: detailed feature description with full context for agents"},
+				},
+			},
+		},
+		{
+			"name":        "delete_feature",
+			"description": "Permanently delete a feature by ID. This cannot be undone — prefer set_feature_status to 'dropped' if you just want to shelve it.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"feature_id"},
+				"properties": map[string]any{
+					"feature_id": map[string]any{"type": "integer"},
 				},
 			},
 		},
@@ -478,6 +490,24 @@ func (h *Handler) dispatchTool(name string, raw json.RawMessage) (any, error) {
 			})
 		}
 		return f, err
+
+	case "delete_feature":
+		var args struct {
+			FeatureID int64 `json:"feature_id"`
+		}
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, err
+		}
+		if err := h.Svc.DeleteFeature(args.FeatureID); err != nil {
+			return nil, err
+		}
+		if h.Events != nil {
+			h.Events.Publish(events.Event{
+				Type:    "feature.deleted",
+				Payload: map[string]any{"feature_id": args.FeatureID},
+			})
+		}
+		return map[string]any{"deleted": true, "feature_id": args.FeatureID}, nil
 
 	case "log_effort":
 		var args struct {
