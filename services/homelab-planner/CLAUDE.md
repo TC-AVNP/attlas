@@ -1,10 +1,8 @@
 # homelab-planner
 
-Personal homelab build tracker for attlas. Reachable at
-`https://attlas.uk/homelab-planner/` once installed. Tracks the homelab
-build as a series of weekend-sized steps, each with a hardware shopping
-checklist (compare options, select, track procurement status) and a
-build log (journal entries for blog posts later).
+Wiki-style documentation site for the homelab project. Reachable at
+`https://attlas.uk/homelab-planner/`. Documents the homelab's hardware,
+networking, architecture, and build progress.
 
 ## Layout
 
@@ -12,10 +10,14 @@ build log (journal entries for blog posts later).
 services/homelab-planner/
 ├── server/              # Go backend — REST API + SQLite
 │   ├── cmd/homelab-planner/  # main entry point
-│   ├── api/             # REST handlers
-│   ├── service/         # Business logic
-│   └── db/              # SQLite migrations + bootstrap seed
+│   ├── api/             # REST handlers (wiki.go + api.go legacy)
+│   ├── service/         # Business logic (wiki.go + service.go legacy)
+│   └── db/              # SQLite migrations + seeds
 └── web/                 # React + Vite + Tailwind frontend
+    └── src/
+        ├── layouts/     # WikiLayout (sidebar + outlet)
+        ├── pages/       # WikiPage, JournalList, JournalEntryPage
+        └── components/  # Markdown, Schematic3DEmbed, SchematicEmbed
 ```
 
 ## Architecture
@@ -23,17 +25,23 @@ services/homelab-planner/
 - **Go backend** with pure-Go SQLite (modernc.org/sqlite, no CGO)
 - **React + Vite + Tailwind** frontend with react-query + react-router
 - **No auth** — piggybacks on Caddy's Google OAuth2 gate
-- **No SSE** — personal use, single user, polling via react-query staleTime
-- **Port 7691** (petboard is 7690)
+- **Port 7691**
 
 ## Data model
 
-- **Steps**: independent milestones (e.g. "Buy and assemble the rigs")
-- **Checklist items**: things to buy per step, with budget/actual cost tracking
-  - Status flow: researching -> ordered -> arrived
-- **Item options**: alternatives to compare per checklist item (name, URL, price, notes)
-  - One option can be "selected" on the parent item
-- **Build log entries**: timestamped journal notes per step
+- **Pages**: wiki articles with slug, title, markdown body, position ordering
+- **Journal entries**: dated blog posts with title and markdown body
+- Legacy tables (steps, checklist_items, item_options, build_log_entries) still exist
+
+## Wiki pages (seeded)
+
+| Slug | Title | Special |
+|------|-------|---------|
+| home | Homelab | Landing page with section links |
+| standard-cluster | The Standard Cluster | 3D model embed at top |
+| networking | Networking | 2D SVG schematic embed at top |
+| architecture | Architecture | Kubernetes, Metal³, etcd |
+| future-plans | Future Plans | Second house, Nebula |
 
 ## API routes
 
@@ -41,25 +49,19 @@ All under `/homelab-planner/api/`:
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | /steps | List all steps |
-| POST | /steps | Create step |
-| GET | /steps/:id | Get step detail (items + log) |
-| PATCH | /steps/:id | Update step |
-| DELETE | /steps/:id | Delete step |
-| POST | /steps/:id/items | Add checklist item |
-| PATCH | /items/:id | Update item |
-| DELETE | /items/:id | Delete item |
-| POST | /items/:id/options | Add option |
-| PATCH | /options/:id | Update option |
-| DELETE | /options/:id | Delete option |
-| POST | /steps/:id/log | Add log entry |
-| PATCH | /log/:id | Update log entry |
-| DELETE | /log/:id | Delete log entry |
+| GET | /pages | List all pages (no body) |
+| GET | /pages/:slug | Get page with body |
+| PATCH | /pages/:slug | Update page title/body |
+| GET | /journal | List journal entries (no body) |
+| POST | /journal | Create journal entry |
+| GET | /journal/:id | Get journal entry |
+| PATCH | /journal/:id | Update journal entry |
+| DELETE | /journal/:id | Delete journal entry |
 
 ## Install
 
 ```
-sudo bash services/install-homelab-planner.sh
+sudo bash services/homelab-planner/install.sh
 ```
 
 Drops a route snippet in `/etc/caddy/conf.d/homelab-planner.caddy`.

@@ -19,6 +19,9 @@ var migrationsFS embed.FS
 //go:embed seed.sql
 var seedSQL string
 
+//go:embed seed_wiki.sql
+var seedWikiSQL string
+
 // Open creates the SQLite connection at path, runs all pending schema
 // migrations, and — if the steps table is still empty afterwards —
 // loads the bootstrap seed.
@@ -47,6 +50,11 @@ func Open(path string) (*sql.DB, error) {
 	if err := maybeSeed(conn); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("seed: %w", err)
+	}
+
+	if err := maybeSeedWiki(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("seed wiki: %w", err)
 	}
 
 	return conn, nil
@@ -136,6 +144,21 @@ func maybeSeed(conn *sql.DB) error {
 	log.Printf("db: empty steps table — loading bootstrap seed")
 	if _, err := conn.Exec(seedSQL); err != nil {
 		return fmt.Errorf("exec seed: %w", err)
+	}
+	return nil
+}
+
+func maybeSeedWiki(conn *sql.DB) error {
+	var n int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM pages`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	log.Printf("db: empty pages table — loading wiki seed")
+	if _, err := conn.Exec(seedWikiSQL); err != nil {
+		return fmt.Errorf("exec wiki seed: %w", err)
 	}
 	return nil
 }

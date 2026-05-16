@@ -1,11 +1,8 @@
 import type {
-  ChecklistItem,
-  ItemOption,
-  ItemStatus,
-  BuildLogEntry,
-  Step,
-  StepCategory,
-  StepDetail,
+  Page,
+  PageSummary,
+  JournalEntry,
+  JournalSummary,
 } from "./types";
 
 const API_PREFIX = "/homelab-planner/api";
@@ -38,100 +35,33 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // All items (delivery tracker)
-  listAllItems: () => request<{ items: ChecklistItem[] }>("/items"),
-
-  // Steps
-  listSteps: () => request<{ steps: Step[] }>("/steps"),
-  getStep: (id: number) => request<StepDetail>(`/steps/${id}`),
-  createStep: (body: {
-    title: string;
-    description?: string;
-    category?: StepCategory;
-    total_budget_cents?: number;
-  }) =>
-    request<Step>("/steps", { method: "POST", body: JSON.stringify(body) }),
-  updateStep: (
-    id: number,
-    body: {
-      title?: string;
-      description?: string;
-      position?: number;
-      total_budget_cents?: number;
-      completed?: boolean;
-    },
-  ) =>
-    request<Step>(`/steps/${id}`, {
+  // Wiki pages
+  listPages: () => request<{ pages: PageSummary[] }>("/pages"),
+  createPage: (body: { slug: string; title: string; body: string }) =>
+    request<Page>("/pages", { method: "POST", body: JSON.stringify(body) }),
+  getPage: (slug: string) => request<Page>(`/pages/${slug}`),
+  updatePage: (slug: string, body: { title?: string; body?: string }) =>
+    request<Page>(`/pages/${slug}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  deleteStep: (id: number) =>
-    request<void>(`/steps/${id}`, { method: "DELETE" }),
 
-  // Checklist items
-  createItem: (
-    stepId: number,
-    body: { name: string; group_name?: string; budget_cents?: number },
-  ) =>
-    request<ChecklistItem>(`/steps/${stepId}/items`, {
+  // Journal
+  listJournal: () => request<{ entries: JournalSummary[] }>("/journal"),
+  getJournalEntry: (id: number) => request<JournalEntry>(`/journal/${id}`),
+  createJournalEntry: (body: { date: string; title: string; body: string }) =>
+    request<JournalEntry>("/journal", {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateItem: (
+  updateJournalEntry: (
     id: number,
-    body: {
-      name?: string;
-      group_name?: string;
-      budget_cents?: number;
-      actual_cost_cents?: number;
-      status?: ItemStatus;
-      selected_option_id?: number;
-      delivery_date?: string;
-    },
+    body: { date?: string; title?: string; body?: string },
   ) =>
-    request<ChecklistItem>(`/items/${id}`, {
+    request<JournalEntry>(`/journal/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  deleteItem: (id: number) =>
-    request<void>(`/items/${id}`, { method: "DELETE" }),
-
-  // Item options
-  createOption: (
-    itemId: number,
-    body: { name: string; url?: string; price_cents?: number; notes?: string },
-  ) =>
-    request<ItemOption>(`/items/${itemId}/options`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateOption: (
-    id: number,
-    body: {
-      name?: string;
-      url?: string;
-      price_cents?: number;
-      notes?: string;
-    },
-  ) =>
-    request<ItemOption>(`/options/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-  deleteOption: (id: number) =>
-    request<void>(`/options/${id}`, { method: "DELETE" }),
-
-  // Build log
-  createLogEntry: (stepId: number, body: { body: string }) =>
-    request<BuildLogEntry>(`/steps/${stepId}/log`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  updateLogEntry: (id: number, body: { body?: string }) =>
-    request<BuildLogEntry>(`/log/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-  deleteLogEntry: (id: number) =>
-    request<void>(`/log/${id}`, { method: "DELETE" }),
+  deleteJournalEntry: (id: number) =>
+    request<void>(`/journal/${id}`, { method: "DELETE" }),
 };

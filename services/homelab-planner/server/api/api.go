@@ -17,28 +17,41 @@ type API struct {
 }
 
 func (a *API) Register(mux *http.ServeMux) {
-	// Steps
+	// Steps (legacy)
 	mux.HandleFunc("GET /api/steps", a.listSteps)
 	mux.HandleFunc("POST /api/steps", a.createStep)
 	mux.HandleFunc("GET /api/steps/{id}", a.getStep)
 	mux.HandleFunc("PATCH /api/steps/{id}", a.updateStep)
 	mux.HandleFunc("DELETE /api/steps/{id}", a.deleteStep)
 
-	// Checklist items
+	// Checklist items (legacy)
 	mux.HandleFunc("GET /api/items", a.listAllItems)
 	mux.HandleFunc("POST /api/steps/{id}/items", a.createItem)
 	mux.HandleFunc("PATCH /api/items/{id}", a.updateItem)
 	mux.HandleFunc("DELETE /api/items/{id}", a.deleteItem)
 
-	// Item options (nested under items for create)
+	// Item options (legacy)
 	mux.HandleFunc("POST /api/items/{id}/options", a.createOption)
 	mux.HandleFunc("PATCH /api/options/{id}", a.updateOption)
 	mux.HandleFunc("DELETE /api/options/{id}", a.deleteOption)
 
-	// Build log (nested under steps for create)
+	// Build log (legacy)
 	mux.HandleFunc("POST /api/steps/{id}/log", a.createLogEntry)
 	mux.HandleFunc("PATCH /api/log/{id}", a.updateLogEntry)
 	mux.HandleFunc("DELETE /api/log/{id}", a.deleteLogEntry)
+
+	// Wiki pages
+	mux.HandleFunc("GET /api/pages", a.listPages)
+	mux.HandleFunc("POST /api/pages", a.createPage)
+	mux.HandleFunc("GET /api/pages/{slug}", a.getPage)
+	mux.HandleFunc("PATCH /api/pages/{slug}", a.updatePage)
+
+	// Journal
+	mux.HandleFunc("GET /api/journal", a.listJournal)
+	mux.HandleFunc("POST /api/journal", a.createJournalEntry)
+	mux.HandleFunc("GET /api/journal/{id}", a.getJournalEntry)
+	mux.HandleFunc("PATCH /api/journal/{id}", a.updateJournalEntry)
+	mux.HandleFunc("DELETE /api/journal/{id}", a.deleteJournalEntry)
 }
 
 // --- Steps -----------------------------------------------------------------

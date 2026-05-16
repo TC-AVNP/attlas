@@ -51,3 +51,37 @@ export interface StepDetail extends Step {
   items: ChecklistItem[];
   build_log: BuildLogEntry[];
 }
+
+// Wiki types
+
+export interface PageSummary {
+  id: number;
+  slug: string;
+  title: string;
+  position: number;
+}
+
+export interface Page {
+  id: number;
+  slug: string;
+  title: string;
+  body: string;
+  position: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface JournalSummary {
+  id: number;
+  date: string;
+  title: string;
+}
+
+export interface JournalEntry {
+  id: number;
+  date: string;
+  title: string;
+  body: string;
+  created_at: number;
+  updated_at: number;
+}

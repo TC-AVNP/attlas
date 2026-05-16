@@ -1,18 +1,18 @@
-import { Routes, Route } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
-import Steps from "./pages/Steps";
-import StepDetail from "./pages/StepDetail";
-import Schematic from "./pages/Schematic";
-import Schematic3D from "./pages/Schematic3D";
+import { Routes, Route, Navigate } from "react-router-dom";
+import WikiLayout from "./layouts/WikiLayout";
+import WikiPage from "./pages/WikiPage";
+import JournalList from "./pages/JournalList";
+import JournalEntryPage from "./pages/JournalEntryPage";
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Dashboard />} />
-      <Route path="/steps" element={<Steps />} />
-      <Route path="/step/:id" element={<StepDetail />} />
-      <Route path="/schematic" element={<Schematic />} />
-      <Route path="/schematic-3d" element={<Schematic3D />} />
+      <Route element={<WikiLayout />}>
+        <Route path="/" element={<Navigate to="/wiki/home" replace />} />
+        <Route path="/wiki/:slug" element={<WikiPage />} />
+        <Route path="/journal" element={<JournalList />} />
+        <Route path="/journal/:id" element={<JournalEntryPage />} />
+      </Route>
     </Routes>
   );
 }
