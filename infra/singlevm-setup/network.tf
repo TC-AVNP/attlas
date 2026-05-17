@@ -30,3 +30,19 @@ resource "google_compute_firewall" "allow_https" {
   direction     = "INGRESS"
   priority      = 1000
 }
+
+# Kubernetes API server — homelab Pis connect here to join the cluster
+resource "google_compute_firewall" "allow_k8s_api" {
+  name    = "allow-k8s-api"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["6443"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["https-server"]
+  direction     = "INGRESS"
+  priority      = 1000
+}

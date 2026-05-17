@@ -1,0 +1,6 @@
+homelab.attlas.uk {
+	basicauth {
+		commonlisp $2a$14$FCA/Rc5mDi9UXMaYi36m6O4PCfB0wknyIDmdlxM3sOe06/BAhBBYK
+	}
+	reverse_proxy 127.0.0.1:7697
+}

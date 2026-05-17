@@ -347,6 +347,147 @@ function CloudSpendCard() {
   )
 }
 
+// ── Homelab nodes card ────────────────────────────────────────────────
+
+function HomelabSSHKeys() {
+  const [keys, setKeys] = useState(null)
+  const [newKey, setNewKey] = useState('')
+  const [saving, setSaving] = useState(false)
+  const { showToast } = useStatus()
+
+  useEffect(() => {
+    fetch('/api/homelab/ssh-keys')
+      .then(r => r.json())
+      .then(d => setKeys(d.keys || []))
+      .catch(() => setKeys([]))
+  }, [])
+
+  const saveKeys = async (updated) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/homelab/ssh-keys', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keys: updated }),
+      })
+      const data = await res.json()
+      if (data.keys) {
+        setKeys(data.keys)
+        showToast('SSH keys updated — Pis will pick up within 30s', 'success')
+      }
+    } catch (e) { showToast(e.message, 'error') }
+    finally { setSaving(false) }
+  }
+
+  const addKey = () => {
+    const k = newKey.trim()
+    if (!k) return
+    if (!k.startsWith('ssh-')) {
+      showToast('Invalid key — must start with ssh-ed25519, ssh-rsa, etc.', 'error')
+      return
+    }
+    saveKeys([...keys, k])
+    setNewKey('')
+  }
+
+  const removeKey = (idx) => {
+    const updated = keys.filter((_, i) => i !== idx)
+    saveKeys(updated)
+  }
+
+  if (keys === null) return null
+
+  return (
+    <div className="homelab-ssh">
+      <div className="section-label-sm">SSH Authorized Keys</div>
+      {keys.length === 0 && (
+        <div className="muted" style={{ fontSize: '0.82rem', marginBottom: '0.5rem' }}>
+          no keys configured — Pis won't be accessible via SSH
+        </div>
+      )}
+      {keys.map((k, i) => (
+        <div key={i} className="homelab-ssh-key">
+          <span className="homelab-ssh-key-text">{k.length > 60 ? k.slice(0, 30) + '…' + k.slice(-25) : k}</span>
+          <button className="link-btn dismiss" onClick={() => removeKey(i)} title="remove key">×</button>
+        </div>
+      ))}
+      <div className="homelab-ssh-add">
+        <input
+          className="input"
+          type="text"
+          placeholder="ssh-ed25519 AAAA... user@host"
+          value={newKey}
+          onChange={e => setNewKey(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && addKey()}
+        />
+        <Button variant="ghost" onClick={addKey} disabled={saving}>add</Button>
+      </div>
+    </div>
+  )
+}
+
+function HomelabNodesCard() {
+  const [nodes, setNodes] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch('/api/homelab/nodes')
+        const data = await res.json()
+        if (!cancelled) setNodes(data)
+      } catch {
+        if (!cancelled) setNodes([])
+      }
+    }
+    load()
+    const t = setInterval(load, 30000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [])
+
+  if (nodes === null) {
+    return (
+      <Card label="homelab · pi cluster" className="full">
+        <div className="muted">loading…</div>
+      </Card>
+    )
+  }
+
+  const totalCores = nodes.reduce((sum, n) => sum + (n.cpu_cores || 0), 0)
+  const totalMemGB = Math.round(nodes.reduce((sum, n) => sum + (n.memory_mb || 0), 0) / 1024)
+
+  return (
+    <Card label="homelab · pi cluster" className="full">
+      <div className="homelab-summary">
+        <span className="homelab-stat"><strong>{nodes.length}</strong> nodes</span>
+        <span className="homelab-stat"><strong>{totalCores}</strong> cores</span>
+        <span className="homelab-stat"><strong>{totalMemGB} GB</strong> RAM</span>
+      </div>
+      {nodes.length === 0 ? (
+        <div className="muted">no nodes registered — boot a Pi with the golden image to register</div>
+      ) : (
+        <div className="homelab-nodes">
+          {nodes.map(node => (
+            <div key={node.mac_address} className="homelab-node">
+              <div className="homelab-node-header">
+                <StatusDot color="green" />
+                <span className="homelab-node-name">{node.hostname}</span>
+                <span className="muted">{node.model}</span>
+              </div>
+              <div className="homelab-node-specs">
+                <span>{node.cpu_cores} cores</span>
+                <span>{node.memory_mb} MB</span>
+                <span>{node.lan_ip || '—'}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <HomelabSSHKeys />
+    </Card>
+  )
+}
+
 // ── Dashboard page ────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -586,6 +727,9 @@ export default function Dashboard() {
             ))}
           </div>
         </Card>
+
+        {/* Homelab Pi cluster — full width */}
+        <HomelabNodesCard />
       </div>
     </div>
   )

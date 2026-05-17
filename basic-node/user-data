@@ -1,0 +1,156 @@
+#cloud-config
+
+hostname: pi-unconfigured
+manage_etc_hosts: true
+
+ssh_pwauth: true
+
+users:
+  - name: commonlisp
+    groups: sudo
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    passwd: $6$z1IMtZUaoHTEMejl$R8UVDcT0IRATQuaxQUe9SnCtGjQj0Z32LCNmhclkECsob6eQlEh1l1/kkXwo4SXYwCIe8idKWLgPKue0coB6A.
+
+packages:
+  - curl
+  - jq
+  - git
+  - ansible
+
+write_files:
+  # Entrypoint: register with bootstrap service, then run ansible-pull
+  - path: /opt/homelab/entrypoint.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      BOOTSTRAP_URL="https://homelab.attlas.uk"
+      BOOTSTRAP_USER="commonlisp"
+      BOOTSTRAP_PASS="xadrez12"
+      LOG="/var/log/homelab-bootstrap.log"
+      MARKER="/etc/homelab/.provisioned"
+      CONFIG_FILE="/etc/homelab/config.json"
+
+      log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
+
+      # Already provisioned — skip
+      if [[ -f "$MARKER" ]]; then
+        log "Already provisioned, skipping"
+        exit 0
+      fi
+
+      mkdir -p /etc/homelab
+
+      # ── Collect hardware info ──────────────────────────────────────
+      MAC=$(cat /sys/class/net/eth0/address 2>/dev/null || \
+            cat /sys/class/net/end0/address 2>/dev/null || echo "unknown")
+      HOSTNAME_BASE="pi-$(echo $MAC | tr -d ':' | tail -c 6)"
+      MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "unknown")
+      CPU_CORES=$(nproc)
+      MEMORY_MB=$(free -m | awk '/Mem:/{print $2}')
+      LAN_IP=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || \
+               ip -4 addr show end0 2>/dev/null | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || echo "")
+      NVME_SERIAL=""
+      if [[ -e /sys/block/nvme0n1 ]]; then
+        NVME_SERIAL=$(cat /sys/block/nvme0n1/serial 2>/dev/null | tr -d ' ' || echo "")
+      fi
+
+      hostnamectl set-hostname "$HOSTNAME_BASE"
+      echo "127.0.1.1 $HOSTNAME_BASE" >> /etc/hosts
+      log "Hostname: $HOSTNAME_BASE"
+      log "Hardware: $MODEL, $CPU_CORES cores, ${MEMORY_MB}MB, MAC=$MAC, IP=$LAN_IP"
+
+      # ── Register (retry with backoff, cap 5 min) ───────────────────
+      PAYLOAD=$(jq -n \
+        --arg mac "$MAC" \
+        --arg nvme "$NVME_SERIAL" \
+        --arg host "$HOSTNAME_BASE" \
+        --arg model "$MODEL" \
+        --argjson cpu "$CPU_CORES" \
+        --argjson mem "$MEMORY_MB" \
+        --arg ip "$LAN_IP" \
+        '{mac_address: $mac, nvme_serial: $nvme, hostname: $host, model: $model, cpu_cores: $cpu, memory_mb: $mem, lan_ip: $ip}')
+
+      BACKOFF=5
+      MAX_BACKOFF=300
+      RESPONSE=""
+
+      log "Registering with $BOOTSTRAP_URL (retries until reachable)..."
+      while true; do
+        RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 \
+          -u "${BOOTSTRAP_USER}:${BOOTSTRAP_PASS}" \
+          -X POST "${BOOTSTRAP_URL}/api/register" \
+          -H "Content-Type: application/json" \
+          -d "$PAYLOAD" 2>/dev/null) && break
+
+        log "Unreachable, retrying in ${BACKOFF}s..."
+        sleep $BACKOFF
+        BACKOFF=$((BACKOFF * 2))
+        if [[ $BACKOFF -gt $MAX_BACKOFF ]]; then BACKOFF=$MAX_BACKOFF; fi
+      done
+
+      log "Registered: $(echo $RESPONSE | jq -c '{node_id, hostname}')"
+
+      # ── Fetch config (PAT, SSH keys) ───────────────────────────────
+      CONFIG=$(curl -sf --connect-timeout 5 --max-time 10 \
+        -u "${BOOTSTRAP_USER}:${BOOTSTRAP_PASS}" \
+        "${BOOTSTRAP_URL}/api/config" 2>/dev/null || echo "{}")
+
+      # Save for Ansible to use as extra vars
+      echo "$RESPONSE" > "$CONFIG_FILE"
+      echo "$CONFIG" > /etc/homelab/remote-config.json
+      log "Config saved"
+
+      # ── Get PAT and run ansible-pull ───────────────────────────────
+      GITHUB_PAT=$(echo "$CONFIG" | jq -r '.github_pat // empty')
+      if [[ -z "$GITHUB_PAT" ]]; then
+        log "ERROR: No GitHub PAT received. Cannot run ansible-pull."
+        exit 1
+      fi
+
+      log "Running ansible-pull..."
+      ansible-pull \
+        -U "https://${GITHUB_PAT}@github.com/TC-AVNP/attlas.git" \
+        -d /opt/attlas \
+        -i localhost, \
+        --limit localhost \
+        basic-node/playbook.yml \
+        -e "@${CONFIG_FILE}" \
+        -e "@/etc/homelab/remote-config.json" \
+        2>&1 | tee -a "$LOG"
+
+      if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
+        log "Provisioning complete!"
+        touch "$MARKER"
+      else
+        log "ERROR: ansible-pull failed. Check $LOG"
+        exit 1
+      fi
+
+  # Systemd unit to run entrypoint on every boot until provisioned
+  - path: /etc/systemd/system/homelab-provision.service
+    content: |
+      [Unit]
+      Description=Homelab node provisioning (register + ansible-pull)
+      After=network-online.target
+      Wants=network-online.target
+      ConditionPathExists=!/etc/homelab/.provisioned
+
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/homelab/entrypoint.sh
+      RemainAfterExit=true
+      StandardOutput=journal+console
+      TimeoutStartSec=1800
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /etc/homelab
+  - systemctl daemon-reload
+  - systemctl enable homelab-provision
+  - /opt/homelab/entrypoint.sh

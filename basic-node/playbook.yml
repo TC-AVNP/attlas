@@ -1,0 +1,318 @@
+---
+# Homelab Pi provisioning playbook
+# Called via ansible-pull from the golden image entrypoint.
+# Variables passed in via -e from /etc/homelab/config.json and remote-config.json:
+#   - join.api_server_endpoint
+#   - join.token
+#   - join.ca_cert_hash
+#   - join.certificate_key
+#   - join.control_plane
+#   - ssh.authorized_keys[]
+#   - github_pat
+
+- name: Provision homelab Pi node
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    homelab_user: commonlisp
+    homelab_home: /home/commonlisp
+    dotfiles_repo: TC-AVNP/dotfiels
+    k8s_version: "v1.31"
+
+  tasks:
+    # ── SSH keys from bootstrap service ────────────────────────────────
+    - name: Configure SSH authorized keys
+      when: ssh is defined and ssh.authorized_keys is defined
+      block:
+        - name: Ensure .ssh directory
+          file:
+            path: "{{ homelab_home }}/.ssh"
+            state: directory
+            owner: "{{ homelab_user }}"
+            group: "{{ homelab_user }}"
+            mode: "0700"
+
+        - name: Write authorized_keys
+          copy:
+            content: "{{ ssh.authorized_keys | join('\n') }}\n"
+            dest: "{{ homelab_home }}/.ssh/authorized_keys"
+            owner: "{{ homelab_user }}"
+            group: "{{ homelab_user }}"
+            mode: "0600"
+
+    # ── Lock default ubuntu user (security) ──────────────────────────────
+    - name: Lock the default ubuntu user
+      user:
+        name: ubuntu
+        password_lock: true
+        shell: /usr/sbin/nologin
+      ignore_errors: true
+
+    # ── Kernel prerequisites ───────────────────────────────────────────
+    - name: Load kernel modules
+      modprobe:
+        name: "{{ item }}"
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules
+      copy:
+        content: |
+          overlay
+          br_netfilter
+        dest: /etc/modules-load.d/k8s.conf
+
+    - name: Set sysctl for Kubernetes
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: true
+      loop:
+        - { key: net.bridge.bridge-nf-call-iptables, value: "1" }
+        - { key: net.bridge.bridge-nf-call-ip6tables, value: "1" }
+        - { key: net.ipv4.ip_forward, value: "1" }
+
+    - name: Disable swap
+      shell: swapoff -a && sed -i '/\sswap\s/d' /etc/fstab
+      changed_when: true
+
+    # ── Install containerd ─────────────────────────────────────────────
+    - name: Install containerd
+      apt:
+        name:
+          - containerd
+          - conntrack
+          - socat
+          - open-iscsi
+          - nfs-common
+        state: present
+        update_cache: true
+
+    - name: Create containerd config directory
+      file:
+        path: /etc/containerd
+        state: directory
+
+    - name: Generate containerd config
+      shell: containerd config default > /etc/containerd/config.toml
+      args:
+        creates: /etc/containerd/config.toml
+
+    - name: Enable SystemdCgroup in containerd
+      replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: restart containerd
+
+    - name: Enable and start containerd
+      systemd:
+        name: containerd
+        enabled: true
+        state: started
+
+    # ── Install kubeadm, kubelet, kubectl ──────────────────────────────
+    - name: Add Kubernetes apt key
+      shell: |
+        curl -fsSL "https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/Release.key" | \
+          gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+    - name: Ensure keyrings directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+
+    - name: Add Kubernetes apt repository
+      copy:
+        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/ /\n"
+        dest: /etc/apt/sources.list.d/kubernetes.list
+
+    - name: Install Kubernetes packages
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: true
+
+    - name: Hold Kubernetes packages
+      dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+    - name: Enable kubelet
+      systemd:
+        name: kubelet
+        enabled: true
+
+    # ── Join the cluster ───────────────────────────────────────────────
+    - name: Check if already joined
+      stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Join Kubernetes cluster
+      when: not kubelet_conf.stat.exists and join is defined and join.token is defined
+      shell: |
+        kubeadm join {{ join.api_server_endpoint }} \
+          --token {{ join.token }} \
+          --discovery-token-ca-cert-hash {{ join.ca_cert_hash }} \
+          {% if join.control_plane | default(false) %}
+          --control-plane \
+          --certificate-key {{ join.certificate_key }} \
+          {% endif %}
+
+      register: join_result
+      retries: 3
+      delay: 30
+      until: join_result.rc == 0
+
+    # ── Dotfiles ───────────────────────────────────────────────────────
+    - name: Install shell packages
+      apt:
+        name:
+          - zsh
+          - tmux
+          - fzf
+          - python3
+        state: present
+
+    - name: Clone dotfiles
+      when: github_pat is defined and github_pat | length > 0
+      become_user: "{{ homelab_user }}"
+      git:
+        repo: "https://{{ github_pat }}@github.com/{{ dotfiles_repo }}.git"
+        dest: "{{ homelab_home }}/dotfiels"
+        depth: 1
+      ignore_errors: true
+
+    - name: Run dotfiles installer
+      when: github_pat is defined
+      become_user: "{{ homelab_user }}"
+      shell: bash {{ homelab_home }}/dotfiels/install.sh
+      args:
+        creates: "{{ homelab_home }}/.zshrc"
+      ignore_errors: true
+
+    - name: Set zsh as default shell
+      user:
+        name: "{{ homelab_user }}"
+        shell: /usr/bin/zsh
+
+    # ── Healthz daemon ─────────────────────────────────────────────────
+    - name: Install healthz script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          while true; do
+            RESPONSE=$(printf '{"status":"ok","hostname":"%s","uptime":"%s","load":"%s"}' \
+              "$(hostname)" "$(uptime -p)" "$(cat /proc/loadavg | cut -d' ' -f1-3)")
+            printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+              "${#RESPONSE}" "$RESPONSE" | nc -l -p 9100 -q 1 2>/dev/null || sleep 1
+          done
+        dest: /opt/homelab/healthz.sh
+        mode: "0755"
+
+    - name: Install netcat for healthz
+      apt:
+        name: netcat-openbsd
+        state: present
+
+    - name: Install healthz systemd unit
+      copy:
+        content: |
+          [Unit]
+          Description=Homelab node healthz (port 9100)
+          After=network.target
+          [Service]
+          Type=simple
+          ExecStart=/opt/homelab/healthz.sh
+          Restart=always
+          RestartSec=5
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/homelab-healthz.service
+      notify: start healthz
+
+    # ── SSH key refresh timer ──────────────────────────────────────────
+    - name: Install refresh-config script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          BOOTSTRAP_URL="https://homelab.attlas.uk"
+          CERT="/etc/homelab/client.crt"
+          KEY="/etc/homelab/client.key"
+          RESPONSE=$(curl -sf --connect-timeout 5 --max-time 10 \
+            --cert "$CERT" --key "$KEY" \
+            "${BOOTSTRAP_URL}/api/config" 2>/dev/null) || exit 0
+          NEW_KEYS=$(echo "$RESPONSE" | jq -r '.ssh.authorized_keys[]? // empty' 2>/dev/null)
+          if [[ -z "$NEW_KEYS" ]]; then exit 0; fi
+          USER_HOME="/home/commonlisp"
+          CURRENT_KEYS=""
+          if [[ -f "${USER_HOME}/.ssh/authorized_keys" ]]; then
+            CURRENT_KEYS=$(cat "${USER_HOME}/.ssh/authorized_keys")
+          fi
+          if [[ "$NEW_KEYS" != "$CURRENT_KEYS" ]]; then
+            mkdir -p "${USER_HOME}/.ssh"
+            echo "$NEW_KEYS" > "${USER_HOME}/.ssh/authorized_keys"
+            chmod 700 "${USER_HOME}/.ssh"
+            chmod 600 "${USER_HOME}/.ssh/authorized_keys"
+            chown -R commonlisp:commonlisp "${USER_HOME}/.ssh"
+            logger -t homelab-refresh "SSH keys updated"
+          fi
+        dest: /opt/homelab/refresh-config.sh
+        mode: "0755"
+
+    - name: Install refresh timer units
+      copy:
+        content: |
+          [Unit]
+          Description=Poll bootstrap service for config updates every 30s
+          [Timer]
+          OnBootSec=30
+          OnUnitActiveSec=30
+          AccuracySec=5
+          [Install]
+          WantedBy=timers.target
+        dest: /etc/systemd/system/homelab-refresh.timer
+
+    - name: Install refresh service unit
+      copy:
+        content: |
+          [Unit]
+          Description=Homelab config refresh
+          [Service]
+          Type=oneshot
+          ExecStart=/opt/homelab/refresh-config.sh
+        dest: /etc/systemd/system/homelab-refresh.service
+
+    - name: Enable refresh timer
+      systemd:
+        name: homelab-refresh.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: restart containerd
+      systemd:
+        name: containerd
+        state: restarted
+
+    - name: start healthz
+      systemd:
+        name: homelab-healthz
+        enabled: true
+        state: started
+        daemon_reload: true

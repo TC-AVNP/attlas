@@ -888,3 +888,99 @@ a:hover { text-decoration: underline; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Homelab nodes card ────────────────────────────────────────────────── */
+.homelab-summary {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.homelab-stat {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+.homelab-stat strong {
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+.homelab-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.homelab-node {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.homelab-node:last-child { border-bottom: none; }
+.homelab-node-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.homelab-node-name {
+  font-size: 0.95rem;
+  font-weight: bold;
+  color: var(--fg);
+}
+.homelab-node-specs {
+  display: flex;
+  gap: 1.5rem;
+  padding-left: 1.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.homelab-ssh {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.section-label-sm {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  color: var(--header);
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.75rem;
+}
+.homelab-ssh-key {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.homelab-ssh-key:last-of-type { border-bottom: none; }
+.homelab-ssh-key-text {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.homelab-ssh-add {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.homelab-ssh-add .input {
+  flex: 1;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: var(--font-mono);
+}
+.homelab-ssh-add .input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
