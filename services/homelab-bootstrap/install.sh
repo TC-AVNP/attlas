@@ -82,6 +82,27 @@ if command -v gcloud &>/dev/null; then
   fi
 fi
 
+# 5b. Cloudflare credentials (for router tunnel management).
+# The API token needs: Account:Cloudflare Tunnel:Edit + Zone:DNS:Edit permissions.
+CF_API_TOKEN=""
+CF_ACCOUNT_ID=""
+CF_ZONE_ID="813c7bfa1c9f2b1a02a60c97f3171fa6"
+if command -v gcloud &>/dev/null; then
+  CF_API_TOKEN=$(gcloud secrets versions access latest --secret=cloudflare-dns-token --quiet 2>/dev/null || true)
+  if [[ -n "$CF_API_TOKEN" ]]; then
+    # Look up the account ID from the zone
+    CF_ACCOUNT_ID=$(curl -sf "https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}" \
+      -H "Authorization: Bearer ${CF_API_TOKEN}" | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['account']['id'])" 2>/dev/null || true)
+    if [[ -n "$CF_ACCOUNT_ID" ]]; then
+      echo "    Cloudflare tunnel management configured (account: ${CF_ACCOUNT_ID:0:8}...)"
+    else
+      echo "    WARNING: Could not resolve Cloudflare account ID — router registration will be disabled"
+    fi
+  else
+    echo "    WARNING: cloudflare-dns-token not found — router registration will be disabled"
+  fi
+fi
+
 # 6. Set up kubeconfig and sudoers for kubeadm token generation.
 if [[ -f /etc/kubernetes/admin.conf ]]; then
   mkdir -p "${STATE_DIR}/.kube"
@@ -127,6 +148,9 @@ Environment=KUBECONFIG=${STATE_DIR}/.kube/config
 Environment=HOMELAB_API_ENDPOINT=https://34.62.185.156:6443
 Environment=HOMELAB_SSH_KEYS_FILE=${STATE_DIR}/authorized_keys
 Environment=HOMELAB_GITHUB_PAT=${GITHUB_PAT}
+Environment=CLOUDFLARE_API_TOKEN=${CF_API_TOKEN}
+Environment=CLOUDFLARE_ACCOUNT_ID=${CF_ACCOUNT_ID}
+Environment=CLOUDFLARE_ZONE_ID=${CF_ZONE_ID}
 
 [Install]
 WantedBy=multi-user.target

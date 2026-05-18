@@ -1,0 +1,267 @@
+---
+# Router Pi provisioning playbook
+# Called via ansible-pull from the golden image entrypoint.
+# Variables passed in via -e from /etc/router/config.json and remote-config.json:
+#   - tunnel_token
+#   - subdomain
+#   - ssh.authorized_keys[]
+#   - github_pat
+
+- name: Provision router Pi node
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    router_user: commonlisp
+    router_home: /home/commonlisp
+    dotfiles_repo: TC-AVNP/dotfiels
+    cloudflared_version: "2025.4.2"
+
+  tasks:
+    # ── SSH keys from bootstrap service ────────────────────────────────
+    - name: Configure SSH authorized keys
+      when: ssh is defined and ssh.authorized_keys is defined
+      block:
+        - name: Ensure .ssh directory
+          file:
+            path: "{{ router_home }}/.ssh"
+            state: directory
+            owner: "{{ router_user }}"
+            group: "{{ router_user }}"
+            mode: "0700"
+
+        - name: Write authorized_keys
+          copy:
+            content: "{{ ssh.authorized_keys | join('\n') }}\n"
+            dest: "{{ router_home }}/.ssh/authorized_keys"
+            owner: "{{ router_user }}"
+            group: "{{ router_user }}"
+            mode: "0600"
+
+    # ── Lock default ubuntu user ─────────────────────────────────────
+    - name: Lock the default ubuntu user
+      user:
+        name: ubuntu
+        password_lock: true
+        shell: /usr/sbin/nologin
+      ignore_errors: true
+
+    # ── IP forwarding (router duty) ──────────────────────────────────
+    - name: Enable IP forwarding
+      sysctl:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+        sysctl_file: /etc/sysctl.d/router.conf
+        reload: true
+      loop:
+        - { key: net.ipv4.ip_forward, value: "1" }
+
+    # ── Cloudflare Tunnel ────────────────────────────────────────────
+    - name: Install cloudflared
+      block:
+        - name: Check if cloudflared is installed
+          command: cloudflared --version
+          register: cf_check
+          ignore_errors: true
+          changed_when: false
+
+        - name: Download cloudflared .deb
+          when: cf_check.rc != 0
+          get_url:
+            url: "https://github.com/cloudflare/cloudflared/releases/download/{{ cloudflared_version }}/cloudflared-linux-{{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}.deb"
+            dest: /tmp/cloudflared.deb
+
+        - name: Install cloudflared .deb
+          when: cf_check.rc != 0
+          apt:
+            deb: /tmp/cloudflared.deb
+
+        - name: Clean up .deb
+          file:
+            path: /tmp/cloudflared.deb
+            state: absent
+
+    - name: Write tunnel token
+      when: tunnel_token is defined and tunnel_token | length > 0
+      copy:
+        content: "{{ tunnel_token }}"
+        dest: /etc/cloudflared/tunnel-token
+        mode: "0600"
+      notify: restart cloudflared
+
+    - name: Create cloudflared directory
+      file:
+        path: /etc/cloudflared
+        state: directory
+        mode: "0700"
+
+    - name: Install cloudflared tunnel service
+      copy:
+        content: |
+          [Unit]
+          Description=Cloudflare Tunnel
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh -c '/usr/bin/cloudflared tunnel run --token $(cat /etc/cloudflared/tunnel-token)'
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/cloudflared-tunnel.service
+      notify: restart cloudflared
+
+    - name: Enable and start cloudflared tunnel
+      systemd:
+        name: cloudflared-tunnel
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ── Dotfiles ─────────────────────────────────────────────────────
+    - name: Install shell packages
+      apt:
+        name:
+          - zsh
+          - tmux
+          - fzf
+          - python3
+        state: present
+
+    - name: Clone dotfiles
+      when: github_pat is defined and github_pat | length > 0
+      become_user: "{{ router_user }}"
+      git:
+        repo: "https://{{ github_pat }}@github.com/{{ dotfiles_repo }}.git"
+        dest: "{{ router_home }}/dotfiels"
+        depth: 1
+      ignore_errors: true
+
+    - name: Run dotfiles installer
+      when: github_pat is defined
+      become_user: "{{ router_user }}"
+      shell: bash {{ router_home }}/dotfiels/install.sh
+      args:
+        creates: "{{ router_home }}/.zshrc"
+      ignore_errors: true
+
+    - name: Set zsh as default shell
+      user:
+        name: "{{ router_user }}"
+        shell: /usr/bin/zsh
+
+    # ── Healthz daemon ───────────────────────────────────────────────
+    - name: Create router scripts directory
+      file:
+        path: /opt/router
+        state: directory
+
+    - name: Install healthz script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          while true; do
+            TUNNEL=$(systemctl is-active cloudflared-tunnel 2>/dev/null || echo "unknown")
+            RESPONSE=$(printf '{"status":"ok","hostname":"%s","uptime":"%s","load":"%s","tunnel":"%s"}' \
+              "$(hostname)" "$(uptime -p)" "$(cat /proc/loadavg | cut -d' ' -f1-3)" "$TUNNEL")
+            printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+              "${#RESPONSE}" "$RESPONSE" | nc -l -p 9100 -q 1 2>/dev/null || sleep 1
+          done
+        dest: /opt/router/healthz.sh
+        mode: "0755"
+
+    - name: Install netcat for healthz
+      apt:
+        name: netcat-openbsd
+        state: present
+
+    - name: Install healthz systemd unit
+      copy:
+        content: |
+          [Unit]
+          Description=Router node healthz (port 9100)
+          After=network.target
+          [Service]
+          Type=simple
+          ExecStart=/opt/router/healthz.sh
+          Restart=always
+          RestartSec=5
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/router-healthz.service
+      notify: start healthz
+
+    # ── SSH key refresh timer ────────────────────────────────────────
+    - name: Install refresh-config script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          BOOTSTRAP_URL="https://homelab.attlas.uk"
+          AUTH="commonlisp:xadrez12"
+          RESPONSE=$(curl -sf --connect-timeout 5 --max-time 10 \
+            -u "$AUTH" "${BOOTSTRAP_URL}/api/config" 2>/dev/null) || exit 0
+          NEW_KEYS=$(echo "$RESPONSE" | jq -r '.ssh.authorized_keys[]? // empty' 2>/dev/null)
+          if [[ -z "$NEW_KEYS" ]]; then exit 0; fi
+          USER_HOME="/home/commonlisp"
+          CURRENT_KEYS=""
+          if [[ -f "${USER_HOME}/.ssh/authorized_keys" ]]; then
+            CURRENT_KEYS=$(cat "${USER_HOME}/.ssh/authorized_keys")
+          fi
+          if [[ "$NEW_KEYS" != "$CURRENT_KEYS" ]]; then
+            mkdir -p "${USER_HOME}/.ssh"
+            echo "$NEW_KEYS" > "${USER_HOME}/.ssh/authorized_keys"
+            chmod 700 "${USER_HOME}/.ssh"
+            chmod 600 "${USER_HOME}/.ssh/authorized_keys"
+            chown -R commonlisp:commonlisp "${USER_HOME}/.ssh"
+            logger -t router-refresh "SSH keys updated"
+          fi
+        dest: /opt/router/refresh-config.sh
+        mode: "0755"
+
+    - name: Install refresh timer
+      copy:
+        content: |
+          [Unit]
+          Description=Poll bootstrap service for config updates every 30s
+          [Timer]
+          OnBootSec=30
+          OnUnitActiveSec=30
+          AccuracySec=5
+          [Install]
+          WantedBy=timers.target
+        dest: /etc/systemd/system/router-refresh.timer
+
+    - name: Install refresh service unit
+      copy:
+        content: |
+          [Unit]
+          Description=Router config refresh
+          [Service]
+          Type=oneshot
+          ExecStart=/opt/router/refresh-config.sh
+        dest: /etc/systemd/system/router-refresh.service
+
+    - name: Enable refresh timer
+      systemd:
+        name: router-refresh.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: restart cloudflared
+      systemd:
+        name: cloudflared-tunnel
+        state: restarted
+        daemon_reload: true
+
+    - name: start healthz
+      systemd:
+        name: router-healthz
+        enabled: true
+        state: started
+        daemon_reload: true
