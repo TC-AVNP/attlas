@@ -1,16 +1,13 @@
 ---
-# Homelab Pi provisioning playbook
-# Called via ansible-pull from the golden image entrypoint.
-# Variables passed in via -e from /etc/homelab/config.json and remote-config.json:
-#   - join.api_server_endpoint
-#   - join.token
-#   - join.ca_cert_hash
-#   - join.certificate_key
-#   - join.control_plane
+# Worker Pi provisioning playbook
+# Fetched from homelab-bootstrap via /api/register/worker
+# Variables passed via -e from config.json:
+#   - tls.client_cert, tls.client_key, tls.ca_cert
 #   - ssh.authorized_keys[]
-#   - github_pat
+#   - join (k8s join config)
+#   - label
 
-- name: Provision homelab Pi node
+- name: Provision worker Pi node
   hosts: localhost
   connection: local
   become: true
@@ -18,10 +15,21 @@
   vars:
     homelab_user: commonlisp
     homelab_home: /home/commonlisp
-    dotfiles_repo: TC-AVNP/dotfiels
     k8s_version: "v1.31"
+    sanitized_label: "{{ label | default('pi-worker') | lower | regex_replace('[^a-z0-9]', '-') | regex_replace('-+', '-') | regex_replace('^-|-$', '') }}"
 
   tasks:
+    # ── Hostname from label ────────────────────────────────────────────
+    - name: Set hostname from label
+      hostname:
+        name: "{{ sanitized_label }}"
+
+    - name: Update /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1 {{ sanitized_label }}"
+
     # ── SSH keys from bootstrap service ────────────────────────────────
     - name: Configure SSH authorized keys
       when: ssh is defined and ssh.authorized_keys is defined
@@ -80,18 +88,7 @@
       shell: swapoff -a && sed -i '/\sswap\s/d' /etc/fstab
       changed_when: true
 
-    # ── Install containerd ─────────────────────────────────────────────
-    - name: Install containerd
-      apt:
-        name:
-          - containerd
-          - conntrack
-          - socat
-          - open-iscsi
-          - nfs-common
-        state: present
-        update_cache: true
-
+    # ── Configure containerd (pre-installed in base image) ───────────
     - name: Create containerd config directory
       file:
         path: /etc/containerd
@@ -115,42 +112,7 @@
         enabled: true
         state: started
 
-    # ── Install kubeadm, kubelet, kubectl ──────────────────────────────
-    - name: Add Kubernetes apt key
-      shell: |
-        curl -fsSL "https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/Release.key" | \
-          gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-      args:
-        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-
-    - name: Ensure keyrings directory
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-
-    - name: Add Kubernetes apt repository
-      copy:
-        content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ k8s_version }}/deb/ /\n"
-        dest: /etc/apt/sources.list.d/kubernetes.list
-
-    - name: Install Kubernetes packages
-      apt:
-        name:
-          - kubelet
-          - kubeadm
-          - kubectl
-        state: present
-        update_cache: true
-
-    - name: Hold Kubernetes packages
-      dpkg_selections:
-        name: "{{ item }}"
-        selection: hold
-      loop:
-        - kubelet
-        - kubeadm
-        - kubectl
-
+    # ── Kubernetes (pre-installed and held in base image) ───────────
     - name: Enable kubelet
       systemd:
         name: kubelet
@@ -178,37 +140,143 @@
       delay: 30
       until: join_result.rc == 0
 
-    # ── Dotfiles ───────────────────────────────────────────────────────
-    - name: Install shell packages
-      apt:
-        name:
-          - zsh
-          - tmux
-          - fzf
-          - python3
-        state: present
-
-    - name: Clone dotfiles
-      when: github_pat is defined and github_pat | length > 0
-      become_user: "{{ homelab_user }}"
-      git:
-        repo: "https://{{ github_pat }}@github.com/{{ dotfiles_repo }}.git"
-        dest: "{{ homelab_home }}/dotfiels"
-        depth: 1
-      ignore_errors: true
-
-    - name: Run dotfiles installer
-      when: github_pat is defined
-      become_user: "{{ homelab_user }}"
-      shell: bash {{ homelab_home }}/dotfiels/install.sh
-      args:
-        creates: "{{ homelab_home }}/.zshrc"
-      ignore_errors: true
-
+    # ── Shell (pre-installed in base image) ──────────────────────────
     - name: Set zsh as default shell
       user:
         name: "{{ homelab_user }}"
         shell: /usr/bin/zsh
+
+    # ── OTel mTLS certs (from registration response) ─────────────────
+    - name: Create OTel certs directory
+      file:
+        path: /etc/otel-certs
+        state: directory
+        mode: "0755"
+
+    - name: Write OTel client cert
+      when: tls is defined and tls.client_cert is defined
+      copy:
+        content: "{{ tls.client_cert }}"
+        dest: /etc/otel-certs/client.crt
+        mode: "0644"
+
+    - name: Write OTel client key
+      when: tls is defined and tls.client_key is defined
+      copy:
+        content: "{{ tls.client_key }}"
+        dest: /etc/otel-certs/client.key
+        mode: "0600"
+
+    - name: Write OTel CA cert
+      when: tls is defined and tls.ca_cert is defined
+      copy:
+        content: "{{ tls.ca_cert }}"
+        dest: /etc/otel-certs/ca.crt
+        mode: "0644"
+
+    # ── OTel + Temperature (binaries pre-installed in base image) ───
+    - name: Install temperature exporter script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          while true; do
+            TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+            TEMP_C=$(echo "scale=1; $TEMP/1000" | bc)
+            BODY=$(printf '# HELP node_thermal_zone_temp Temperature in Celsius\n# TYPE node_thermal_zone_temp gauge\nnode_thermal_zone_temp{zone="0"} %s\n' "$TEMP_C")
+            BODY_LEN=${#BODY}
+            printf "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+              "$BODY_LEN" "$BODY" | nc -l -p 9101 -q 1 2>/dev/null || sleep 1
+          done
+        dest: /opt/homelab/temp-exporter.sh
+        mode: "0755"
+
+    - name: Install temperature exporter service
+      copy:
+        content: |
+          [Unit]
+          Description=Temperature metrics exporter (port 9101)
+          After=network.target
+          [Service]
+          Type=simple
+          ExecStart=/opt/homelab/temp-exporter.sh
+          Restart=always
+          RestartSec=5
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/temp-exporter.service
+      notify: start temp exporter
+
+    - name: Create OTel Collector config directory
+      file:
+        path: /etc/otelcol
+        state: directory
+
+    - name: Write OTel Collector agent config
+      copy:
+        content: |
+          receivers:
+            hostmetrics:
+              collection_interval: 30s
+              scrapers:
+                cpu:
+                memory:
+                disk:
+                network:
+                load:
+                filesystem:
+            prometheus:
+              config:
+                scrape_configs:
+                  - job_name: node_temperature
+                    scrape_interval: 30s
+                    static_configs:
+                      - targets: ['localhost:9101']
+
+          processors:
+            batch:
+              timeout: 10s
+            resource:
+              attributes:
+                - key: node.type
+                  value: pi5-worker
+                  action: upsert
+                - key: host.name
+                  value: {{ sanitized_label }}
+                  action: upsert
+                  action: upsert
+
+          exporters:
+            otlphttp:
+              endpoint: https://otel.attlas.uk:4318
+              tls:
+                cert_file: /etc/otel-certs/client.crt
+                key_file: /etc/otel-certs/client.key
+                ca_file: /etc/otel-certs/ca.crt
+
+          service:
+            pipelines:
+              metrics:
+                receivers: [hostmetrics, prometheus]
+                processors: [resource, batch]
+                exporters: [otlphttp]
+        dest: /etc/otelcol/config.yaml
+
+    - name: Install OTel Collector agent service
+      copy:
+        content: |
+          [Unit]
+          Description=OpenTelemetry Collector Agent
+          After=network-online.target temp-exporter.service
+          Wants=network-online.target
+          [Service]
+          Type=simple
+          ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/otelcol/config.yaml
+          Restart=always
+          RestartSec=10
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/otelcol-agent.service
+      notify: start otelcol agent
 
     # ── Healthz daemon ─────────────────────────────────────────────────
     - name: Install healthz script
@@ -223,11 +291,6 @@
           done
         dest: /opt/homelab/healthz.sh
         mode: "0755"
-
-    - name: Install netcat for healthz
-      apt:
-        name: netcat-openbsd
-        state: present
 
     - name: Install healthz systemd unit
       copy:
@@ -251,10 +314,8 @@
         content: |
           #!/usr/bin/env bash
           BOOTSTRAP_URL="https://homelab.attlas.uk"
-          CERT="/etc/homelab/client.crt"
-          KEY="/etc/homelab/client.key"
           RESPONSE=$(curl -sf --connect-timeout 5 --max-time 10 \
-            --cert "$CERT" --key "$KEY" \
+            --cert /etc/otel-certs/client.crt --key /etc/otel-certs/client.key \
             "${BOOTSTRAP_URL}/api/config" 2>/dev/null) || exit 0
           NEW_KEYS=$(echo "$RESPONSE" | jq -r '.ssh.authorized_keys[]? // empty' 2>/dev/null)
           if [[ -z "$NEW_KEYS" ]]; then exit 0; fi
@@ -313,6 +374,20 @@
     - name: start healthz
       systemd:
         name: homelab-healthz
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: start temp exporter
+      systemd:
+        name: temp-exporter
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: start otelcol agent
+      systemd:
+        name: otelcol-agent
         enabled: true
         state: started
         daemon_reload: true

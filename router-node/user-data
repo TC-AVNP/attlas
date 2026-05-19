@@ -2,7 +2,6 @@
 
 hostname: pi-router
 manage_etc_hosts: true
-
 ssh_pwauth: true
 
 users:
@@ -13,27 +12,6 @@ users:
     lock_passwd: false
     passwd: $6$z1IMtZUaoHTEMejl$R8UVDcT0IRATQuaxQUe9SnCtGjQj0Z32LCNmhclkECsob6eQlEh1l1/kkXwo4SXYwCIe8idKWLgPKue0coB6A.
 
-# WiFi — connects to iPhone hotspot automatically on boot
-wifi:
-  wifis:
-    wlan0:
-      dhcp4: true
-      access-points:
-        "Iphone 4E":
-          password: "xadrez12"
-
-packages:
-  - avahi-daemon
-  - dnsmasq
-  - iptables-persistent
-  - netfilter-persistent
-  - modemmanager
-  - network-manager
-  - curl
-  - jq
-  - ansible
-  - git
-
 write_files:
   - path: /opt/router/entrypoint.sh
     permissions: '0755'
@@ -42,11 +20,9 @@ write_files:
       set -euo pipefail
 
       BOOTSTRAP_URL="https://homelab.attlas.uk"
-      BOOTSTRAP_USER="commonlisp"
-      BOOTSTRAP_PASS="xadrez12"
       LOG="/var/log/router-bootstrap.log"
       MARKER="/etc/router/.provisioned"
-      CONFIG_FILE="/etc/router/config.json"
+      CONFIG="/etc/router/config.json"
 
       log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
 
@@ -55,9 +31,16 @@ write_files:
         exit 0
       fi
 
-      mkdir -p /etc/router /etc/cloudflared
+      mkdir -p /etc/router
 
-      # ── Collect hardware info ──────────────────────────────────────
+      # Read token baked into the image by build-image.sh
+      if [[ ! -f /etc/image-token ]]; then
+        log "FATAL: /etc/image-token not found — image was not built with a token"
+        exit 1
+      fi
+      TOKEN=$(cat /etc/image-token)
+
+      # Collect hardware info
       MAC=""
       for iface in eth0 end0 wlan0; do
         if [[ -f "/sys/class/net/${iface}/address" ]]; then
@@ -70,80 +53,73 @@ write_files:
         exit 1
       fi
 
-      HOSTNAME_BASE="pi-router"
       MODEL=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || echo "unknown")
       CPU_CORES=$(nproc)
       MEMORY_MB=$(free -m | awk '/Mem:/{print $2}')
       LAN_IP=$(ip -4 addr show eth0 2>/dev/null | grep -oP '(?<=inet )\d+\.\d+\.\d+\.\d+' || echo "")
 
-      log "Hardware: $MODEL, $CPU_CORES cores, ${MEMORY_MB}MB, MAC=$MAC, IP=$LAN_IP"
+      log "Hardware: $MODEL, $CPU_CORES cores, ${MEMORY_MB}MB, MAC=$MAC"
 
-      # ── Register with bootstrap service (retry with backoff) ───────
       PAYLOAD=$(jq -n \
         --arg mac "$MAC" \
-        --arg host "$HOSTNAME_BASE" \
+        --arg host "pi-router" \
         --arg model "$MODEL" \
         --argjson cpu "$CPU_CORES" \
         --argjson mem "$MEMORY_MB" \
         --arg ip "$LAN_IP" \
-        --arg sub "$HOSTNAME_BASE" \
-        '{mac_address: $mac, hostname: $host, model: $model, cpu_cores: $cpu, memory_mb: $mem, lan_ip: $ip, subdomain: $sub}')
+        '{mac_address: $mac, hostname: $host, model: $model, cpu_cores: $cpu, memory_mb: $mem, lan_ip: $ip}')
 
+      # Register with backoff
       BACKOFF=5
       MAX_BACKOFF=300
-
-      log "Registering with $BOOTSTRAP_URL (retries until reachable)..."
+      log "Registering with $BOOTSTRAP_URL..."
       while true; do
-        RESPONSE=$(curl -sf --connect-timeout 10 --max-time 30 \
-          -u "${BOOTSTRAP_USER}:${BOOTSTRAP_PASS}" \
-          -X POST "${BOOTSTRAP_URL}/api/register-router" \
+        HTTP_CODE=$(curl -sf -o /tmp/reg.json -w "%{http_code}" \
+          --connect-timeout 10 --max-time 30 \
+          -X POST "${BOOTSTRAP_URL}/api/register/router" \
           -H "Content-Type: application/json" \
-          -d "$PAYLOAD" 2>/dev/null) && break
+          -H "X-Image-Token: ${TOKEN}" \
+          -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
 
-        log "Unreachable, retrying in ${BACKOFF}s..."
+        if [[ "$HTTP_CODE" == "201" ]]; then break; fi
+        if [[ "$HTTP_CODE" == "403" ]]; then
+          log "Token revoked or wrong type — cannot register"
+          exit 1
+        fi
+        log "HTTP $HTTP_CODE, retrying in ${BACKOFF}s..."
         sleep $BACKOFF
         BACKOFF=$((BACKOFF * 2))
         if [[ $BACKOFF -gt $MAX_BACKOFF ]]; then BACKOFF=$MAX_BACKOFF; fi
       done
 
-      log "Registered: $(echo $RESPONSE | jq -c '{node_id, hostname, subdomain}')"
+      mv /tmp/reg.json "$CONFIG"
+      log "Registered: $(python3 -c "import json; r=json.load(open('$CONFIG')); print(f'node_id={r[\"node_id\"]} label={r[\"label\"]}')")"
 
-      # Save tunnel token to file for cloudflared
-      echo -n "$(echo "$RESPONSE" | jq -r '.tunnel_token')" > /etc/cloudflared/tunnel-token
-      chmod 600 /etc/cloudflared/tunnel-token
+      # Extract and run playbook
+      python3 -c "
+      import json, base64
+      with open('$CONFIG') as f:
+          r = json.load(f)
+      with open('/tmp/playbook.tar.gz', 'wb') as f:
+          f.write(base64.b64decode(r['playbook']))
+      "
+      mkdir -p /opt/provision
+      tar -xzf /tmp/playbook.tar.gz -C /opt/provision/
+      rm -f /tmp/playbook.tar.gz
 
-      # ── Fetch config (PAT, SSH keys) ───────────────────────────────
-      CONFIG=$(curl -sf --connect-timeout 5 --max-time 10 \
-        -u "${BOOTSTRAP_USER}:${BOOTSTRAP_PASS}" \
-        "${BOOTSTRAP_URL}/api/config" 2>/dev/null || echo "{}")
-
-      echo "$RESPONSE" > "$CONFIG_FILE"
-      echo "$CONFIG" > /etc/router/remote-config.json
-      log "Config saved"
-
-      # ── Ansible-pull ───────────────────────────────────────────────
-      GITHUB_PAT=$(echo "$CONFIG" | jq -r '.github_pat // empty')
-      if [[ -z "$GITHUB_PAT" ]]; then
-        log "ERROR: No GitHub PAT received. Cannot run ansible-pull."
-        exit 1
-      fi
-
-      log "Running ansible-pull..."
-      ansible-pull \
-        -U "https://${GITHUB_PAT}@github.com/TC-AVNP/attlas.git" \
-        -d /opt/attlas \
+      log "Running ansible-playbook..."
+      ansible-playbook \
         -i localhost, \
         --limit localhost \
-        router-node/playbook.yml \
-        -e "@${CONFIG_FILE}" \
-        -e "@/etc/router/remote-config.json" \
+        /opt/provision/playbook.yml \
+        -e "@${CONFIG}" \
         2>&1 | tee -a "$LOG"
 
       if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
         log "Provisioning complete!"
         touch "$MARKER"
       else
-        log "ERROR: ansible-pull failed. Check $LOG"
+        log "ERROR: ansible-playbook failed"
         exit 1
       fi
 
@@ -154,17 +130,16 @@ write_files:
       After=network-online.target
       Wants=network-online.target
       ConditionPathExists=!/etc/router/.provisioned
-
       [Service]
       Type=oneshot
       ExecStart=/opt/router/entrypoint.sh
       RemainAfterExit=true
-      TimeoutStartSec=600
-
+      TimeoutStartSec=900
       [Install]
       WantedBy=multi-user.target
 
 runcmd:
+  - mkdir -p /opt/router
   - systemctl daemon-reload
   - systemctl enable router-provision.service
   - systemctl start router-provision.service

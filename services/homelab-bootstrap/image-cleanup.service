@@ -1,0 +1,6 @@
+[Unit]
+Description=Clean up old golden images
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'find /var/lib/homelab-bootstrap/images -name "*.img" -mmin +1440 -delete 2>/dev/null; echo "Image cleanup done"'

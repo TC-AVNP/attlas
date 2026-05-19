@@ -426,18 +426,233 @@ function HomelabSSHKeys() {
   )
 }
 
+function HomelabImageBuilder({ onImageBuilt }) {
+  const [imageType, setImageType] = useState('router')
+  const [label, setLabel] = useState('')
+  const [building, setBuilding] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [progressMsg, setProgressMsg] = useState('')
+  const [downloadUrl, setDownloadUrl] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadProgress, setDownloadProgress] = useState(0)
+  const { showToast } = useStatus()
+
+  const downloadImage = async (url) => {
+    setDownloading(true)
+    setDownloadProgress(0)
+    try {
+      const res = await fetch(url)
+      const contentLength = +res.headers.get('Content-Length') || 0
+      const reader = res.body.getReader()
+      const chunks = []
+      let received = 0
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        received += value.length
+        if (contentLength > 0) {
+          setDownloadProgress(Math.round((received / contentLength) * 100))
+        }
+      }
+
+      const blob = new Blob(chunks)
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = url.split('/').pop()
+      a.click()
+      URL.revokeObjectURL(blobUrl)
+      showToast('Download complete', 'success')
+    } catch (e) {
+      showToast('Download failed: ' + e.message, 'error')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const buildImage = async () => {
+    if (!label.trim()) {
+      showToast('Label is required', 'error')
+      return
+    }
+    setBuilding(true)
+    setProgress(0)
+    setProgressMsg('Starting...')
+    setDownloadUrl(null)
+
+    try {
+      const res = await fetch(`/api/homelab/provision/${imageType}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: label.trim() }),
+      })
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.error) {
+              showToast(data.error, 'error')
+              setBuilding(false)
+              return
+            }
+            if (data.progress !== undefined) {
+              setProgress(data.progress)
+              setProgressMsg(data.message || '')
+            }
+            if (data.done) {
+              setDownloadUrl(data.download_url)
+              setProgress(100)
+              setProgressMsg('Ready to download')
+              showToast(`Image built: ${data.label}`, 'success')
+              setLabel('')
+              if (onImageBuilt) onImageBuilt()
+            }
+          } catch {}
+        }
+      }
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setBuilding(false)
+    }
+  }
+
+  return (
+    <div className="homelab-image-builder">
+      <div className="section-label-sm">Generate Image</div>
+      <div className="homelab-image-form">
+        <select className="input" value={imageType} onChange={e => setImageType(e.target.value)} disabled={building}>
+          <option value="router">Router</option>
+          <option value="worker">Worker</option>
+        </select>
+        <input
+          className="input"
+          type="text"
+          placeholder="Label (e.g. Kitchen Pi)"
+          value={label}
+          onChange={e => setLabel(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && !building && buildImage()}
+          disabled={building}
+        />
+        <Button variant="ghost" onClick={buildImage} disabled={building}>
+          {building ? `${progress}%` : 'generate'}
+        </Button>
+      </div>
+      {building && (
+        <div className="homelab-progress-bar-container">
+          <div className="homelab-progress-bar" style={{ width: `${progress}%` }} />
+          <span className="homelab-progress-text">{progressMsg}</span>
+        </div>
+      )}
+      {downloadUrl && !downloading && (
+        <button className="homelab-image-download" onClick={() => downloadImage(downloadUrl)}>
+          Download image
+        </button>
+      )}
+      {downloading && (
+        <div className="homelab-progress-bar-container">
+          <div className="homelab-progress-bar homelab-progress-download" style={{ width: `${downloadProgress}%` }} />
+          <span className="homelab-progress-text">Downloading... {downloadProgress}%</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HomelabTokensList({ refreshKey }) {
+  const [tokens, setTokens] = useState(null)
+  const { showToast } = useStatus()
+
+  const loadTokens = async () => {
+    try {
+      const res = await fetch('/api/homelab/tokens')
+      setTokens(await res.json())
+    } catch {
+      setTokens([])
+    }
+  }
+
+  useEffect(() => { loadTokens() }, [refreshKey])
+
+  const revoke = async (id, label) => {
+    if (!confirm(`Revoke "${label}"? The machine using this image will be permanently blocked.`)) return
+    try {
+      const res = await fetch(`/api/homelab/tokens/${id}/revoke`, { method: 'POST' })
+      if (!res.ok) throw new Error('Revoke failed')
+      showToast(`Revoked: ${label}`, 'success')
+      loadTokens()
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
+  if (tokens === null) return null
+  if (tokens.length === 0) return null
+
+  const statusColor = (s) => s === 'active' ? 'yellow' : s === 'redeemed' ? 'green' : 'red'
+
+  return (
+    <div className="homelab-tokens">
+      <div className="section-label-sm">Issued Images</div>
+      {tokens.map(tok => (
+        <div key={tok.id} className={`homelab-token ${tok.status === 'revoked' ? 'revoked' : ''}`}>
+          <div className="homelab-token-header">
+            <StatusDot color={statusColor(tok.status)} />
+            <span className="homelab-token-label">{tok.label}</span>
+            <span className="homelab-token-type">{tok.node_type}</span>
+            <span className="muted">{tok.status}</span>
+          </div>
+          <div className="homelab-token-meta">
+            {tok.hostname && <span>node: {tok.hostname}</span>}
+            {tok.mac_address && <span>mac: {tok.mac_address}</span>}
+            <span>created: {new Date(tok.created_at + 'Z').toLocaleDateString()}</span>
+          </div>
+          {tok.status !== 'revoked' && (
+            <button className="link-btn dismiss" onClick={() => revoke(tok.id, tok.label)} title="revoke">revoke</button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function HomelabNodesCard() {
   const [nodes, setNodes] = useState(null)
+  const [routerNodes, setRouterNodes] = useState(null)
+  const [tokenRefresh, setTokenRefresh] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     const load = async () => {
       try {
-        const res = await fetch('/api/homelab/nodes')
-        const data = await res.json()
-        if (!cancelled) setNodes(data)
+        const [wRes, rRes] = await Promise.all([
+          fetch('/api/homelab/nodes'),
+          fetch('/api/homelab/router-nodes').catch(() => ({ json: () => [] }))
+        ])
+        const workers = await wRes.json()
+        let routers = []
+        try { routers = await rRes.json() } catch {}
+        if (!cancelled) {
+          setNodes(workers)
+          setRouterNodes(routers)
+        }
       } catch {
-        if (!cancelled) setNodes([])
+        if (!cancelled) { setNodes([]); setRouterNodes([]) }
       }
     }
     load()
@@ -448,41 +663,50 @@ function HomelabNodesCard() {
   if (nodes === null) {
     return (
       <Card label="homelab · pi cluster" className="full">
-        <div className="muted">loading…</div>
+        <div className="muted">loading...</div>
       </Card>
     )
   }
 
-  const totalCores = nodes.reduce((sum, n) => sum + (n.cpu_cores || 0), 0)
-  const totalMemGB = Math.round(nodes.reduce((sum, n) => sum + (n.memory_mb || 0), 0) / 1024)
+  const allNodes = [...(nodes || []), ...(routerNodes || [])]
+  const totalCores = allNodes.reduce((sum, n) => sum + (n.cpu_cores || 0), 0)
+  const totalMemGB = Math.round(allNodes.reduce((sum, n) => sum + (n.memory_mb || 0), 0) / 1024)
+
+  const renderNode = (node, type) => (
+    <div key={node.mac_address} className="homelab-node">
+      <div className="homelab-node-header">
+        <StatusDot color="green" />
+        <span className="homelab-node-name">{node.hostname}</span>
+        <span className="homelab-node-type-badge">{type}</span>
+        <span className="muted">{node.model}</span>
+      </div>
+      <div className="homelab-node-specs">
+        <span>{node.cpu_cores} cores</span>
+        <span>{node.memory_mb} MB</span>
+        <span>{node.lan_ip || '--'}</span>
+      </div>
+    </div>
+  )
 
   return (
     <Card label="homelab · pi cluster" className="full">
       <div className="homelab-summary">
-        <span className="homelab-stat"><strong>{nodes.length}</strong> nodes</span>
+        <span className="homelab-stat"><strong>{allNodes.length}</strong> nodes</span>
         <span className="homelab-stat"><strong>{totalCores}</strong> cores</span>
         <span className="homelab-stat"><strong>{totalMemGB} GB</strong> RAM</span>
       </div>
-      {nodes.length === 0 ? (
-        <div className="muted">no nodes registered — boot a Pi with the golden image to register</div>
+
+      {allNodes.length === 0 ? (
+        <div className="muted">no nodes registered -- generate an image and flash a Pi</div>
       ) : (
         <div className="homelab-nodes">
-          {nodes.map(node => (
-            <div key={node.mac_address} className="homelab-node">
-              <div className="homelab-node-header">
-                <StatusDot color="green" />
-                <span className="homelab-node-name">{node.hostname}</span>
-                <span className="muted">{node.model}</span>
-              </div>
-              <div className="homelab-node-specs">
-                <span>{node.cpu_cores} cores</span>
-                <span>{node.memory_mb} MB</span>
-                <span>{node.lan_ip || '—'}</span>
-              </div>
-            </div>
-          ))}
+          {(routerNodes || []).map(n => renderNode(n, 'router'))}
+          {(nodes || []).map(n => renderNode(n, 'worker'))}
         </div>
       )}
+
+      <HomelabImageBuilder onImageBuilt={() => setTokenRefresh(k => k + 1)} />
+      <HomelabTokensList refreshKey={tokenRefresh} />
       <HomelabSSHKeys />
     </Card>
   )

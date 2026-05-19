@@ -20,4 +20,6 @@
 /services/splitsies/server/splitsies
 /services/splitsies-gateway/splitsies-gateway
 /services/petboard/server/petboard
-basic-node/ubuntu-arm64-raspi.img
+# Pi base images (built via base-image/build-base-image.sh)
+*.img
+base-image/ubuntu-arm64-raspi.img

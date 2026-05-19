@@ -1,16 +1,25 @@
 package main
 
 import (
+	"archive/tar"
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
 	"embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
-	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,6 +38,60 @@ var migrationsFS embed.FS
 
 var db *sql.DB
 
+// --- Types ---
+
+type RegisterRequest struct {
+	MACAddress string `json:"mac_address"`
+	NVMeSerial string `json:"nvme_serial"`
+	Hostname   string `json:"hostname"`
+	Model      string `json:"model"`
+	CPUCores   int    `json:"cpu_cores"`
+	MemoryMB   int    `json:"memory_mb"`
+	LanIP      string `json:"lan_ip"`
+}
+
+type TLSConfig struct {
+	ClientCert string `json:"client_cert"`
+	ClientKey  string `json:"client_key"`
+	CACert     string `json:"ca_cert"`
+}
+
+type SSHConfig struct {
+	AuthorizedKeys []string `json:"authorized_keys"`
+}
+
+type JoinConfig struct {
+	APIServerEndpoint string `json:"api_server_endpoint"`
+	Token             string `json:"token"`
+	CACertHash        string `json:"ca_cert_hash"`
+	CertificateKey    string `json:"certificate_key"`
+	ControlPlane      bool   `json:"control_plane"`
+}
+
+type RegisterResponse struct {
+	NodeID   int         `json:"node_id"`
+	Hostname string      `json:"hostname"`
+	Label    string      `json:"label"`
+	Message  string      `json:"message"`
+	TLS      *TLSConfig  `json:"tls,omitempty"`
+	SSH      *SSHConfig  `json:"ssh,omitempty"`
+	Playbook string      `json:"playbook,omitempty"`
+	Join     *JoinConfig `json:"join,omitempty"`
+}
+
+type ImageToken struct {
+	ID         int    `json:"id"`
+	NodeType   string `json:"node_type"`
+	Status     string `json:"status"`
+	Label      string `json:"label"`
+	CertSerial string `json:"cert_serial"`
+	MACAddress string `json:"mac_address"`
+	Hostname   string `json:"hostname"`
+	CreatedAt  string `json:"created_at"`
+	RedeemedAt string `json:"redeemed_at,omitempty"`
+	RevokedAt  string `json:"revoked_at,omitempty"`
+}
+
 type Node struct {
 	ID              int    `json:"id"`
 	MACAddress      string `json:"mac_address"`
@@ -42,240 +105,7 @@ type Node struct {
 	RegisteredAt    string `json:"registered_at"`
 }
 
-type RegisterRequest struct {
-	MACAddress string `json:"mac_address"`
-	NVMeSerial string `json:"nvme_serial"`
-	Hostname   string `json:"hostname"`
-	Model      string `json:"model"`
-	CPUCores   int    `json:"cpu_cores"`
-	MemoryMB   int    `json:"memory_mb"`
-	LanIP      string `json:"lan_ip"`
-}
-
-type JoinConfig struct {
-	APIServerEndpoint string `json:"api_server_endpoint"`
-	Token             string `json:"token"`
-	CACertHash        string `json:"ca_cert_hash"`
-	CertificateKey    string `json:"certificate_key"`
-	ControlPlane      bool   `json:"control_plane"`
-}
-
-type SSHConfig struct {
-	AuthorizedKeys []string `json:"authorized_keys"`
-}
-
-type RegisterResponse struct {
-	NodeID   int         `json:"node_id"`
-	Hostname string      `json:"hostname"`
-	Message  string      `json:"message"`
-	Join     *JoinConfig `json:"join,omitempty"`
-	SSH      *SSHConfig  `json:"ssh,omitempty"`
-}
-
-// --- Router node types ---
-
-type RouterNode struct {
-	ID           int    `json:"id"`
-	MACAddress   string `json:"mac_address"`
-	Hostname     string `json:"hostname"`
-	Model        string `json:"model"`
-	CPUCores     int    `json:"cpu_cores"`
-	MemoryMB     int    `json:"memory_mb"`
-	LanIP        string `json:"lan_ip"`
-	Subdomain    string `json:"subdomain"`
-	TunnelID     string `json:"tunnel_id"`
-	RegisteredAt string `json:"registered_at"`
-}
-
-type RegisterRouterRequest struct {
-	MACAddress string `json:"mac_address"`
-	Hostname   string `json:"hostname"`
-	Model      string `json:"model"`
-	CPUCores   int    `json:"cpu_cores"`
-	MemoryMB   int    `json:"memory_mb"`
-	LanIP      string `json:"lan_ip"`
-	Subdomain  string `json:"subdomain"`
-}
-
-type RegisterRouterResponse struct {
-	NodeID      int        `json:"node_id"`
-	Hostname    string     `json:"hostname"`
-	Subdomain   string     `json:"subdomain"`
-	TunnelToken string     `json:"tunnel_token"`
-	Message     string     `json:"message"`
-	SSH         *SSHConfig `json:"ssh,omitempty"`
-}
-
-// --- Cloudflare API client ---
-
-type cfClient struct {
-	token     string
-	accountID string
-	zoneID    string
-	http      *http.Client
-}
-
-func newCFClient() *cfClient {
-	token := os.Getenv("CLOUDFLARE_API_TOKEN")
-	accountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
-	zoneID := envOr("CLOUDFLARE_ZONE_ID", "813c7bfa1c9f2b1a02a60c97f3171fa6")
-
-	if token == "" || accountID == "" {
-		return nil
-	}
-	return &cfClient{
-		token:     token,
-		accountID: accountID,
-		zoneID:    zoneID,
-		http:      &http.Client{Timeout: 30 * time.Second},
-	}
-}
-
-func (c *cfClient) do(method, path string, body any) (json.RawMessage, error) {
-	var reader io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			return nil, fmt.Errorf("marshal body: %w", err)
-		}
-		reader = bytes.NewReader(b)
-	}
-
-	req, err := http.NewRequest(method, "https://api.cloudflare.com/client/v4"+path, reader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("cloudflare request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var cfResp struct {
-		Success bool            `json:"success"`
-		Errors  []struct{ Message string } `json:"errors"`
-		Result  json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(respBody, &cfResp); err != nil {
-		return nil, fmt.Errorf("decode cloudflare response: %w (body: %s)", err, string(respBody))
-	}
-	if !cfResp.Success {
-		msgs := make([]string, len(cfResp.Errors))
-		for i, e := range cfResp.Errors {
-			msgs[i] = e.Message
-		}
-		return nil, fmt.Errorf("cloudflare API error: %s", strings.Join(msgs, "; "))
-	}
-	return cfResp.Result, nil
-}
-
-func (c *cfClient) createTunnel(name string) (tunnelID string, err error) {
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
-		return "", fmt.Errorf("generate secret: %w", err)
-	}
-
-	result, err := c.do("POST", "/accounts/"+c.accountID+"/cfd_tunnel", map[string]any{
-		"name":          name,
-		"config_src":    "cloudflare",
-		"tunnel_secret": base64.StdEncoding.EncodeToString(secret),
-	})
-	if err != nil {
-		return "", err
-	}
-
-	var tunnel struct{ ID string `json:"id"` }
-	if err := json.Unmarshal(result, &tunnel); err != nil {
-		return "", fmt.Errorf("decode tunnel: %w", err)
-	}
-	return tunnel.ID, nil
-}
-
-func (c *cfClient) getTunnelToken(tunnelID string) (string, error) {
-	result, err := c.do("GET", "/accounts/"+c.accountID+"/cfd_tunnel/"+tunnelID+"/token", nil)
-	if err != nil {
-		return "", err
-	}
-	var token string
-	if err := json.Unmarshal(result, &token); err != nil {
-		return "", fmt.Errorf("decode token: %w", err)
-	}
-	return token, nil
-}
-
-func (c *cfClient) configureTunnel(tunnelID, hostname string) error {
-	_, err := c.do("PUT", "/accounts/"+c.accountID+"/cfd_tunnel/"+tunnelID+"/configurations", map[string]any{
-		"config": map[string]any{
-			"ingress": []map[string]any{
-				{"hostname": hostname, "service": "http://localhost:80"},
-				{"service": "http_status:404"},
-			},
-		},
-	})
-	return err
-}
-
-func (c *cfClient) createCNAME(subdomain, tunnelID string) (string, error) {
-	// Check if record already exists
-	result, err := c.do("GET", fmt.Sprintf("/zones/%s/dns_records?type=CNAME&name=%s.attlas.uk", c.zoneID, subdomain), nil)
-	if err != nil {
-		return "", err
-	}
-	var existing []struct{ ID string `json:"id"` }
-	json.Unmarshal(result, &existing)
-
-	target := tunnelID + ".cfargotunnel.com"
-
-	if len(existing) > 0 {
-		// Update existing record
-		result, err = c.do("PUT", "/zones/"+c.zoneID+"/dns_records/"+existing[0].ID, map[string]any{
-			"type":    "CNAME",
-			"name":    subdomain,
-			"content": target,
-			"proxied": true,
-		})
-		if err != nil {
-			return "", err
-		}
-		return existing[0].ID, nil
-	}
-
-	// Create new record
-	result, err = c.do("POST", "/zones/"+c.zoneID+"/dns_records", map[string]any{
-		"type":    "CNAME",
-		"name":    subdomain,
-		"content": target,
-		"proxied": true,
-	})
-	if err != nil {
-		return "", err
-	}
-	var record struct{ ID string `json:"id"` }
-	json.Unmarshal(result, &record)
-	return record.ID, nil
-}
-
-func (c *cfClient) deleteTunnel(tunnelID string) error {
-	// Must clean up connections first
-	_, _ = c.do("DELETE", "/accounts/"+c.accountID+"/cfd_tunnel/"+tunnelID+"/connections", nil)
-	_, err := c.do("DELETE", "/accounts/"+c.accountID+"/cfd_tunnel/"+tunnelID, nil)
-	return err
-}
-
-func (c *cfClient) deleteDNSRecord(recordID string) error {
-	_, err := c.do("DELETE", "/zones/"+c.zoneID+"/dns_records/"+recordID, nil)
-	return err
-}
-
-var cf *cfClient
+// --- Main ---
 
 func main() {
 	port := envOr("HOMELAB_PORT", "7697")
@@ -292,21 +122,29 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	cf = newCFClient()
-	if cf != nil {
-		log.Println("Cloudflare tunnel management enabled")
-	} else {
-		log.Println("WARNING: CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID not set — router registration disabled")
-	}
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/register", handleRegister)
+
+	// Registration (token-authenticated)
+	mux.HandleFunc("POST /api/register/worker", handleRegisterWorker)
+	mux.HandleFunc("POST /api/register/router", handleRegisterRouter)
+
+	// Token management
+	mux.HandleFunc("POST /api/tokens/create", handleCreateToken)
+	mux.HandleFunc("GET /api/tokens", handleListTokens)
+	mux.HandleFunc("POST /api/tokens/{id}/revoke", handleRevokeToken)
+
+	// Node inventory
 	mux.HandleFunc("GET /api/nodes", handleListNodes)
-	mux.HandleFunc("GET /api/config", handleConfig)
 	mux.HandleFunc("DELETE /api/nodes/{mac}", handleDeregister)
-	mux.HandleFunc("POST /api/register-router", handleRegisterRouter)
 	mux.HandleFunc("GET /api/router-nodes", handleListRouterNodes)
 	mux.HandleFunc("DELETE /api/router-nodes/{mac}", handleDeregisterRouter)
+
+	// Config (SSH key refresh for existing nodes)
+	mux.HandleFunc("GET /api/config", handleConfig)
+
+	// Image building
+	mux.HandleFunc("POST /api/provision/{type}", handleProvisionImage)
+	mux.HandleFunc("GET /api/provision/download/{filename}", handleDownloadImage)
 
 	addr := "127.0.0.1:" + port
 	srv := &http.Server{Addr: addr, Handler: mux}
@@ -328,174 +166,291 @@ func main() {
 	log.Println("shutdown complete")
 }
 
-func handleRegister(w http.ResponseWriter, r *http.Request) {
+// --- Token validation ---
+
+// validateToken extracts the X-Image-Token header, hashes it, and looks up the token.
+// Returns the token row and status. On error, writes an HTTP error and returns nil.
+func validateToken(w http.ResponseWriter, r *http.Request, expectedType string) *ImageToken {
+	rawToken := r.Header.Get("X-Image-Token")
+	if rawToken == "" {
+		http.Error(w, `{"error":"missing X-Image-Token header"}`, http.StatusUnauthorized)
+		return nil
+	}
+
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	var tok ImageToken
+	var redeemedAt, revokedAt sql.NullString
+	err := db.QueryRow(`SELECT id, node_type, status, label, cert_serial, mac_address, hostname,
+		created_at, redeemed_at, revoked_at FROM image_tokens WHERE token_hash = ?`, tokenHash).
+		Scan(&tok.ID, &tok.NodeType, &tok.Status, &tok.Label, &tok.CertSerial,
+			&tok.MACAddress, &tok.Hostname, &tok.CreatedAt, &redeemedAt, &revokedAt)
+	if err != nil {
+		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+		return nil
+	}
+	if redeemedAt.Valid {
+		tok.RedeemedAt = redeemedAt.String
+	}
+	if revokedAt.Valid {
+		tok.RevokedAt = revokedAt.String
+	}
+
+	if tok.Status == "revoked" {
+		http.Error(w, `{"error":"token revoked"}`, http.StatusForbidden)
+		return nil
+	}
+
+	if tok.NodeType != expectedType {
+		http.Error(w, fmt.Sprintf(`{"error":"token is for %s, not %s"}`, tok.NodeType, expectedType), http.StatusForbidden)
+		return nil
+	}
+
+	return &tok
+}
+
+// --- Registration handlers ---
+
+func handleRegisterWorker(w http.ResponseWriter, r *http.Request) {
+	tok := validateToken(w, r, "worker")
+	if tok == nil {
+		return
+	}
+	handleRegistration(w, r, tok, "worker")
+}
+
+func handleRegisterRouter(w http.ResponseWriter, r *http.Request) {
+	tok := validateToken(w, r, "router")
+	if tok == nil {
+		return
+	}
+	handleRegistration(w, r, tok, "router")
+}
+
+func handleRegistration(w http.ResponseWriter, r *http.Request, tok *ImageToken, nodeType string) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
 		return
 	}
-
 	if req.MACAddress == "" || req.Hostname == "" {
 		http.Error(w, `{"error":"mac_address and hostname are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Extract client cert fingerprint from Caddy header
-	certFingerprint := r.Header.Get("X-Client-Cert-Fingerprint")
-	if certFingerprint == "" {
-		certFingerprint = "unknown"
+	var tlsConfig *TLSConfig
+
+	if tok.Status == "redeemed" {
+		// Return stored cert (idempotent re-registration)
+		tlsConfig = &TLSConfig{
+			ClientCert: tok.CertSerial, // we'll fix this below
+		}
+		// Load stored certs from token row
+		var certPEM, keyPEM, caPEM string
+		db.QueryRow("SELECT cert_pem, key_pem, ca_pem FROM image_tokens WHERE id = ?", tok.ID).
+			Scan(&certPEM, &keyPEM, &caPEM)
+		tlsConfig = &TLSConfig{
+			ClientCert: certPEM,
+			ClientKey:  keyPEM,
+			CACert:     caPEM,
+		}
+
+		// Update hardware info
+		table := "nodes"
+		if nodeType == "router" {
+			table = "router_nodes"
+		}
+		db.Exec(fmt.Sprintf(`UPDATE %s SET hostname=?, model=?, cpu_cores=?, memory_mb=?, lan_ip=?, registered_at=datetime('now')
+			WHERE mac_address=?`, table), req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP, req.MACAddress)
+
+		log.Printf("re-registration: %s (%s) — token %d, returning stored cert", req.Hostname, req.MACAddress, tok.ID)
+	} else {
+		// First registration — generate cert
+		tls, certSerial, certFingerprint, err := generateClientCert(tok.Label, req.MACAddress)
+		if err != nil {
+			log.Printf("cert generation error: %v", err)
+			http.Error(w, `{"error":"failed to generate certificate"}`, http.StatusInternalServerError)
+			return
+		}
+		tlsConfig = tls
+
+		// Store cert in token row and mark redeemed
+		db.Exec(`UPDATE image_tokens SET status='redeemed', cert_serial=?, cert_pem=?, key_pem=?, ca_pem=?,
+			mac_address=?, hostname=?, redeemed_at=datetime('now') WHERE id=?`,
+			certSerial, tls.ClientCert, tls.ClientKey, tls.CACert,
+			req.MACAddress, req.Hostname, tok.ID)
+
+		// Insert into node inventory
+		if nodeType == "worker" {
+			db.Exec(`INSERT INTO nodes (mac_address, nvme_serial, hostname, model, cpu_cores, memory_mb, lan_ip, cert_fingerprint, cert_serial)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(mac_address) DO UPDATE SET hostname=excluded.hostname, model=excluded.model,
+				cpu_cores=excluded.cpu_cores, memory_mb=excluded.memory_mb, lan_ip=excluded.lan_ip,
+				cert_fingerprint=excluded.cert_fingerprint, cert_serial=excluded.cert_serial, registered_at=datetime('now')`,
+				req.MACAddress, req.NVMeSerial, req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP, certFingerprint, certSerial)
+		} else {
+			db.Exec(`INSERT INTO router_nodes (mac_address, hostname, model, cpu_cores, memory_mb, lan_ip, subdomain, tunnel_id, tunnel_token, dns_record_id, cert_serial)
+				VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?)
+				ON CONFLICT(mac_address) DO UPDATE SET hostname=excluded.hostname, model=excluded.model,
+				cpu_cores=excluded.cpu_cores, memory_mb=excluded.memory_mb, lan_ip=excluded.lan_ip,
+				cert_serial=excluded.cert_serial, registered_at=datetime('now')`,
+				req.MACAddress, req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP, certSerial)
+		}
+
+		log.Printf("registered %s: %s (%s) — token %d, cert serial %s", nodeType, req.Hostname, req.MACAddress, tok.ID, certSerial)
 	}
 
-	// Upsert: if MAC already exists, update the record
-	_, err := db.Exec(`
-		INSERT INTO nodes (mac_address, nvme_serial, hostname, model, cpu_cores, memory_mb, lan_ip, cert_fingerprint)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(mac_address) DO UPDATE SET
-			nvme_serial = excluded.nvme_serial,
-			hostname = excluded.hostname,
-			model = excluded.model,
-			cpu_cores = excluded.cpu_cores,
-			memory_mb = excluded.memory_mb,
-			lan_ip = excluded.lan_ip,
-			cert_fingerprint = excluded.cert_fingerprint,
-			registered_at = datetime('now')
-	`, req.MACAddress, req.NVMeSerial, req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP, certFingerprint)
+	// Build playbook tarball
+	playbook, err := createPlaybookTarball(nodeType)
 	if err != nil {
-		log.Printf("register error: %v", err)
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		log.Printf("playbook tarball error: %v", err)
+		http.Error(w, `{"error":"failed to bundle playbook"}`, http.StatusInternalServerError)
 		return
 	}
 
+	// Get node ID
 	var nodeID int
-	db.QueryRow("SELECT id FROM nodes WHERE mac_address = ?", req.MACAddress).Scan(&nodeID)
-
-	// Generate kubeadm join credentials for this node
-	join, err := generateJoinConfig()
-	if err != nil {
-		log.Printf("warning: could not generate join config: %v", err)
-		// Registration succeeds even if join token generation fails —
-		// the Pi can retry or join manually later
+	if nodeType == "worker" {
+		db.QueryRow("SELECT id FROM nodes WHERE mac_address = ?", req.MACAddress).Scan(&nodeID)
+	} else {
+		db.QueryRow("SELECT id FROM router_nodes WHERE mac_address = ?", req.MACAddress).Scan(&nodeID)
 	}
-
-	// Load SSH authorized keys from env/file
-	ssh := getSSHConfig()
 
 	resp := RegisterResponse{
 		NodeID:   nodeID,
 		Hostname: req.Hostname,
+		Label:    tok.Label,
 		Message:  "registered",
-		Join:     join,
-		SSH:      ssh,
+		TLS:      tlsConfig,
+		SSH:      getSSHConfig(),
+		Playbook: playbook,
+	}
+
+	// Include k8s join config for workers
+	if nodeType == "worker" {
+		join, err := generateJoinConfig()
+		if err != nil {
+			log.Printf("warning: could not generate join config: %v", err)
+		}
+		resp.Join = join
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resp)
-	log.Printf("registered node: %s (%s) — %s, %d cores, %d MB RAM", req.Hostname, req.MACAddress, req.Model, req.CPUCores, req.MemoryMB)
 }
 
-// generateJoinConfig creates a short-lived kubeadm join token and
-// returns the full join configuration the Pi needs to join the cluster.
-// Uses sudo for kubeadm commands (configured in sudoers by install.sh).
-func generateJoinConfig() (*JoinConfig, error) {
-	// Create a token with 1h TTL (enough for the Pi to join)
-	tokenOut, err := exec.Command("sudo", "kubeadm", "token", "create", "--ttl", "1h").Output()
+// --- Token CRUD ---
+
+func handleCreateToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NodeType string `json:"node_type"`
+		Label    string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.NodeType != "router" && req.NodeType != "worker" {
+		http.Error(w, `{"error":"node_type must be 'router' or 'worker'"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Label == "" {
+		http.Error(w, `{"error":"label is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Generate random token
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		http.Error(w, `{"error":"failed to generate token"}`, http.StatusInternalServerError)
+		return
+	}
+	rawToken := hex.EncodeToString(tokenBytes)
+
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	result, err := db.Exec(`INSERT INTO image_tokens (token_hash, node_type, label) VALUES (?, ?, ?)`,
+		tokenHash, req.NodeType, req.Label)
 	if err != nil {
-		return nil, fmt.Errorf("kubeadm token create: %w", err)
-	}
-	token := strings.TrimSpace(string(tokenOut))
-
-	// Get the CA cert hash for discovery
-	hashOut, err := exec.Command("bash", "-c",
-		"openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | "+
-			"openssl rsa -pubin -outform der 2>/dev/null | "+
-			"openssl dgst -sha256 -hex | sed 's/^.* //'").Output()
-	if err != nil {
-		return nil, fmt.Errorf("ca cert hash: %w", err)
-	}
-	caHash := "sha256:" + strings.TrimSpace(string(hashOut))
-
-	// Upload certs and get the certificate key (for control-plane join)
-	certKeyOut, err := exec.Command("sudo", "kubeadm", "init", "phase", "upload-certs", "--upload-certs").Output()
-	if err != nil {
-		return nil, fmt.Errorf("upload-certs: %w", err)
-	}
-	// The certificate key is the last line of output
-	lines := strings.Split(strings.TrimSpace(string(certKeyOut)), "\n")
-	certKey := strings.TrimSpace(lines[len(lines)-1])
-
-	// Get the API server endpoint — use env var (set in systemd unit)
-	// or fall back to kubectl config
-	endpoint := envOr("HOMELAB_API_ENDPOINT", "")
-	if endpoint == "" {
-		epOut, err := exec.Command("kubectl", "config", "view",
-			"--minify", "-o", "jsonpath={.clusters[0].cluster.server}").Output()
-		if err != nil {
-			return nil, fmt.Errorf("get api endpoint: %w", err)
-		}
-		endpoint = strings.TrimSpace(string(epOut))
+		log.Printf("create token error: %v", err)
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
 	}
 
-	return &JoinConfig{
-		APIServerEndpoint: endpoint,
-		Token:             token,
-		CACertHash:        caHash,
-		CertificateKey:    certKey,
-		ControlPlane:      true,
-	}, nil
-}
+	tokenID, _ := result.LastInsertId()
+	log.Printf("created %s token %d: %q", req.NodeType, tokenID, req.Label)
 
-// handleConfig returns the current node configuration (SSH keys, secrets).
-// Pis poll this every 30s to pick up key changes.
-func handleConfig(w http.ResponseWriter, r *http.Request) {
-	ssh := getSSHConfig()
-	resp := map[string]any{
-		"ssh":        ssh,
-		"github_pat": envOr("HOMELAB_GITHUB_PAT", ""),
-	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{
+		"id":        tokenID,
+		"token":     rawToken,
+		"node_type": req.NodeType,
+		"label":     req.Label,
+	})
 }
 
-// getSSHConfig reads authorized keys from HOMELAB_SSH_KEYS env var (newline-separated)
-// or from a file at HOMELAB_SSH_KEYS_FILE (one key per line).
-func getSSHConfig() *SSHConfig {
-	// Try env var first
-	if keys := os.Getenv("HOMELAB_SSH_KEYS"); keys != "" {
-		var parsed []string
-		for _, k := range strings.Split(keys, "\n") {
-			k = strings.TrimSpace(k)
-			if k != "" && !strings.HasPrefix(k, "#") {
-				parsed = append(parsed, k)
-			}
-		}
-		if len(parsed) > 0 {
-			return &SSHConfig{AuthorizedKeys: parsed}
-		}
-	}
-
-	// Try file
-	filePath := envOr("HOMELAB_SSH_KEYS_FILE", "/var/lib/homelab-bootstrap/authorized_keys")
-	data, err := os.ReadFile(filePath)
+func handleListTokens(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT id, node_type, status, label, cert_serial, mac_address, hostname,
+		created_at, redeemed_at, revoked_at FROM image_tokens ORDER BY created_at DESC`)
 	if err != nil {
-		return nil
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	tokens := []ImageToken{}
+	for rows.Next() {
+		var tok ImageToken
+		var redeemedAt, revokedAt sql.NullString
+		if err := rows.Scan(&tok.ID, &tok.NodeType, &tok.Status, &tok.Label, &tok.CertSerial,
+			&tok.MACAddress, &tok.Hostname, &tok.CreatedAt, &redeemedAt, &revokedAt); err != nil {
+			continue
+		}
+		if redeemedAt.Valid {
+			tok.RedeemedAt = redeemedAt.String
+		}
+		if revokedAt.Valid {
+			tok.RevokedAt = revokedAt.String
+		}
+		tokens = append(tokens, tok)
 	}
 
-	var keys []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			keys = append(keys, line)
-		}
-	}
-	if len(keys) > 0 {
-		return &SSHConfig{AuthorizedKeys: keys}
-	}
-	return nil
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokens)
 }
+
+func handleRevokeToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"token id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec(`UPDATE image_tokens SET status='revoked', revoked_at=datetime('now') WHERE id=? AND status != 'revoked'`, id)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		http.Error(w, `{"error":"token not found or already revoked"}`, http.StatusNotFound)
+		return
+	}
+
+	log.Printf("revoked token %s", id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "revoked", "id": id})
+}
+
+// --- Node inventory ---
 
 func handleListNodes(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, mac_address, nvme_serial, hostname, model, cpu_cores, memory_mb, lan_ip, cert_fingerprint, registered_at FROM nodes ORDER BY registered_at DESC")
+	rows, err := db.Query(`SELECT id, mac_address, nvme_serial, hostname, model, cpu_cores, memory_mb, lan_ip, cert_fingerprint, registered_at
+		FROM nodes ORDER BY registered_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
@@ -517,145 +472,23 @@ func handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 func handleDeregister(w http.ResponseWriter, r *http.Request) {
 	mac := r.PathValue("mac")
-	if mac == "" {
-		http.Error(w, `{"error":"mac address required"}`, http.StatusBadRequest)
-		return
-	}
-
 	result, err := db.Exec("DELETE FROM nodes WHERE mac_address = ?", mac)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		http.Error(w, `{"error":"node not found"}`, http.StatusNotFound)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "deregistered", "mac_address": mac})
 	log.Printf("deregistered node: %s", mac)
 }
 
-// --- Router node handlers ---
-
-func handleRegisterRouter(w http.ResponseWriter, r *http.Request) {
-	if cf == nil {
-		http.Error(w, `{"error":"tunnel management not configured — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID"}`, http.StatusServiceUnavailable)
-		return
-	}
-
-	var req RegisterRouterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
-		return
-	}
-	if req.MACAddress == "" || req.Hostname == "" {
-		http.Error(w, `{"error":"mac_address and hostname are required"}`, http.StatusBadRequest)
-		return
-	}
-	if req.Subdomain == "" {
-		req.Subdomain = req.Hostname
-	}
-
-	// Check if this router is already registered (idempotent re-registration)
-	var existing struct {
-		id          int
-		tunnelToken string
-		subdomain   string
-	}
-	err := db.QueryRow("SELECT id, tunnel_token, subdomain FROM router_nodes WHERE mac_address = ?", req.MACAddress).
-		Scan(&existing.id, &existing.tunnelToken, &existing.subdomain)
-	if err == nil {
-		// Already registered — update hardware info, return existing tunnel token
-		db.Exec(`UPDATE router_nodes SET hostname=?, model=?, cpu_cores=?, memory_mb=?, lan_ip=?, registered_at=datetime('now')
-			WHERE mac_address=?`, req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP, req.MACAddress)
-
-		log.Printf("router re-registered: %s (%s) — returning existing tunnel", req.Hostname, req.MACAddress)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(RegisterRouterResponse{
-			NodeID:      existing.id,
-			Hostname:    req.Hostname,
-			Subdomain:   existing.subdomain,
-			TunnelToken: existing.tunnelToken,
-			Message:     "already registered",
-			SSH:         getSSHConfig(),
-		})
-		return
-	}
-
-	// New registration — create Cloudflare tunnel
-	fqdn := req.Subdomain + ".attlas.uk"
-	tunnelName := "router-" + req.Hostname
-
-	log.Printf("creating Cloudflare tunnel %q for %s", tunnelName, fqdn)
-
-	tunnelID, err := cf.createTunnel(tunnelName)
-	if err != nil {
-		log.Printf("create tunnel error: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to create tunnel: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-
-	// Configure tunnel ingress
-	if err := cf.configureTunnel(tunnelID, fqdn); err != nil {
-		log.Printf("configure tunnel error: %v", err)
-		cf.deleteTunnel(tunnelID)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to configure tunnel: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-
-	// Get the connector token
-	tunnelToken, err := cf.getTunnelToken(tunnelID)
-	if err != nil {
-		log.Printf("get tunnel token error: %v", err)
-		cf.deleteTunnel(tunnelID)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to get tunnel token: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-
-	// Create DNS CNAME record
-	dnsRecordID, err := cf.createCNAME(req.Subdomain, tunnelID)
-	if err != nil {
-		log.Printf("create CNAME error: %v", err)
-		cf.deleteTunnel(tunnelID)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to create DNS record: %v"}`, err), http.StatusInternalServerError)
-		return
-	}
-
-	// Store in database
-	result, err := db.Exec(`INSERT INTO router_nodes (mac_address, hostname, model, cpu_cores, memory_mb, lan_ip, subdomain, tunnel_id, tunnel_token, dns_record_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.MACAddress, req.Hostname, req.Model, req.CPUCores, req.MemoryMB, req.LanIP,
-		req.Subdomain, tunnelID, tunnelToken, dnsRecordID)
-	if err != nil {
-		log.Printf("db insert error: %v", err)
-		cf.deleteDNSRecord(dnsRecordID)
-		cf.deleteTunnel(tunnelID)
-		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-		return
-	}
-
-	nodeID, _ := result.LastInsertId()
-
-	log.Printf("router registered: %s (%s) — tunnel %s → %s", req.Hostname, req.MACAddress, tunnelID, fqdn)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(RegisterRouterResponse{
-		NodeID:      int(nodeID),
-		Hostname:    req.Hostname,
-		Subdomain:   req.Subdomain,
-		TunnelToken: tunnelToken,
-		Message:     "registered",
-		SSH:         getSSHConfig(),
-	})
-}
-
 func handleListRouterNodes(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query(`SELECT id, mac_address, hostname, model, cpu_cores, memory_mb, lan_ip, subdomain, tunnel_id, registered_at
+	rows, err := db.Query(`SELECT id, mac_address, hostname, model, cpu_cores, memory_mb, lan_ip, registered_at
 		FROM router_nodes ORDER BY registered_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
@@ -663,10 +496,21 @@ func handleListRouterNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	type RouterNode struct {
+		ID           int    `json:"id"`
+		MACAddress   string `json:"mac_address"`
+		Hostname     string `json:"hostname"`
+		Model        string `json:"model"`
+		CPUCores     int    `json:"cpu_cores"`
+		MemoryMB     int    `json:"memory_mb"`
+		LanIP        string `json:"lan_ip"`
+		RegisteredAt string `json:"registered_at"`
+	}
+
 	nodes := []RouterNode{}
 	for rows.Next() {
 		var n RouterNode
-		if err := rows.Scan(&n.ID, &n.MACAddress, &n.Hostname, &n.Model, &n.CPUCores, &n.MemoryMB, &n.LanIP, &n.Subdomain, &n.TunnelID, &n.RegisteredAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.MACAddress, &n.Hostname, &n.Model, &n.CPUCores, &n.MemoryMB, &n.LanIP, &n.RegisteredAt); err != nil {
 			continue
 		}
 		nodes = append(nodes, n)
@@ -678,37 +522,388 @@ func handleListRouterNodes(w http.ResponseWriter, r *http.Request) {
 
 func handleDeregisterRouter(w http.ResponseWriter, r *http.Request) {
 	mac := r.PathValue("mac")
-	if mac == "" {
-		http.Error(w, `{"error":"mac address required"}`, http.StatusBadRequest)
+	result, err := db.Exec("DELETE FROM router_nodes WHERE mac_address = ?", mac)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
 	}
-
-	var tunnelID, dnsRecordID string
-	err := db.QueryRow("SELECT tunnel_id, dns_record_id FROM router_nodes WHERE mac_address = ?", mac).
-		Scan(&tunnelID, &dnsRecordID)
-	if err != nil {
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
 		http.Error(w, `{"error":"router node not found"}`, http.StatusNotFound)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "deregistered", "mac_address": mac})
+	log.Printf("deregistered router node: %s", mac)
+}
 
-	// Clean up Cloudflare resources
-	if cf != nil {
-		if dnsRecordID != "" {
-			if err := cf.deleteDNSRecord(dnsRecordID); err != nil {
-				log.Printf("warning: failed to delete DNS record %s: %v", dnsRecordID, err)
+// --- Config ---
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	ssh := getSSHConfig()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ssh": ssh})
+}
+
+// --- Image provisioning ---
+
+func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
+	nodeType := r.PathValue("type")
+	if nodeType != "router" && nodeType != "worker" {
+		http.Error(w, `{"error":"type must be 'router' or 'worker'"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Label string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Label == "" {
+		http.Error(w, `{"error":"label is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Create a token for this image
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		http.Error(w, `{"error":"failed to generate token"}`, http.StatusInternalServerError)
+		return
+	}
+	rawToken := hex.EncodeToString(tokenBytes)
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	result, err := db.Exec(`INSERT INTO image_tokens (token_hash, node_type, label) VALUES (?, ?, ?)`,
+		tokenHash, nodeType, req.Label)
+	if err != nil {
+		http.Error(w, `{"error":"failed to create token"}`, http.StatusInternalServerError)
+		return
+	}
+	tokenID, _ := result.LastInsertId()
+
+	// Determine build script
+	attlasDir := envOr("ATTLAS_DIR", "/home/agnostic-user/iapetus/attlas")
+	dirMap := map[string]string{"router": "router-node", "worker": "basic-node"}
+	buildDir := filepath.Join(attlasDir, dirMap[nodeType])
+	buildScript := filepath.Join(buildDir, "build-image.sh")
+
+	if _, err := os.Stat(buildScript); err != nil {
+		http.Error(w, `{"error":"build script not found"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Output image path
+	imagesDir := "/var/lib/homelab-bootstrap/images"
+	os.MkdirAll(imagesDir, 0755)
+	filename := fmt.Sprintf("%d-%s-%s.img", time.Now().Unix(), nodeType, sanitizeLabel(req.Label))
+	outputPath := filepath.Join(imagesDir, filename)
+
+	// Run build-image.sh, stream progress as SSE
+	log.Printf("building %s image %q → %s", nodeType, req.Label, outputPath)
+	cmd := exec.Command("bash", buildScript, outputPath)
+	cmd.Dir = buildDir
+	cmd.Env = append(os.Environ(), "TOKEN="+rawToken)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, `{"error":"failed to start build"}`, http.StatusInternalServerError)
+		return
+	}
+	cmd.Stderr = cmd.Stdout
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(w, "data: {\"error\":\"failed to start build: %v\"}\n\n", err)
+		flusher.Flush()
+		return
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "PROGRESS:") {
+			parts := strings.SplitN(line, ":", 3)
+			if len(parts) == 3 {
+				fmt.Fprintf(w, "data: {\"progress\":%s,\"message\":\"%s\"}\n\n", parts[1], parts[2])
+				flusher.Flush()
 			}
-		}
-		if err := cf.deleteTunnel(tunnelID); err != nil {
-			log.Printf("warning: failed to delete tunnel %s: %v", tunnelID, err)
 		}
 	}
 
-	db.Exec("DELETE FROM router_nodes WHERE mac_address = ?", mac)
+	if err := cmd.Wait(); err != nil {
+		log.Printf("build error: %v", err)
+		fmt.Fprintf(w, "data: {\"error\":\"build failed\"}\n\n")
+		flusher.Flush()
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "deregistered", "mac_address": mac})
-	log.Printf("deregistered router node: %s (tunnel %s deleted)", mac, tunnelID)
+	log.Printf("image built: %s (%s)", filename, req.Label)
+	doneMsg := map[string]any{
+		"token_id":     tokenID,
+		"filename":     filename,
+		"download_url": "/api/provision/download/" + filename,
+		"label":        req.Label,
+		"node_type":    nodeType,
+		"done":         true,
+	}
+	resultJSON, _ := json.Marshal(doneMsg)
+	fmt.Fprintf(w, "data: %s\n\n", resultJSON)
+	flusher.Flush()
 }
+
+func handleDownloadImage(w http.ResponseWriter, r *http.Request) {
+	filename := r.PathValue("filename")
+	if strings.Contains(filename, "/") || strings.Contains(filename, "..") {
+		http.Error(w, `{"error":"invalid filename"}`, http.StatusBadRequest)
+		return
+	}
+
+	path := filepath.Join("/var/lib/homelab-bootstrap/images", filename)
+	if _, err := os.Stat(path); err != nil {
+		http.Error(w, `{"error":"image not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	http.ServeFile(w, r, path)
+}
+
+func sanitizeLabel(label string) string {
+	s := strings.ToLower(label)
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+// --- Helpers ---
+
+func createPlaybookTarball(nodeType string) (string, error) {
+	dirMap := map[string]string{"router": "router-node", "worker": "basic-node"}
+	attlasDir := envOr("ATTLAS_DIR", "/home/agnostic-user/iapetus/attlas")
+	srcDir := filepath.Join(attlasDir, dirMap[nodeType])
+
+	if _, err := os.Stat(srcDir); err != nil {
+		return "", fmt.Errorf("directory not found: %s", srcDir)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+
+	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip binary images and git files
+		if strings.HasSuffix(path, ".img") || strings.Contains(path, ".git") {
+			return nil
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(srcDir, path)
+		header.Name = rel
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if _, err := tw.Write(data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	tw.Close()
+	gz.Close()
+
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func generateClientCert(label, mac string) (*TLSConfig, string, string, error) {
+	stateDir := envOr("HOMELAB_STATE_DIR", "/var/lib/homelab-bootstrap")
+	caCertPEM, err := os.ReadFile(filepath.Join(stateDir, "ca.crt"))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read CA cert: %w", err)
+	}
+	caKeyPEM, err := os.ReadFile(filepath.Join(stateDir, "ca.key"))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("read CA key: %w", err)
+	}
+
+	caCertBlock, _ := pem.Decode(caCertPEM)
+	if caCertBlock == nil {
+		return nil, "", "", fmt.Errorf("invalid CA cert PEM")
+	}
+	caCert, err := x509.ParseCertificate(caCertBlock.Bytes)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("parse CA cert: %w", err)
+	}
+
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
+	if caKeyBlock == nil {
+		return nil, "", "", fmt.Errorf("invalid CA key PEM")
+	}
+	var caKey *rsa.PrivateKey
+	caKey, err = x509.ParsePKCS1PrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		parsed, err2 := x509.ParsePKCS8PrivateKey(caKeyBlock.Bytes)
+		if err2 != nil {
+			return nil, "", "", fmt.Errorf("parse CA key: %w (pkcs1: %v)", err2, err)
+		}
+		var ok bool
+		caKey, ok = parsed.(*rsa.PrivateKey)
+		if !ok {
+			return nil, "", "", fmt.Errorf("CA key is not RSA")
+		}
+	}
+
+	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate key: %w", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate serial: %w", err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName:   label + "/" + mac,
+			Organization: []string{"attlas"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("create certificate: %w", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)})
+
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256(certDER))
+	serial := serialNumber.Text(16)
+
+	return &TLSConfig{
+		ClientCert: string(certPEM),
+		ClientKey:  string(keyPEM),
+		CACert:     string(caCertPEM),
+	}, serial, fingerprint, nil
+}
+
+func generateJoinConfig() (*JoinConfig, error) {
+	tokenOut, err := exec.Command("sudo", "kubeadm", "token", "create", "--ttl", "1h").Output()
+	if err != nil {
+		return nil, fmt.Errorf("kubeadm token create: %w", err)
+	}
+	token := strings.TrimSpace(string(tokenOut))
+
+	hashOut, err := exec.Command("bash", "-c",
+		"openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | "+
+			"openssl rsa -pubin -outform der 2>/dev/null | "+
+			"openssl dgst -sha256 -hex | sed 's/^.* //'").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ca cert hash: %w", err)
+	}
+	caHash := "sha256:" + strings.TrimSpace(string(hashOut))
+
+	certKeyOut, err := exec.Command("sudo", "kubeadm", "init", "phase", "upload-certs", "--upload-certs").Output()
+	if err != nil {
+		return nil, fmt.Errorf("upload-certs: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(certKeyOut)), "\n")
+	certKey := strings.TrimSpace(lines[len(lines)-1])
+
+	endpoint := envOr("HOMELAB_API_ENDPOINT", "")
+	if endpoint == "" {
+		epOut, err := exec.Command("kubectl", "config", "view",
+			"--minify", "-o", "jsonpath={.clusters[0].cluster.server}").Output()
+		if err != nil {
+			return nil, fmt.Errorf("get api endpoint: %w", err)
+		}
+		endpoint = strings.TrimSpace(string(epOut))
+	}
+
+	// kubeadm join expects host:port, not a full URL
+	endpoint = strings.TrimPrefix(endpoint, "https://")
+	endpoint = strings.TrimPrefix(endpoint, "http://")
+
+	return &JoinConfig{
+		APIServerEndpoint: endpoint,
+		Token:             token,
+		CACertHash:        caHash,
+		CertificateKey:    certKey,
+		ControlPlane:      true,
+	}, nil
+}
+
+func getSSHConfig() *SSHConfig {
+	if keys := os.Getenv("HOMELAB_SSH_KEYS"); keys != "" {
+		var parsed []string
+		for _, k := range strings.Split(keys, "\n") {
+			k = strings.TrimSpace(k)
+			if k != "" && !strings.HasPrefix(k, "#") {
+				parsed = append(parsed, k)
+			}
+		}
+		if len(parsed) > 0 {
+			return &SSHConfig{AuthorizedKeys: parsed}
+		}
+	}
+
+	filePath := envOr("HOMELAB_SSH_KEYS_FILE", "/var/lib/homelab-bootstrap/authorized_keys")
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+
+	var keys []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			keys = append(keys, line)
+		}
+	}
+	if len(keys) > 0 {
+		return &SSHConfig{AuthorizedKeys: keys}
+	}
+	return nil
+}
+
+// --- Migration ---
 
 func migrate(db *sql.DB) error {
 	entries, err := migrationsFS.ReadDir("migrations")

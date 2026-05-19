@@ -1,11 +1,10 @@
 ---
 # Router Pi provisioning playbook
-# Called via ansible-pull from the golden image entrypoint.
-# Variables passed in via -e from /etc/router/config.json and remote-config.json:
-#   - tunnel_token
-#   - subdomain
+# Fetched from homelab-bootstrap via /api/register/router
+# Variables passed via -e from config.json:
+#   - tls.client_cert, tls.client_key, tls.ca_cert
 #   - ssh.authorized_keys[]
-#   - github_pat
+#   - label
 
 - name: Provision router Pi node
   hosts: localhost
@@ -15,11 +14,33 @@
   vars:
     router_user: commonlisp
     router_home: /home/commonlisp
-    dotfiles_repo: TC-AVNP/dotfiels
-    cloudflared_version: "2025.4.2"
+    otelcol_version: "0.120.0"
+    # Parameterised — override via -e if needed
+    wifi_ssid: homelab
+    wifi_psk: "homelab-xadrez12"
+    wifi_channel: "6"
+    regdomain: PT
+    dns_upstream: "1.1.1.1"
+    dns_upstream_2: "1.0.0.1"
+    lan_subnet: "10.0.0"
+    lan_dhcp_start: "50"
+    lan_dhcp_end: "150"
+    wifi_subnet: "10.0.2"
+    sanitized_label: "{{ label | default('pi-router') | lower | regex_replace('[^a-z0-9]', '-') | regex_replace('-+', '-') | regex_replace('^-|-$', '') }}"
 
   tasks:
-    # ── SSH keys from bootstrap service ────────────────────────────────
+    # ── Hostname from label ──────────────────────────────────────────
+    - name: Set hostname from label
+      hostname:
+        name: "{{ sanitized_label }}"
+
+    - name: Update /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1'
+        line: "127.0.1.1 {{ sanitized_label }}"
+
+    # ── SSH keys from registration ───────────────────────────────────
     - name: Configure SSH authorized keys
       when: ssh is defined and ssh.authorized_keys is defined
       block:
@@ -47,153 +68,349 @@
         shell: /usr/sbin/nologin
       ignore_errors: true
 
-    # ── IP forwarding (router duty) ──────────────────────────────────
+    # ── Netplan — eth0 only, leave wlan0 to NetworkManager ──────────
+    - name: Write netplan config (eth0 only)
+      copy:
+        content: |
+          network:
+            version: 2
+            ethernets:
+              eth0:
+                optional: true
+                dhcp4: false
+        dest: /etc/netplan/50-cloud-init.yaml
+        mode: "0600"
+      notify: apply netplan
+
+    # ── eth0 static IP via NetworkManager ────────────────────────────
+    - name: Configure eth0 LAN connection
+      copy:
+        content: |
+          [connection]
+          id=eth0-lan
+          type=ethernet
+          interface-name=eth0
+          autoconnect=true
+
+          [ipv4]
+          method=manual
+          addresses={{ lan_subnet }}.1/24
+          never-default=true
+
+          [ipv6]
+          method=disabled
+        dest: /etc/NetworkManager/system-connections/eth0-lan.nmconnection
+        mode: "0600"
+      notify: reload networkmanager
+
+    # ── WiFi AP via NetworkManager ───────────────────────────────────
+    - name: Configure WiFi AP
+      copy:
+        content: |
+          [connection]
+          id=homelab-ap
+          type=wifi
+          interface-name=wlan0
+          autoconnect=true
+
+          [wifi]
+          ssid={{ wifi_ssid }}
+          mode=ap
+          band=bg
+          channel={{ wifi_channel }}
+
+          [wifi-security]
+          key-mgmt=wpa-psk
+          psk={{ wifi_psk }}
+
+          [ipv4]
+          method=shared
+          addresses={{ wifi_subnet }}.1/24
+          never-default=true
+
+          [ipv6]
+          method=disabled
+        dest: /etc/NetworkManager/system-connections/homelab-ap.nmconnection
+        mode: "0600"
+      notify: reload networkmanager
+
+    # ── WiFi regulatory domain ───────────────────────────────────────
+    - name: Set WiFi regulatory domain
+      copy:
+        content: "options cfg80211 ieee80211_regdom={{ regdomain }}\n"
+        dest: /etc/modprobe.d/cfg80211.conf
+
+    - name: Apply regulatory domain
+      command: iw reg set {{ regdomain }}
+      changed_when: true
+
+    # ── dnsmasq for eth0 LAN DHCP ────────────────────────────────────
+    - name: Configure system dnsmasq (eth0 only)
+      copy:
+        content: |
+          # LAN router DHCP — eth0 only
+          # NM manages its own dnsmasq on wlan0 for the AP
+          interface=eth0
+          bind-dynamic
+          except-interface=lo
+          except-interface=wwan0
+          except-interface=wlan0
+
+          no-resolv
+          server={{ dns_upstream }}
+          server={{ dns_upstream_2 }}
+          cache-size=1000
+          domain-needed
+          bogus-priv
+
+          dhcp-range={{ lan_subnet }}.{{ lan_dhcp_start }},{{ lan_subnet }}.{{ lan_dhcp_end }},255.255.255.0,12h
+          dhcp-authoritative
+          log-dhcp
+        dest: /etc/dnsmasq.d/router.conf
+      notify: restart dnsmasq
+
+    # ── NM AP dnsmasq upstream DNS ───────────────────────────────────
+    - name: Create NM dnsmasq shared config dir
+      file:
+        path: /etc/NetworkManager/dnsmasq-shared.d
+        state: directory
+
+    - name: Configure upstream DNS for NM AP dnsmasq
+      copy:
+        content: |
+          no-resolv
+          server={{ dns_upstream }}
+          server={{ dns_upstream_2 }}
+          cache-size=1000
+          domain-needed
+          bogus-priv
+        dest: /etc/NetworkManager/dnsmasq-shared.d/00-upstream-dns.conf
+
+    # ── IP forwarding ────────────────────────────────────────────────
     - name: Enable IP forwarding
       sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        sysctl_file: /etc/sysctl.d/router.conf
+        name: net.ipv4.ip_forward
+        value: "1"
+        sysctl_file: /etc/sysctl.d/99-router.conf
         reload: true
-      loop:
-        - { key: net.ipv4.ip_forward, value: "1" }
 
-    # ── Cloudflare Tunnel ────────────────────────────────────────────
-    - name: Install cloudflared
-      block:
-        - name: Check if cloudflared is installed
-          command: cloudflared --version
-          register: cf_check
-          ignore_errors: true
-          changed_when: false
-
-        - name: Download cloudflared .deb
-          when: cf_check.rc != 0
-          get_url:
-            url: "https://github.com/cloudflare/cloudflared/releases/download/{{ cloudflared_version }}/cloudflared-linux-{{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}.deb"
-            dest: /tmp/cloudflared.deb
-
-        - name: Install cloudflared .deb
-          when: cf_check.rc != 0
-          apt:
-            deb: /tmp/cloudflared.deb
-
-        - name: Clean up .deb
-          file:
-            path: /tmp/cloudflared.deb
-            state: absent
-
-    - name: Write tunnel token
-      when: tunnel_token is defined and tunnel_token | length > 0
+    # ── NAT + Firewall (eth0→wwan0 only, NO wlan0 rules) ────────────
+    # NM creates its own nm-sh-fw-wlan0 chain for the AP automatically
+    - name: Write iptables rules
       copy:
-        content: "{{ tunnel_token }}"
-        dest: /etc/cloudflared/tunnel-token
-        mode: "0600"
-      notify: restart cloudflared
+        content: |
+          *nat
+          :PREROUTING ACCEPT [0:0]
+          :INPUT ACCEPT [0:0]
+          :OUTPUT ACCEPT [0:0]
+          :POSTROUTING ACCEPT [0:0]
+          -A POSTROUTING -o wwan0 -j MASQUERADE
+          COMMIT
 
-    - name: Create cloudflared directory
+          *filter
+          :INPUT DROP [0:0]
+          :FORWARD DROP [0:0]
+          :OUTPUT ACCEPT [0:0]
+          -A INPUT -i lo -j ACCEPT
+          -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          -A INPUT -i eth0 -j ACCEPT
+          -A INPUT -i wlan0 -j ACCEPT
+          -A INPUT -p icmp -j ACCEPT
+          -A FORWARD -i eth0 -o wwan0 -j ACCEPT
+          -A FORWARD -i wwan0 -o eth0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          COMMIT
+        dest: /etc/iptables/rules.v4
+      notify: restore iptables
+
+    # ── OTel mTLS certs ──────────────────────────────────────────────
+    - name: Create OTel certs directory
       file:
-        path: /etc/cloudflared
+        path: /etc/otel-certs
         state: directory
-        mode: "0700"
+        mode: "0755"
 
-    - name: Install cloudflared tunnel service
+    - name: Write OTel client cert
+      when: tls is defined and tls.client_cert is defined
+      copy:
+        content: "{{ tls.client_cert }}"
+        dest: /etc/otel-certs/client.crt
+        mode: "0644"
+
+    - name: Write OTel client key
+      when: tls is defined and tls.client_key is defined
+      copy:
+        content: "{{ tls.client_key }}"
+        dest: /etc/otel-certs/client.key
+        mode: "0600"
+
+    - name: Write OTel CA cert
+      when: tls is defined and tls.ca_cert is defined
+      copy:
+        content: "{{ tls.ca_cert }}"
+        dest: /etc/otel-certs/ca.crt
+        mode: "0644"
+
+    # ── OTel Collector Agent (binary pre-installed in base image) ───
+    - name: Create OTel config directory
+      file:
+        path: /etc/otelcol
+        state: directory
+
+    - name: Write OTel Collector agent config
+      copy:
+        content: |
+          receivers:
+            hostmetrics:
+              collection_interval: 30s
+              scrapers:
+                cpu:
+                memory:
+                disk:
+                network:
+                load:
+                filesystem:
+            prometheus:
+              config:
+                scrape_configs:
+                  - job_name: node_temperature
+                    scrape_interval: 30s
+                    static_configs:
+                      - targets: ['localhost:9101']
+
+          processors:
+            batch:
+              timeout: 10s
+            resource:
+              attributes:
+                - key: node.type
+                  value: pi-router
+                  action: upsert
+                - key: host.name
+                  value: {{ sanitized_label }}
+                  action: upsert
+
+          exporters:
+            otlphttp:
+              endpoint: https://otel.attlas.uk:4318
+              tls:
+                cert_file: /etc/otel-certs/client.crt
+                key_file: /etc/otel-certs/client.key
+                ca_file: /etc/otel-certs/ca.crt
+
+          service:
+            pipelines:
+              metrics:
+                receivers: [hostmetrics, prometheus]
+                processors: [resource, batch]
+                exporters: [otlphttp]
+        dest: /etc/otelcol/config.yaml
+
+    - name: Install OTel Collector agent service
       copy:
         content: |
           [Unit]
-          Description=Cloudflare Tunnel
-          After=network-online.target
+          Description=OpenTelemetry Collector Agent
+          After=network-online.target temp-exporter.service
           Wants=network-online.target
-
           [Service]
           Type=simple
-          ExecStart=/bin/sh -c '/usr/bin/cloudflared tunnel run --token $(cat /etc/cloudflared/tunnel-token)'
+          ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/otelcol/config.yaml
           Restart=always
           RestartSec=10
-
           [Install]
           WantedBy=multi-user.target
-        dest: /etc/systemd/system/cloudflared-tunnel.service
-      notify: restart cloudflared
+        dest: /etc/systemd/system/otelcol-agent.service
+      notify: start otelcol agent
 
-    - name: Enable and start cloudflared tunnel
-      systemd:
-        name: cloudflared-tunnel
-        enabled: true
-        state: started
-        daemon_reload: true
-
-    # ── Dotfiles ─────────────────────────────────────────────────────
-    - name: Install shell packages
-      apt:
-        name:
-          - zsh
-          - tmux
-          - fzf
-          - python3
-        state: present
-
-    - name: Clone dotfiles
-      when: github_pat is defined and github_pat | length > 0
-      become_user: "{{ router_user }}"
-      git:
-        repo: "https://{{ github_pat }}@github.com/{{ dotfiles_repo }}.git"
-        dest: "{{ router_home }}/dotfiels"
-        depth: 1
-      ignore_errors: true
-
-    - name: Run dotfiles installer
-      when: github_pat is defined
-      become_user: "{{ router_user }}"
-      shell: bash {{ router_home }}/dotfiels/install.sh
-      args:
-        creates: "{{ router_home }}/.zshrc"
-      ignore_errors: true
-
-    - name: Set zsh as default shell
-      user:
-        name: "{{ router_user }}"
-        shell: /usr/bin/zsh
-
-    # ── Healthz daemon ───────────────────────────────────────────────
+    # ── Temperature exporter ─────────────────────────────────────────
     - name: Create router scripts directory
       file:
         path: /opt/router
         state: directory
 
-    - name: Install healthz script
+    - name: Install temperature exporter script
       copy:
         content: |
           #!/usr/bin/env bash
           while true; do
-            TUNNEL=$(systemctl is-active cloudflared-tunnel 2>/dev/null || echo "unknown")
-            RESPONSE=$(printf '{"status":"ok","hostname":"%s","uptime":"%s","load":"%s","tunnel":"%s"}' \
-              "$(hostname)" "$(uptime -p)" "$(cat /proc/loadavg | cut -d' ' -f1-3)" "$TUNNEL")
-            printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
-              "${#RESPONSE}" "$RESPONSE" | nc -l -p 9100 -q 1 2>/dev/null || sleep 1
+            TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
+            TEMP_C=$(echo "scale=1; $TEMP/1000" | bc)
+            BODY=$(printf '# HELP node_thermal_zone_temp Temperature in Celsius\n# TYPE node_thermal_zone_temp gauge\nnode_thermal_zone_temp{zone="0"} %s\n' "$TEMP_C")
+            BODY_LEN=${#BODY}
+            printf "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
+              "$BODY_LEN" "$BODY" | nc -l -p 9101 -q 1 2>/dev/null || sleep 1
           done
-        dest: /opt/router/healthz.sh
+        dest: /opt/router/temp-exporter.sh
         mode: "0755"
 
-    - name: Install netcat for healthz
-      apt:
-        name: netcat-openbsd
-        state: present
-
-    - name: Install healthz systemd unit
+    - name: Install temperature exporter service
       copy:
         content: |
           [Unit]
-          Description=Router node healthz (port 9100)
+          Description=Temperature metrics exporter (port 9101)
           After=network.target
           [Service]
           Type=simple
-          ExecStart=/opt/router/healthz.sh
+          ExecStart=/opt/router/temp-exporter.sh
           Restart=always
           RestartSec=5
           [Install]
           WantedBy=multi-user.target
-        dest: /etc/systemd/system/router-healthz.service
-      notify: start healthz
+        dest: /etc/systemd/system/temp-exporter.service
+      notify: start temp exporter
+
+    # ── 4G Watchdog ──────────────────────────────────────────────────
+    - name: Install 4G watchdog script
+      copy:
+        content: |
+          #!/usr/bin/env bash
+          if ! ping -c 2 -W 5 -I wwan0 1.1.1.1 &>/dev/null; then
+            logger -t 4g-watchdog "4G connectivity lost, restarting ModemManager"
+            systemctl restart ModemManager
+          fi
+        dest: /opt/router/4g-watchdog.sh
+        mode: "0755"
+
+    - name: Install 4G watchdog service
+      copy:
+        content: |
+          [Unit]
+          Description=4G connectivity watchdog
+          [Service]
+          Type=oneshot
+          ExecStart=/opt/router/4g-watchdog.sh
+        dest: /etc/systemd/system/4g-watchdog.service
+
+    - name: Install 4G watchdog timer
+      copy:
+        content: |
+          [Unit]
+          Description=Check 4G connectivity every 60s
+          [Timer]
+          OnBootSec=120
+          OnUnitActiveSec=60
+          AccuracySec=10
+          [Install]
+          WantedBy=timers.target
+        dest: /etc/systemd/system/4g-watchdog.timer
+
+    - name: Enable 4G watchdog timer
+      systemd:
+        name: 4g-watchdog.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # ── Enable services ──────────────────────────────────────────────
+    - name: Enable core services
+      systemd:
+        name: "{{ item }}"
+        enabled: true
+      loop:
+        - dnsmasq
+        - netfilter-persistent
+        - NetworkManager
+        - ModemManager
 
     # ── SSH key refresh timer ────────────────────────────────────────
     - name: Install refresh-config script
@@ -201,9 +418,9 @@
         content: |
           #!/usr/bin/env bash
           BOOTSTRAP_URL="https://homelab.attlas.uk"
-          AUTH="commonlisp:xadrez12"
           RESPONSE=$(curl -sf --connect-timeout 5 --max-time 10 \
-            -u "$AUTH" "${BOOTSTRAP_URL}/api/config" 2>/dev/null) || exit 0
+            --cert /etc/otel-certs/client.crt --key /etc/otel-certs/client.key \
+            "${BOOTSTRAP_URL}/api/config" 2>/dev/null) || exit 0
           NEW_KEYS=$(echo "$RESPONSE" | jq -r '.ssh.authorized_keys[]? // empty' 2>/dev/null)
           if [[ -z "$NEW_KEYS" ]]; then exit 0; fi
           USER_HOME="/home/commonlisp"
@@ -253,15 +470,32 @@
         daemon_reload: true
 
   handlers:
-    - name: restart cloudflared
+    - name: apply netplan
+      command: netplan apply
+
+    - name: reload networkmanager
       systemd:
-        name: cloudflared-tunnel
+        name: NetworkManager
+        state: reloaded
+
+    - name: restart dnsmasq
+      systemd:
+        name: dnsmasq
         state: restarted
+
+    - name: restore iptables
+      command: netfilter-persistent reload
+
+    - name: start temp exporter
+      systemd:
+        name: temp-exporter
+        enabled: true
+        state: started
         daemon_reload: true
 
-    - name: start healthz
+    - name: start otelcol agent
       systemd:
-        name: router-healthz
+        name: otelcol-agent
         enabled: true
         state: started
         daemon_reload: true

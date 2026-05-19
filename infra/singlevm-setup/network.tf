@@ -31,6 +31,22 @@ resource "google_compute_firewall" "allow_https" {
   priority      = 1000
 }
 
+# OpenTelemetry Collector — nodes push metrics via OTLP/HTTP with mTLS
+resource "google_compute_firewall" "allow_otel" {
+  name    = "allow-otel"
+  network = "default"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["4318"]
+  }
+
+  source_ranges = ["0.0.0.0/0"]
+  target_tags   = ["https-server"]
+  direction     = "INGRESS"
+  priority      = 1000
+}
+
 # Kubernetes API server — homelab Pis connect here to join the cluster
 resource "google_compute_firewall" "allow_k8s_api" {
   name    = "allow-k8s-api"

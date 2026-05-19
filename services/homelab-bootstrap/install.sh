@@ -103,15 +103,27 @@ if command -v gcloud &>/dev/null; then
   fi
 fi
 
-# 6. Set up kubeconfig and sudoers for kubeadm token generation.
+# 6. Sudoers for image building (losetup, mount, etc.)
+cat > "/etc/sudoers.d/${SERVICE_NAME}" <<SUDOERS
+${SERVICE_USER} ALL=(root) NOPASSWD: /sbin/losetup *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mount *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/umount *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/tee *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/cp *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/chmod *
+${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/mkdir *
+SUDOERS
+chmod 440 "/etc/sudoers.d/${SERVICE_NAME}"
+echo "    sudoers configured for image building"
+
+# 6b. Set up kubeconfig and sudoers for kubeadm token generation.
 if [[ -f /etc/kubernetes/admin.conf ]]; then
   mkdir -p "${STATE_DIR}/.kube"
   cp /etc/kubernetes/admin.conf "${STATE_DIR}/.kube/config"
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "${STATE_DIR}/.kube"
   echo "    kubectl configured for ${SERVICE_USER}"
 
-  # Allow the service user to run specific kubeadm commands without password
-  cat > "/etc/sudoers.d/${SERVICE_NAME}" <<SUDOERS
+  cat >> "/etc/sudoers.d/${SERVICE_NAME}" <<SUDOERS
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/kubeadm token create *
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/kubeadm init phase upload-certs --upload-certs
 SUDOERS
@@ -146,6 +158,7 @@ Environment=HOMELAB_PORT=${PORT}
 Environment=HOMELAB_DB=${STATE_DIR}/homelab.db
 Environment=KUBECONFIG=${STATE_DIR}/.kube/config
 Environment=HOMELAB_API_ENDPOINT=https://34.62.185.156:6443
+Environment=ATTLAS_DIR=/home/agnostic-user/iapetus/attlas
 Environment=HOMELAB_SSH_KEYS_FILE=${STATE_DIR}/authorized_keys
 Environment=HOMELAB_GITHUB_PAT=${GITHUB_PAT}
 Environment=CLOUDFLARE_API_TOKEN=${CF_API_TOKEN}
@@ -160,6 +173,14 @@ systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}"
 systemctl restart "${SERVICE_NAME}"
 echo "    Service ${SERVICE_NAME} started on port ${PORT}"
+
+# 5b. Image cleanup timer (deletes .img files older than 24h at midnight).
+mkdir -p /var/lib/homelab-bootstrap/images
+cp "${DIR}/image-cleanup.service" /etc/systemd/system/
+cp "${DIR}/image-cleanup.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now image-cleanup.timer
+echo "    Image cleanup timer installed (midnight daily)"
 
 # 6. Caddy site block for homelab.attlas.uk (mTLS).
 install -d -m 755 /etc/caddy/sites.d
