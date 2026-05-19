@@ -51,6 +51,27 @@
             mode: "0600"
 
     # ── Lock default ubuntu user (security) ──────────────────────────────
+    # ── Dotfiles (served from bootstrap service) ───────────────────
+    - name: Extract dotfiles
+      when: dotfiles is defined and dotfiles | length > 0
+      shell: |
+        echo '{{ dotfiles }}' | base64 -d > /tmp/dotfiles.tar.gz
+        mkdir -p {{ homelab_home }}/dotfiels
+        tar -xzf /tmp/dotfiles.tar.gz -C {{ homelab_home }}/dotfiels/
+        rm -f /tmp/dotfiles.tar.gz
+        chown -R {{ homelab_user }}:{{ homelab_user }} {{ homelab_home }}/dotfiels
+      args:
+        creates: "{{ homelab_home }}/dotfiels/install.sh"
+
+    - name: Run dotfiles installer
+      when: dotfiles is defined
+      become_user: "{{ homelab_user }}"
+      shell: bash {{ homelab_home }}/dotfiels/install.sh
+      args:
+        creates: "{{ homelab_home }}/.zshrc"
+      ignore_errors: true
+
+    # ── Lock default ubuntu user ─────────────────────────────────────
     - name: Lock the default ubuntu user
       user:
         name: ubuntu

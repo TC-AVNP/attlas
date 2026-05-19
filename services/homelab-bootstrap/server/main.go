@@ -76,6 +76,7 @@ type RegisterResponse struct {
 	TLS      *TLSConfig  `json:"tls,omitempty"`
 	SSH      *SSHConfig  `json:"ssh,omitempty"`
 	Playbook string      `json:"playbook,omitempty"`
+	Dotfiles string      `json:"dotfiles,omitempty"`
 	Join     *JoinConfig `json:"join,omitempty"`
 }
 
@@ -309,6 +310,13 @@ func handleRegistration(w http.ResponseWriter, r *http.Request, tok *ImageToken,
 		return
 	}
 
+	// Build dotfiles tarball
+	dotfiles, err := createDotfilesTarball()
+	if err != nil {
+		log.Printf("warning: dotfiles tarball error: %v", err)
+		// Non-fatal — dotfiles are nice-to-have
+	}
+
 	// Get node ID
 	var nodeID int
 	if nodeType == "worker" {
@@ -325,6 +333,7 @@ func handleRegistration(w http.ResponseWriter, r *http.Request, tok *ImageToken,
 		TLS:      tlsConfig,
 		SSH:      getSSHConfig(),
 		Playbook: playbook,
+		Dotfiles: dotfiles,
 	}
 
 	// Include k8s join config for workers
@@ -714,6 +723,58 @@ func createPlaybookTarball(nodeType string) (string, error) {
 		}
 		// Skip binary images and git files
 		if strings.HasSuffix(path, ".img") || strings.Contains(path, ".git") {
+			return nil
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(srcDir, path)
+		header.Name = rel
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if _, err := tw.Write(data); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	tw.Close()
+	gz.Close()
+
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func createDotfilesTarball() (string, error) {
+	// Dotfiles live at ~/iapetus/dotfiels (sibling of attlas)
+	attlasDir := envOr("ATTLAS_DIR", "/home/agnostic-user/iapetus/attlas")
+	srcDir := filepath.Join(attlasDir, "..", "dotfiels")
+
+	if _, err := os.Stat(srcDir); err != nil {
+		return "", fmt.Errorf("dotfiles not found: %s", srcDir)
+	}
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+
+	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.Contains(path, ".git") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		header, err := tar.FileInfoHeader(info, "")
