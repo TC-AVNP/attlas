@@ -74,7 +74,7 @@ write_files:
       MAX_BACKOFF=300
       log "Registering with $BOOTSTRAP_URL..."
       while true; do
-        HTTP_CODE=$(curl -sf -o /tmp/reg.json -w "%{http_code}" \
+        HTTP_CODE=$(curl -s -o /tmp/reg.json -w "%{http_code}" \
           --connect-timeout 10 --max-time 30 \
           -X POST "${BOOTSTRAP_URL}/api/register/router" \
           -H "Content-Type: application/json" \
@@ -82,6 +82,9 @@ write_files:
           -d "$PAYLOAD" 2>/dev/null) || HTTP_CODE="000"
 
         if [[ "$HTTP_CODE" == "201" ]]; then break; fi
+        if [[ "$HTTP_CODE" == "401" ]]; then
+          log "HTTP 401 — Caddy basic auth is blocking /api/register/* (exempt it server-side)"
+        fi
         if [[ "$HTTP_CODE" == "403" ]]; then
           log "Token revoked or wrong type — cannot register"
           exit 1

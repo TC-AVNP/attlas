@@ -1,6 +1,13 @@
 homelab.attlas.uk {
-	basicauth {
-		commonlisp $2a$14$FCA/Rc5mDi9UXMaYi36m6O4PCfB0wknyIDmdlxM3sOe06/BAhBBYK
+	@public path /api/register/* /api/config /api/tokens/*/event /api/event
+	handle @public {
+		reverse_proxy 127.0.0.1:7697
 	}
-	reverse_proxy 127.0.0.1:7697
+
+	handle {
+		basicauth {
+			commonlisp $2a$14$FCA/Rc5mDi9UXMaYi36m6O4PCfB0wknyIDmdlxM3sOe06/BAhBBYK
+		}
+		reverse_proxy 127.0.0.1:7697
+	}
 }

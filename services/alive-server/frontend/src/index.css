@@ -1100,10 +1100,16 @@ a:hover { text-decoration: underline; }
   width: 100%;
   padding-left: 1.2rem;
 }
-.homelab-token .link-btn.dismiss {
-  position: absolute;
-  right: 0;
-  top: 0.5rem;
+.homelab-token-actions {
+  display: flex;
+  gap: 0.5rem;
+  width: 100%;
+  padding-left: 1.2rem;
+  margin-top: 0.3rem;
+}
+.homelab-token-actions .link-btn.disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 .homelab-node-type-badge {
   font-size: 0.68rem;
@@ -1113,4 +1119,85 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--muted);
+}
+
+/* Pi detail page + timeline */
+.pi-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+.pi-detail-label {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.pi-detail-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.pi-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.pi-timeline-event {
+  display: flex;
+  gap: 0.8rem;
+  min-height: 3.5rem;
+}
+.pi-timeline-event.pending { opacity: 0.4; }
+.pi-timeline-line-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 1.8rem;
+  flex-shrink: 0;
+}
+.pi-timeline-dot {
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--bg);
+  flex-shrink: 0;
+}
+.pi-timeline-dot.yellow { background: var(--yellow); }
+.pi-timeline-dot.green { background: var(--green); }
+.pi-timeline-dot.blue { background: var(--accent); }
+.pi-timeline-dot.red { background: var(--red); }
+.pi-timeline-dot.gray { background: var(--border); color: var(--muted); }
+.pi-timeline-line {
+  width: 2px;
+  flex: 1;
+  background: var(--border);
+  min-height: 1rem;
+}
+.pi-timeline-line.dashed {
+  background: none;
+  border-left: 2px dashed var(--border);
+}
+.pi-timeline-content {
+  padding-bottom: 0.8rem;
+}
+.pi-timeline-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.pi-timeline-time {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-family: var(--font-mono);
+}
+.pi-timeline-detail {
+  color: var(--fg);
 }

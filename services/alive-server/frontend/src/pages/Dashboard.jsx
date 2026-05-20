@@ -426,110 +426,34 @@ function HomelabSSHKeys() {
   )
 }
 
-function HomelabImageBuilder({ onImageBuilt }) {
+function HomelabImageBuilder({ onBuildStart, building, buildProgress, buildMsg, buildStart, buildDownloadUrl }) {
   const [imageType, setImageType] = useState('router')
   const [label, setLabel] = useState('')
-  const [building, setBuilding] = useState(false)
-  const [progress, setProgress] = useState(0)
-  const [progressMsg, setProgressMsg] = useState('')
-  const [downloadUrl, setDownloadUrl] = useState(null)
-  const [downloading, setDownloading] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState(0)
+  const [wifiSSID, setWifiSSID] = useState('')
+  const [wifiPassword, setWifiPassword] = useState('')
   const { showToast } = useStatus()
 
-  const downloadImage = async (url) => {
-    setDownloading(true)
-    setDownloadProgress(0)
-    try {
-      const res = await fetch(url)
-      const contentLength = +res.headers.get('Content-Length') || 0
-      const reader = res.body.getReader()
-      const chunks = []
-      let received = 0
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        chunks.push(value)
-        received += value.length
-        if (contentLength > 0) {
-          setDownloadProgress(Math.round((received / contentLength) * 100))
-        }
-      }
-
-      const blob = new Blob(chunks)
-      const blobUrl = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = blobUrl
-      a.download = url.split('/').pop()
-      a.click()
-      URL.revokeObjectURL(blobUrl)
-      showToast('Download complete', 'success')
-    } catch (e) {
-      showToast('Download failed: ' + e.message, 'error')
-    } finally {
-      setDownloading(false)
-    }
+  const buildImage = () => {
+    if (!label.trim()) { showToast('Label is required', 'error'); return }
+    onBuildStart(imageType, label.trim(), wifiSSID.trim(), wifiPassword.trim())
+    setLabel('')
   }
 
-  const buildImage = async () => {
-    if (!label.trim()) {
-      showToast('Label is required', 'error')
-      return
-    }
-    setBuilding(true)
-    setProgress(0)
-    setProgressMsg('Starting...')
-    setDownloadUrl(null)
+  const downloadImage = (url) => {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = url.split('/').pop()
+    a.click()
+  }
 
-    try {
-      const res = await fetch(`/api/homelab/provision/${imageType}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: label.trim() }),
-      })
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-
-        const lines = buffer.split('\n')
-        buffer = lines.pop()
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const data = JSON.parse(line.slice(6))
-            if (data.error) {
-              showToast(data.error, 'error')
-              setBuilding(false)
-              return
-            }
-            if (data.progress !== undefined) {
-              setProgress(data.progress)
-              setProgressMsg(data.message || '')
-            }
-            if (data.done) {
-              setDownloadUrl(data.download_url)
-              setProgress(100)
-              setProgressMsg('Ready to download')
-              showToast(`Image built: ${data.label}`, 'success')
-              setLabel('')
-              if (onImageBuilt) onImageBuilt()
-            }
-          } catch {}
-        }
-      }
-    } catch (e) {
-      showToast(e.message, 'error')
-    } finally {
-      setBuilding(false)
-    }
+  const etaStr = () => {
+    if (!buildStart || buildProgress <= 2 || buildProgress >= 100) return ''
+    const elapsed = (Date.now() - buildStart) / 1000
+    const remaining = Math.round(elapsed / buildProgress * (100 - buildProgress))
+    if (remaining <= 0 || remaining >= 3600) return ''
+    const m = Math.floor(remaining / 60)
+    const s = remaining % 60
+    return ` — ${m > 0 ? `${m}m ` : ''}${s}s left`
   }
 
   return (
@@ -546,35 +470,47 @@ function HomelabImageBuilder({ onImageBuilt }) {
           placeholder="Label (e.g. Kitchen Pi)"
           value={label}
           onChange={e => setLabel(e.target.value)}
+          disabled={building}
+        />
+        <input
+          className="input"
+          type="text"
+          placeholder="WiFi SSID"
+          value={wifiSSID}
+          onChange={e => setWifiSSID(e.target.value)}
+          disabled={building}
+        />
+        <input
+          className="input"
+          type="password"
+          placeholder="WiFi Password"
+          value={wifiPassword}
+          onChange={e => setWifiPassword(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && !building && buildImage()}
           disabled={building}
         />
         <Button variant="ghost" onClick={buildImage} disabled={building}>
-          {building ? `${progress}%` : 'generate'}
+          {building ? `${buildProgress}%` : 'generate'}
         </Button>
       </div>
       {building && (
         <div className="homelab-progress-bar-container">
-          <div className="homelab-progress-bar" style={{ width: `${progress}%` }} />
-          <span className="homelab-progress-text">{progressMsg}</span>
+          <div className="homelab-progress-bar" style={{ width: `${buildProgress}%` }} />
+          <span className="homelab-progress-text">
+            {buildMsg?.message || 'Starting...'}{etaStr()}
+          </span>
         </div>
       )}
-      {downloadUrl && !downloading && (
-        <button className="homelab-image-download" onClick={() => downloadImage(downloadUrl)}>
+      {buildDownloadUrl && (
+        <button className="homelab-image-download" onClick={() => downloadImage(buildDownloadUrl)}>
           Download image
         </button>
-      )}
-      {downloading && (
-        <div className="homelab-progress-bar-container">
-          <div className="homelab-progress-bar homelab-progress-download" style={{ width: `${downloadProgress}%` }} />
-          <span className="homelab-progress-text">Downloading... {downloadProgress}%</span>
-        </div>
       )}
     </div>
   )
 }
 
-function HomelabTokensList({ refreshKey }) {
+function HomelabTokensList({ refreshKey, buildingTokenId, buildProgress, buildMsg, buildStart, buildDownloadUrl }) {
   const [tokens, setTokens] = useState(null)
   const { showToast } = useStatus()
 
@@ -601,32 +537,95 @@ function HomelabTokensList({ refreshKey }) {
     }
   }
 
-  if (tokens === null) return null
-  if (tokens.length === 0) return null
+  const deleteToken = async (id, label) => {
+    if (!confirm(`Delete "${label}"? This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/homelab/tokens/${id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Delete failed')
+      showToast(`Deleted: ${label}`, 'success')
+      loadTokens()
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
+  const downloadImage = (url) => {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = url.split('/').pop()
+    a.click()
+  }
 
   const statusColor = (s) => s === 'active' ? 'yellow' : s === 'redeemed' ? 'green' : 'red'
 
-  return (
-    <div className="homelab-tokens">
-      <div className="section-label-sm">Issued Images</div>
-      {tokens.map(tok => (
-        <div key={tok.id} className={`homelab-token ${tok.status === 'revoked' ? 'revoked' : ''}`}>
-          <div className="homelab-token-header">
-            <StatusDot color={statusColor(tok.status)} />
-            <span className="homelab-token-label">{tok.label}</span>
-            <span className="homelab-token-type">{tok.node_type}</span>
-            <span className="muted">{tok.status}</span>
+  // Merge the currently-building token into the list if not yet present
+  const displayTokens = tokens || []
+  const isBuildingVisible = buildingTokenId && !displayTokens.some(t => t.id === buildingTokenId)
+
+  if (displayTokens.length === 0 && !isBuildingVisible) return null
+
+  const etaStr = (progress, start) => {
+    if (!start || progress <= 2 || progress >= 100) return ''
+    const elapsed = (Date.now() - start) / 1000
+    const remaining = Math.round(elapsed / progress * (100 - progress))
+    if (remaining <= 0 || remaining >= 3600) return ''
+    const m = Math.floor(remaining / 60)
+    const s = remaining % 60
+    return ` — ${m > 0 ? `${m}m ` : ''}${s}s left`
+  }
+
+  const renderToken = (tok, isBuilding, progress, msg, start, dlUrl) => {
+    const effectiveDlUrl = dlUrl || tok.download_url
+    return (
+      <div key={tok.id} className={`homelab-token ${tok.status === 'revoked' ? 'revoked' : ''}`}>
+        <Link to={`/services/details/homelab-pi/${tok.id}`} className="homelab-token-header" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <StatusDot color={isBuilding ? 'yellow' : statusColor(tok.status)} pulse={isBuilding} />
+          <span className="homelab-token-label">{tok.label}</span>
+          <span className="homelab-token-type">{tok.node_type}</span>
+          <span className="muted">{isBuilding ? 'building' : tok.status}</span>
+        </Link>
+        {isBuilding && progress < 100 && (
+          <div className="homelab-progress-bar-container">
+            <div className="homelab-progress-bar" style={{ width: `${progress}%` }} />
+            <span className="homelab-progress-text">
+              {msg || 'Starting...'}{etaStr(progress, start)}
+            </span>
           </div>
-          <div className="homelab-token-meta">
-            {tok.hostname && <span>node: {tok.hostname}</span>}
-            {tok.mac_address && <span>mac: {tok.mac_address}</span>}
-            <span>created: {new Date(tok.created_at + 'Z').toLocaleDateString()}</span>
-          </div>
-          {tok.status !== 'revoked' && (
+        )}
+        <div className="homelab-token-meta">
+          {tok.hostname && <span>node: {tok.hostname}</span>}
+          {tok.mac_address && <span>mac: {tok.mac_address}</span>}
+          <span>created: {new Date(tok.created_at + 'Z').toLocaleDateString()}</span>
+        </div>
+        <div className="homelab-token-actions">
+          {effectiveDlUrl && (
+            <button className="link-btn" onClick={() => downloadImage(effectiveDlUrl)}>download</button>
+          )}
+          {isBuilding && !effectiveDlUrl && (
+            <button className="link-btn disabled" disabled>download</button>
+          )}
+          {tok.status !== 'revoked' && !isBuilding && (
             <button className="link-btn dismiss" onClick={() => revoke(tok.id, tok.label)} title="revoke">revoke</button>
           )}
+          {!isBuilding && (
+            <button className="link-btn dismiss" onClick={() => deleteToken(tok.id, tok.label)} title="delete">delete</button>
+          )}
         </div>
-      ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="homelab-tokens">
+      <div className="section-label-sm">Managed Pis</div>
+      {isBuildingVisible && renderToken(
+        { id: buildingTokenId, label: buildMsg?.label || 'Building...', node_type: buildMsg?.nodeType || '', status: 'active', created_at: new Date().toISOString().replace('Z', '') },
+        true, buildProgress, buildMsg?.message, buildStart, buildDownloadUrl
+      )}
+      {displayTokens.map(tok => {
+        const isThis = tok.id === buildingTokenId
+        return renderToken(tok, isThis && buildProgress < 100, isThis ? buildProgress : null, isThis ? buildMsg?.message : null, isThis ? buildStart : null, isThis ? buildDownloadUrl : null)
+      })}
     </div>
   )
 }
@@ -635,6 +634,72 @@ function HomelabNodesCard() {
   const [nodes, setNodes] = useState(null)
   const [routerNodes, setRouterNodes] = useState(null)
   const [tokenRefresh, setTokenRefresh] = useState(0)
+  const [building, setBuilding] = useState(false)
+  const [buildingTokenId, setBuildingTokenId] = useState(null)
+  const [buildProgress, setBuildProgress] = useState(0)
+  const [buildMsg, setBuildMsg] = useState(null)
+  const [buildStart, setBuildStart] = useState(null)
+  const [buildDownloadUrl, setBuildDownloadUrl] = useState(null)
+  const { showToast } = useStatus()
+
+  const startBuild = async (imageType, label, wifiSSID, wifiPassword) => {
+    setBuilding(true)
+    setBuildProgress(0)
+    setBuildMsg({ label, nodeType: imageType, message: 'Starting...' })
+    setBuildStart(Date.now())
+    setBuildDownloadUrl(null)
+    setBuildingTokenId(null)
+
+    try {
+      const res = await fetch(`/api/homelab/provision/${imageType}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label, wifi_ssid: wifiSSID, wifi_password: wifiPassword }),
+      })
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (!done) buffer += decoder.decode(value, { stream: true })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop()
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.error) {
+              showToast(data.error, 'error')
+              setBuilding(false)
+              return
+            }
+            if (data.token_id) setBuildingTokenId(data.token_id)
+            if (data.progress !== undefined) {
+              setBuildProgress(data.progress)
+              setBuildMsg(m => ({ ...m, message: data.message || '' }))
+            }
+            if (data.done) {
+              setBuildDownloadUrl(data.download_url)
+              setBuildProgress(100)
+              setBuildMsg(m => ({ ...m, message: 'Ready to download' }))
+              setBuildingTokenId(data.token_id)
+              setTokenRefresh(k => k + 1)
+              showToast(`Image ready: ${label}`, 'success')
+            }
+          } catch {}
+        }
+        if (done) break
+      }
+    } catch (e) {
+      showToast(e.message, 'error')
+    } finally {
+      setBuilding(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -705,8 +770,22 @@ function HomelabNodesCard() {
         </div>
       )}
 
-      <HomelabImageBuilder onImageBuilt={() => setTokenRefresh(k => k + 1)} />
-      <HomelabTokensList refreshKey={tokenRefresh} />
+      <HomelabImageBuilder
+        onBuildStart={startBuild}
+        building={building}
+        buildProgress={buildProgress}
+        buildMsg={buildMsg}
+        buildStart={buildStart}
+        buildDownloadUrl={buildDownloadUrl}
+      />
+      <HomelabTokensList
+        refreshKey={tokenRefresh}
+        buildingTokenId={buildingTokenId}
+        buildProgress={buildProgress}
+        buildMsg={buildMsg}
+        buildStart={buildStart}
+        buildDownloadUrl={buildDownloadUrl}
+      />
       <HomelabSSHKeys />
     </Card>
   )

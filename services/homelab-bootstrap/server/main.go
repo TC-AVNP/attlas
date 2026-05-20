@@ -70,6 +70,7 @@ type JoinConfig struct {
 
 type RegisterResponse struct {
 	NodeID   int         `json:"node_id"`
+	TokenID  int         `json:"token_id"`
 	Hostname string      `json:"hostname"`
 	Label    string      `json:"label"`
 	Message  string      `json:"message"`
@@ -81,16 +82,21 @@ type RegisterResponse struct {
 }
 
 type ImageToken struct {
-	ID         int    `json:"id"`
-	NodeType   string `json:"node_type"`
-	Status     string `json:"status"`
-	Label      string `json:"label"`
-	CertSerial string `json:"cert_serial"`
-	MACAddress string `json:"mac_address"`
-	Hostname   string `json:"hostname"`
-	CreatedAt  string `json:"created_at"`
-	RedeemedAt string `json:"redeemed_at,omitempty"`
-	RevokedAt  string `json:"revoked_at,omitempty"`
+	ID             int    `json:"id"`
+	NodeType       string `json:"node_type"`
+	Status         string `json:"status"`
+	Label          string `json:"label"`
+	CertSerial     string `json:"cert_serial"`
+	MACAddress     string `json:"mac_address"`
+	Hostname       string `json:"hostname"`
+	ImageFilename  string `json:"image_filename,omitempty"`
+	DownloadURL    string `json:"download_url,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	ImageBuiltAt   string `json:"image_built_at,omitempty"`
+	DownloadedAt   string `json:"downloaded_at,omitempty"`
+	RedeemedAt     string `json:"redeemed_at,omitempty"`
+	FirstMetricsAt string `json:"first_metrics_at,omitempty"`
+	RevokedAt      string `json:"revoked_at,omitempty"`
 }
 
 type Node struct {
@@ -133,6 +139,10 @@ func main() {
 	mux.HandleFunc("POST /api/tokens/create", handleCreateToken)
 	mux.HandleFunc("GET /api/tokens", handleListTokens)
 	mux.HandleFunc("POST /api/tokens/{id}/revoke", handleRevokeToken)
+	mux.HandleFunc("DELETE /api/tokens/{id}", handleDeleteToken)
+	mux.HandleFunc("GET /api/tokens/{id}/timeline", handleTokenTimeline)
+	mux.HandleFunc("POST /api/tokens/{id}/event", handleTokenEvent)
+	mux.HandleFunc("POST /api/event", handleTokenEventByToken)
 
 	// Node inventory
 	mux.HandleFunc("GET /api/nodes", handleListNodes)
@@ -404,7 +414,8 @@ func handleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 func handleListTokens(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`SELECT id, node_type, status, label, cert_serial, mac_address, hostname,
-		created_at, redeemed_at, revoked_at FROM image_tokens ORDER BY created_at DESC`)
+		image_filename, created_at, image_built_at, downloaded_at, redeemed_at, first_metrics_at, revoked_at
+		FROM image_tokens ORDER BY created_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 		return
@@ -414,16 +425,29 @@ func handleListTokens(w http.ResponseWriter, r *http.Request) {
 	tokens := []ImageToken{}
 	for rows.Next() {
 		var tok ImageToken
-		var redeemedAt, revokedAt sql.NullString
+		var imageBuiltAt, downloadedAt, redeemedAt, firstMetricsAt, revokedAt sql.NullString
 		if err := rows.Scan(&tok.ID, &tok.NodeType, &tok.Status, &tok.Label, &tok.CertSerial,
-			&tok.MACAddress, &tok.Hostname, &tok.CreatedAt, &redeemedAt, &revokedAt); err != nil {
+			&tok.MACAddress, &tok.Hostname, &tok.ImageFilename, &tok.CreatedAt,
+			&imageBuiltAt, &downloadedAt, &redeemedAt, &firstMetricsAt, &revokedAt); err != nil {
 			continue
+		}
+		if imageBuiltAt.Valid {
+			tok.ImageBuiltAt = imageBuiltAt.String
+		}
+		if downloadedAt.Valid {
+			tok.DownloadedAt = downloadedAt.String
 		}
 		if redeemedAt.Valid {
 			tok.RedeemedAt = redeemedAt.String
 		}
+		if firstMetricsAt.Valid {
+			tok.FirstMetricsAt = firstMetricsAt.String
+		}
 		if revokedAt.Valid {
 			tok.RevokedAt = revokedAt.String
+		}
+		if tok.ImageFilename != "" {
+			tok.DownloadURL = "/api/homelab/provision/download/" + tok.ImageFilename
 		}
 		tokens = append(tokens, tok)
 	}
@@ -453,6 +477,189 @@ func handleRevokeToken(w http.ResponseWriter, r *http.Request) {
 	log.Printf("revoked token %s", id)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "revoked", "id": id})
+}
+
+func handleDeleteToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"token id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get the image filename before deleting the row
+	var imageFilename string
+	db.QueryRow(`SELECT image_filename FROM image_tokens WHERE id=?`, id).Scan(&imageFilename)
+
+	result, err := db.Exec(`DELETE FROM image_tokens WHERE id=?`, id)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		http.Error(w, `{"error":"token not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Delete the image file if it exists
+	if imageFilename != "" {
+		imgPath := filepath.Join("/var/lib/homelab-bootstrap/images", imageFilename)
+		if err := os.Remove(imgPath); err != nil {
+			log.Printf("warning: could not delete image %s: %v", imgPath, err)
+		} else {
+			log.Printf("deleted image file %s", imgPath)
+		}
+	}
+
+	log.Printf("deleted token %s", id)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "deleted", "id": id})
+}
+
+func handleTokenTimeline(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"token id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var tok ImageToken
+	var imageBuiltAt, downloadedAt, redeemedAt, firstMetricsAt, revokedAt sql.NullString
+	err := db.QueryRow(`SELECT id, node_type, status, label, cert_serial, mac_address, hostname,
+		image_filename, created_at, image_built_at, downloaded_at, redeemed_at, first_metrics_at, revoked_at
+		FROM image_tokens WHERE id=?`, id).Scan(
+		&tok.ID, &tok.NodeType, &tok.Status, &tok.Label, &tok.CertSerial,
+		&tok.MACAddress, &tok.Hostname, &tok.ImageFilename, &tok.CreatedAt,
+		&imageBuiltAt, &downloadedAt, &redeemedAt, &firstMetricsAt, &revokedAt)
+	if err != nil {
+		http.Error(w, `{"error":"token not found"}`, http.StatusNotFound)
+		return
+	}
+
+	type Event struct {
+		Name   string `json:"event"`
+		At     string `json:"at,omitempty"`
+		Detail string `json:"detail,omitempty"`
+	}
+
+	events := []Event{
+		{Name: "provisioned", At: tok.CreatedAt},
+	}
+	if imageBuiltAt.Valid {
+		events = append(events, Event{Name: "image_built", At: imageBuiltAt.String})
+	}
+	if downloadedAt.Valid {
+		events = append(events, Event{Name: "downloaded", At: downloadedAt.String})
+	}
+	if redeemedAt.Valid {
+		detail := ""
+		if tok.MACAddress != "" {
+			detail = "mac=" + tok.MACAddress
+		}
+		events = append(events, Event{Name: "registered", At: redeemedAt.String, Detail: detail})
+	}
+	if firstMetricsAt.Valid {
+		events = append(events, Event{Name: "first_metrics", At: firstMetricsAt.String})
+	}
+	if revokedAt.Valid {
+		events = append(events, Event{Name: "revoked", At: revokedAt.String})
+	}
+
+	// Append custom events from token_events table
+	rows, err := db.Query(`SELECT event, detail, created_at FROM token_events WHERE token_id=? ORDER BY created_at`, id)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var ev Event
+			rows.Scan(&ev.Name, &ev.Detail, &ev.At)
+			events = append(events, ev)
+		}
+	}
+
+	result := map[string]any{
+		"id":        tok.ID,
+		"label":     tok.Label,
+		"node_type": tok.NodeType,
+		"status":    tok.Status,
+		"events":    events,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func handleTokenEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"token id required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Event  string `json:"event"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Event == "" {
+		http.Error(w, `{"error":"event name required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Verify token exists
+	var exists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM image_tokens WHERE id=?`, id).Scan(&exists); err != nil || exists == 0 {
+		http.Error(w, `{"error":"token not found"}`, http.StatusNotFound)
+		return
+	}
+
+	_, err := db.Exec(`INSERT INTO token_events (token_id, event, detail) VALUES (?, ?, ?)`,
+		id, req.Event, req.Detail)
+	if err != nil {
+		http.Error(w, `{"error":"failed to record event"}`, http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("event recorded: token=%s event=%s", id, req.Event)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "recorded", "event": req.Event})
+}
+
+func handleTokenEventByToken(w http.ResponseWriter, r *http.Request) {
+	rawToken := r.Header.Get("X-Image-Token")
+	if rawToken == "" {
+		http.Error(w, `{"error":"X-Image-Token header required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	hash := sha256.Sum256([]byte(rawToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	var tokenID int
+	if err := db.QueryRow(`SELECT id FROM image_tokens WHERE token_hash=?`, tokenHash).Scan(&tokenID); err != nil {
+		http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		Event  string `json:"event"`
+		Detail string `json:"detail"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Event == "" {
+		http.Error(w, `{"error":"event name required"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec(`INSERT INTO token_events (token_id, event, detail) VALUES (?, ?, ?)`,
+		tokenID, req.Event, req.Detail)
+	if err != nil {
+		http.Error(w, `{"error":"failed to record event"}`, http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("event recorded: token=%d event=%s (via token auth)", tokenID, req.Event)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "recorded", "event": req.Event})
 }
 
 // --- Node inventory ---
@@ -564,7 +771,9 @@ func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Label string `json:"label"`
+		Label        string `json:"label"`
+		WifiSSID     string `json:"wifi_ssid"`
+		WifiPassword string `json:"wifi_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid json"}`, http.StatusBadRequest)
@@ -574,6 +783,8 @@ func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"label is required"}`, http.StatusBadRequest)
 		return
 	}
+	// WiFi is optional — workers get ethernet from the router's switch.
+	// Only required for routers (which need internet before the SIM modem is configured).
 
 	// Create a token for this image
 	tokenBytes := make([]byte, 32)
@@ -614,7 +825,7 @@ func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
 	log.Printf("building %s image %q → %s", nodeType, req.Label, outputPath)
 	cmd := exec.Command("bash", buildScript, outputPath)
 	cmd.Dir = buildDir
-	cmd.Env = append(os.Environ(), "TOKEN="+rawToken)
+	cmd.Env = append(os.Environ(), "TOKEN="+rawToken, "WIFI_SSID="+req.WifiSSID, "WIFI_PASSWORD="+req.WifiPassword)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -631,6 +842,10 @@ func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Emit token_id immediately so the frontend can show the token in the list
+	fmt.Fprintf(w, "data: {\"token_id\":%d,\"label\":\"%s\",\"node_type\":\"%s\",\"progress\":0,\"message\":\"Starting...\"}\n\n", tokenID, req.Label, nodeType)
+	flusher.Flush()
 
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(w, "data: {\"error\":\"failed to start build: %v\"}\n\n", err)
@@ -657,11 +872,16 @@ func handleProvisionImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build scripts zstd-compress the image, so actual file is filename + ".zst"
+	filename += ".zst"
 	log.Printf("image built: %s (%s)", filename, req.Label)
+
+	// Persist filename and build timestamp
+	db.Exec(`UPDATE image_tokens SET image_filename=?, image_built_at=datetime('now') WHERE id=?`, filename, tokenID)
 	doneMsg := map[string]any{
 		"token_id":     tokenID,
 		"filename":     filename,
-		"download_url": "/api/provision/download/" + filename,
+		"download_url": "/api/homelab/provision/download/" + filename,
 		"label":        req.Label,
 		"node_type":    nodeType,
 		"done":         true,
@@ -683,6 +903,9 @@ func handleDownloadImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"image not found"}`, http.StatusNotFound)
 		return
 	}
+
+	// Record first download timestamp
+	db.Exec(`UPDATE image_tokens SET downloaded_at=datetime('now') WHERE image_filename=? AND downloaded_at IS NULL`, filename)
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
@@ -927,7 +1150,7 @@ func generateJoinConfig() (*JoinConfig, error) {
 		Token:             token,
 		CACertHash:        caHash,
 		CertificateKey:    certKey,
-		ControlPlane:      true,
+		ControlPlane:      false,
 	}, nil
 }
 
@@ -985,6 +1208,11 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("read %s: %w", entry.Name(), err)
 		}
 		if _, err := db.Exec(string(data)); err != nil {
+			// ALTER TABLE ADD COLUMN is not idempotent in SQLite —
+			// ignore "duplicate column" errors on re-run.
+			if strings.Contains(err.Error(), "duplicate column") {
+				continue
+			}
 			return fmt.Errorf("exec %s: %w", entry.Name(), err)
 		}
 	}

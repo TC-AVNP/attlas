@@ -26,6 +26,7 @@
     lan_dhcp_start: "50"
     lan_dhcp_end: "150"
     wifi_subnet: "10.0.2"
+    gsm_apn: "internet"
     sanitized_label: "{{ label | default('pi-router') | lower | regex_replace('[^a-z0-9]', '-') | regex_replace('-+', '-') | regex_replace('^-|-$', '') }}"
 
   tasks:
@@ -39,6 +40,11 @@
         path: /etc/hosts
         regexp: '^127\.0\.1\.1'
         line: "127.0.1.1 {{ sanitized_label }}"
+
+    - name: Force DHCP renewal with new hostname
+      shell: nmcli general hostname "{{ sanitized_label }}" && nmcli device reapply eth0
+      changed_when: true
+      ignore_errors: true
 
     # ── SSH keys from registration ───────────────────────────────────
     - name: Configure SSH authorized keys
@@ -60,8 +66,8 @@
             group: "{{ router_user }}"
             mode: "0600"
 
-    # ── Lock default ubuntu user ─────────────────────────────────────
     # ── Dotfiles (served from bootstrap service) ───────────────────
+    # NOTE: directory name "dotfiels" intentionally matches the repo name.
     - name: Extract dotfiles
       when: dotfiles is defined and dotfiles | length > 0
       shell: |
@@ -89,19 +95,47 @@
         shell: /usr/sbin/nologin
       ignore_errors: true
 
-    # ── Netplan — eth0 only, leave wlan0 to NetworkManager ──────────
-    - name: Write netplan config (eth0 only)
+    # ── Netplan — hand all interfaces to NetworkManager ─────────────
+    # NM owns eth0/wlan0/wwan0; netplan only needs the renderer line.
+    # Previously had `ethernets: eth0` stanza which kept eth0 under
+    # networkd, so the eth0-lan keyfile never bound and dnsmasq had
+    # no IP to listen on.
+    - name: Write netplan config (renderer = NetworkManager)
       copy:
         content: |
           network:
             version: 2
-            ethernets:
-              eth0:
-                optional: true
-                dhcp4: false
+            renderer: NetworkManager
         dest: /etc/netplan/50-cloud-init.yaml
         mode: "0600"
       notify: apply netplan
+
+    # ── Mobile broadband (SIM) via NetworkManager ────────────────────
+    # NEW: the original playbook configured NAT for wwan0 and enabled
+    # ModemManager but never created an NM GSM profile, so the SIM
+    # never connected. APN defaults to "internet" (works for MEO PT
+    # and most carriers); override via -e gsm_apn=...
+    - name: Configure mobile broadband (GSM) connection
+      copy:
+        content: |
+          [connection]
+          id=mobile-broadband
+          type=gsm
+          autoconnect=true
+          autoconnect-priority=100
+
+          [gsm]
+          apn={{ gsm_apn }}
+
+          [ipv4]
+          method=auto
+          route-metric=100
+
+          [ipv6]
+          method=disabled
+        dest: /etc/NetworkManager/system-connections/mobile-broadband.nmconnection
+        mode: "0600"
+      notify: reload networkmanager
 
     # ── eth0 static IP via NetworkManager ────────────────────────────
     - name: Configure eth0 LAN connection
@@ -215,8 +249,12 @@
         sysctl_file: /etc/sysctl.d/99-router.conf
         reload: true
 
-    # ── NAT + Firewall (eth0→wwan0 only, NO wlan0 rules) ────────────
-    # NM creates its own nm-sh-fw-wlan0 chain for the AP automatically
+    # ── NAT + Firewall (eth0 LAN + wlan0 AP both NAT'd to wwan0) ────
+    # MASQUERADE on wwan0 covers both LAN subnets uniformly.
+    # CHANGED: added wlan0→wwan0 FORWARD rules. The old comment about
+    # NM auto-creating nm-sh-fw-wlan0 chains was misleading: NM does
+    # add them on AP activation, but iptables-restore wipes them when
+    # FORWARD policy reloads as DROP. Explicit rules are reliable.
     - name: Write iptables rules
       copy:
         content: |
@@ -238,10 +276,19 @@
           -A INPUT -i wlan0 -j ACCEPT
           -A INPUT -p icmp -j ACCEPT
           -A FORWARD -i eth0 -o wwan0 -j ACCEPT
+          -A FORWARD -i wlan0 -o wwan0 -j ACCEPT
           -A FORWARD -i wwan0 -o eth0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          -A FORWARD -i wwan0 -o wlan0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
           COMMIT
         dest: /etc/iptables/rules.v4
       notify: restore iptables
+
+    # NEW: flush queued handlers now so any later task failure can't
+    # drop network / firewall changes. The original playbook silently
+    # left iptables empty, dnsmasq dead, and otelcol off after a single
+    # template error caused the play to abort before handlers ran.
+    - name: Flush handlers (network + firewall must be live before continuing)
+      meta: flush_handlers
 
     # ── OTel mTLS certs ──────────────────────────────────────────────
     - name: Create OTel certs directory
@@ -341,7 +388,6 @@
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/otelcol-agent.service
-      notify: start otelcol agent
 
     # ── Temperature exporter ─────────────────────────────────────────
     - name: Create router scripts directory
@@ -349,10 +395,15 @@
         path: /opt/router
         state: directory
 
+    # CHANGED: wrapped in {% raw %} ... {% endraw %} so Jinja doesn't
+    # parse bash's ${#BODY} parameter-length expansion as the start of
+    # a Jinja comment ({#). Without this the play errored on this task
+    # and ALL queued handlers got dropped (iptables, dnsmasq, otelcol,
+    # netplan, NM reload) — see the flush_handlers task above.
     - name: Install temperature exporter script
       copy:
         content: |
-          #!/usr/bin/env bash
+          {% raw %}#!/usr/bin/env bash
           while true; do
             TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
             TEMP_C=$(echo "scale=1; $TEMP/1000" | bc)
@@ -361,6 +412,7 @@
             printf "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
               "$BODY_LEN" "$BODY" | nc -l -p 9101 -q 1 2>/dev/null || sleep 1
           done
+          {% endraw %}
         dest: /opt/router/temp-exporter.sh
         mode: "0755"
 
@@ -378,7 +430,6 @@
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/temp-exporter.service
-      notify: start temp exporter
 
     # ── 4G Watchdog ──────────────────────────────────────────────────
     - name: Install 4G watchdog script
@@ -422,16 +473,24 @@
         state: started
         daemon_reload: true
 
-    # ── Enable services ──────────────────────────────────────────────
-    - name: Enable core services
+    # ── Enable + start core services ─────────────────────────────────
+    # CHANGED: added state:started and included temp-exporter +
+    # otelcol-agent in the loop. The handler-based enable was unreliable
+    # — on idempotent re-runs where the unit file is unchanged, the task
+    # returns "ok" and the handler never fires. Also, state:started
+    # clears any stale "failed" state from first-boot.
+    - name: Enable + start core services
       systemd:
         name: "{{ item }}"
         enabled: true
+        state: started
       loop:
         - dnsmasq
         - netfilter-persistent
         - NetworkManager
         - ModemManager
+        - temp-exporter
+        - otelcol-agent
 
     # ── SSH key refresh timer ────────────────────────────────────────
     - name: Install refresh-config script
@@ -489,6 +548,29 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # ── Remove bootstrap WiFi ────────────────────────────────────────
+    # The bootstrap WiFi (phone hotspot) was only needed for initial
+    # registration. Now that SIM is configured, remove it.
+    - name: Remove bootstrap WiFi connection
+      file:
+        path: /etc/NetworkManager/system-connections/bootstrap-wifi.nmconnection
+        state: absent
+      notify: reload networkmanager
+      ignore_errors: true
+
+    # ── Notify bootstrap service that provisioning is complete ──────
+    - name: Notify bootstrap service of provisioning complete
+      uri:
+        url: "https://homelab.attlas.uk/api/event"
+        method: POST
+        body_format: json
+        body:
+          event: provisioned_complete
+        headers:
+          X-Image-Token: "{{ lookup('file', '/etc/image-token') }}"
+        validate_certs: true
+      ignore_errors: true
 
   handlers:
     - name: apply netplan

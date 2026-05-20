@@ -56,6 +56,13 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 // work).
 func serveStatic(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+
+	// Don't serve SPA for unmatched /api/ paths — return 404 instead
+	if strings.HasPrefix(path, "/api/") {
+		http.NotFound(w, r)
+		return
+	}
+
 	if path == "/" {
 		path = "/index.html"
 	}
@@ -164,6 +171,9 @@ func main() {
 	mux.HandleFunc("PUT /api/homelab/ssh-keys", handleHomelabSSHKeys)
 	mux.HandleFunc("GET /api/homelab/tokens", handleHomelabTokens)
 	mux.HandleFunc("POST /api/homelab/tokens/{id}/revoke", handleHomelabRevokeToken)
+	mux.HandleFunc("DELETE /api/homelab/tokens/{id}", handleHomelabDeleteToken)
+	mux.HandleFunc("GET /api/homelab/tokens/{id}/timeline", handleHomelabTokenTimeline)
+	mux.HandleFunc("POST /api/homelab/tokens/{id}/event", handleHomelabTokenEvent)
 	mux.HandleFunc("POST /api/homelab/provision/{type}", handleHomelabProvision)
 	mux.HandleFunc("GET /api/homelab/provision/download/{filename}", handleHomelabDownloadImage)
 	mux.HandleFunc("GET /api/cloud-spend", costs.HandleCloudSpend)
@@ -174,12 +184,20 @@ func main() {
 	mux.Handle("/diary/", http.StripPrefix("/diary/", http.FileServer(http.Dir(diaryDir))))
 
 	// Static files (catch-all)
+	// Register SPA catch-all — Go 1.22 mux uses "/" as lowest-priority fallback
 	mux.HandleFunc("/", serveStatic)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	log.Printf("Attlas server running on http://%s", addr)
 	log.Printf("Serving frontend from %s", distDir)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	// Wrap mux: API routes go through mux matching; non-API falls to SPA.
+	// Go 1.22 mux "/" catch-all can shadow parameterized API routes like
+	// "GET /api/.../tokens/{id}/timeline", so we intercept unmatched /api/
+	// paths and return 404 instead of the SPA index.html.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r)
+	})
+	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
 func init() {

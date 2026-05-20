@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func handleHomelabTokens(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +38,56 @@ func handleHomelabRevokeToken(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+func handleHomelabTokenTimeline(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	resp, err := homelabHTTPClient.Get(homelabBackend + "/api/tokens/" + id + "/timeline")
+	if err != nil {
+		http.Error(w, `{"error":"bootstrap service unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func handleHomelabTokenEvent(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	req, err := http.NewRequest("POST", homelabBackend+"/api/tokens/"+id+"/event", r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := homelabHTTPClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"bootstrap service unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func handleHomelabDeleteToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	req, err := http.NewRequest("DELETE", homelabBackend+"/api/tokens/"+id, nil)
+	if err != nil {
+		http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+		return
+	}
+	resp, err := homelabHTTPClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"bootstrap service unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
 func handleHomelabProvision(w http.ResponseWriter, r *http.Request) {
 	nodeType := r.PathValue("type")
 	if nodeType != "router" && nodeType != "worker" {
@@ -52,7 +103,7 @@ func handleHomelabProvision(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("Content-Type", "application/json")
 
 	// Long timeout for image build, no buffering for SSE pass-through
-	resp, err := (&http.Client{Timeout: 600 * 1e9}).Do(req)
+	resp, err := (&http.Client{Timeout: 10 * 60 * time.Second}).Do(req)
 	if err != nil {
 		http.Error(w, `{"error":"image build failed or timed out"}`, http.StatusBadGateway)
 		return
@@ -87,7 +138,9 @@ func handleHomelabDownloadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := homelabHTTPClient.Get(homelabBackend + "/api/provision/download/" + filename)
+	// Use a long timeout — images are multi-GB.
+	client := &http.Client{Timeout: 10 * 60 * time.Second}
+	resp, err := client.Get(homelabBackend + "/api/provision/download/" + filename)
 	if err != nil {
 		http.Error(w, `{"error":"download failed"}`, http.StatusBadGateway)
 		return

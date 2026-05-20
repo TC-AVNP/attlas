@@ -30,6 +30,13 @@
         regexp: '^127\.0\.1\.1'
         line: "127.0.1.1 {{ sanitized_label }}"
 
+    # Force DHCP to re-announce new hostname immediately (otherwise
+    # dnsmasq caches the old cloud-init hostname for up to 12h)
+    - name: Force DHCP renewal with new hostname
+      shell: nmcli general hostname "{{ sanitized_label }}" && nmcli device reapply eth0
+      changed_when: true
+      ignore_errors: true
+
     # ── SSH keys from bootstrap service ────────────────────────────────
     - name: Configure SSH authorized keys
       when: ssh is defined and ssh.authorized_keys is defined
@@ -50,8 +57,8 @@
             group: "{{ homelab_user }}"
             mode: "0600"
 
-    # ── Lock default ubuntu user (security) ──────────────────────────────
     # ── Dotfiles (served from bootstrap service) ───────────────────
+    # NOTE: directory name "dotfiels" intentionally matches the repo name.
     - name: Extract dotfiles
       when: dotfiles is defined and dotfiles | length > 0
       shell: |
@@ -145,8 +152,18 @@
         path: /etc/kubernetes/kubelet.conf
       register: kubelet_conf
 
+    - name: Fail loudly if worker has no join credentials
+      fail:
+        msg: >
+          Registration response did not include a `join` object. The bootstrap
+          server needs k8s running to generate join tokens. Check if kubelet
+          is active on the control plane.
+      when:
+        - not kubelet_conf.stat.exists
+        - join is not defined or join.token is not defined
+
     - name: Join Kubernetes cluster
-      when: not kubelet_conf.stat.exists and join is defined and join.token is defined
+      when: not kubelet_conf.stat.exists
       shell: |
         kubeadm join {{ join.api_server_endpoint }} \
           --token {{ join.token }} \
@@ -160,6 +177,33 @@
       retries: 3
       delay: 30
       until: join_result.rc == 0
+
+    - name: Verify kubelet is healthy after join
+      uri:
+        url: http://127.0.0.1:10248/healthz
+        return_content: true
+      register: kubelet_health
+      retries: 10
+      delay: 6
+      until: kubelet_health.status == 200 and kubelet_health.content == 'ok'
+      when: join_result is defined and join_result.rc is defined and join_result.rc == 0
+
+    - name: Notify bootstrap service of k8s join
+      uri:
+        url: "https://homelab.attlas.uk/api/event"
+        method: POST
+        body_format: json
+        body:
+          event: k8s_joined
+        headers:
+          X-Image-Token: "{{ lookup('file', '/etc/image-token') }}"
+        validate_certs: true
+      ignore_errors: true
+      when: join_result is defined and join_result.rc is defined and join_result.rc == 0
+
+    # ── Flush handlers so k8s + containerd are stable before continuing ──
+    - name: Flush handlers (k8s must be live before continuing)
+      meta: flush_handlers
 
     # ── Shell (pre-installed in base image) ──────────────────────────
     - name: Set zsh as default shell
@@ -195,11 +239,13 @@
         dest: /etc/otel-certs/ca.crt
         mode: "0644"
 
-    # ── OTel + Temperature (binaries pre-installed in base image) ───
+    # ── Temperature exporter ─────────────────────────────────────────
+    # Wrapped in {% raw %} to prevent Jinja from parsing ${#BODY} as
+    # a comment tag ({#). This was the root cause of playbook failures.
     - name: Install temperature exporter script
       copy:
         content: |
-          #!/usr/bin/env bash
+          {% raw %}#!/usr/bin/env bash
           while true; do
             TEMP=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo 0)
             TEMP_C=$(echo "scale=1; $TEMP/1000" | bc)
@@ -208,6 +254,7 @@
             printf "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
               "$BODY_LEN" "$BODY" | nc -l -p 9101 -q 1 2>/dev/null || sleep 1
           done
+          {% endraw %}
         dest: /opt/homelab/temp-exporter.sh
         mode: "0755"
 
@@ -225,7 +272,6 @@
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/temp-exporter.service
-      notify: start temp exporter
 
     - name: Create OTel Collector config directory
       file:
@@ -264,7 +310,6 @@
                 - key: host.name
                   value: {{ sanitized_label }}
                   action: upsert
-                  action: upsert
 
           exporters:
             otlphttp:
@@ -297,19 +342,20 @@
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/otelcol-agent.service
-      notify: start otelcol agent
 
     # ── Healthz daemon ─────────────────────────────────────────────────
+    # Also wrapped in {% raw %} for ${#RESPONSE}
     - name: Install healthz script
       copy:
         content: |
-          #!/usr/bin/env bash
+          {% raw %}#!/usr/bin/env bash
           while true; do
             RESPONSE=$(printf '{"status":"ok","hostname":"%s","uptime":"%s","load":"%s"}' \
               "$(hostname)" "$(uptime -p)" "$(cat /proc/loadavg | cut -d' ' -f1-3)")
             printf "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" \
               "${#RESPONSE}" "$RESPONSE" | nc -l -p 9100 -q 1 2>/dev/null || sleep 1
           done
+          {% endraw %}
         dest: /opt/homelab/healthz.sh
         mode: "0755"
 
@@ -327,7 +373,6 @@
           [Install]
           WantedBy=multi-user.target
         dest: /etc/systemd/system/homelab-healthz.service
-      notify: start healthz
 
     # ── SSH key refresh timer ──────────────────────────────────────────
     - name: Install refresh-config script
@@ -379,12 +424,39 @@
           ExecStart=/opt/homelab/refresh-config.sh
         dest: /etc/systemd/system/homelab-refresh.service
 
-    - name: Enable refresh timer
+    # ── Enable + start all services ──────────────────────────────────
+    # Explicit enable+start is more reliable than handler-only approach.
+    - name: Enable + start core services
       systemd:
-        name: homelab-refresh.timer
+        name: "{{ item }}"
         enabled: true
         state: started
         daemon_reload: true
+      loop:
+        - temp-exporter
+        - otelcol-agent
+        - homelab-healthz
+        - homelab-refresh.timer
+
+    # ── Remove bootstrap WiFi ────────────────────────────────────────
+    - name: Remove bootstrap WiFi connection
+      file:
+        path: /etc/NetworkManager/system-connections/bootstrap-wifi.nmconnection
+        state: absent
+      ignore_errors: true
+
+    # ── Notify bootstrap service that provisioning is complete ──────
+    - name: Notify bootstrap service of provisioning complete
+      uri:
+        url: "https://homelab.attlas.uk/api/event"
+        method: POST
+        body_format: json
+        body:
+          event: provisioned_complete
+        headers:
+          X-Image-Token: "{{ lookup('file', '/etc/image-token') }}"
+        validate_certs: true
+      ignore_errors: true
 
   handlers:
     - name: restart containerd
