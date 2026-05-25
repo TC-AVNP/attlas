@@ -176,6 +176,8 @@ func main() {
 	mux.HandleFunc("POST /api/homelab/tokens/{id}/event", handleHomelabTokenEvent)
 	mux.HandleFunc("POST /api/homelab/provision/{type}", handleHomelabProvision)
 	mux.HandleFunc("GET /api/homelab/provision/download/{filename}", handleHomelabDownloadImage)
+	mux.HandleFunc("GET /api/homelab/golden-image", handleGoldenImageInfo)
+	mux.HandleFunc("GET /api/homelab/golden-image/download", handleGoldenImageDownload)
 	mux.HandleFunc("GET /api/cloud-spend", costs.HandleCloudSpend)
 	mux.HandleFunc("GET /api/costs/breakdown", costs.HandleBreakdown)
 	mux.HandleFunc("POST /api/vm/stop", infra.HandleStopVM)

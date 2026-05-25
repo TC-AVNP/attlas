@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BFM — Brain Fleet Management</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="https://unpkg.com/@xterm/xterm@5/css/xterm.css">
+<script src="https://unpkg.com/@xterm/xterm@5/lib/xterm.js"></script>
+<script src="https://unpkg.com/@xterm/addon-fit@0/lib/addon-fit.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+// ─── Shared UI bits + helpers ───────────────────────────────────────────────
+
+const { useState, useMemo, useEffect, useCallback, useRef } = React;
+
+function formatRel(iso) {
+  if (!iso) return '—';
+  const now = Date.now();
+  const t = new Date(iso).getTime();
+  const diff = Math.max(0, now - t);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return s <= 5 ? 'just now' : `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d}d ago`;
+  const mo = Math.floor(d / 30);
+  return `${mo}mo ago`;
+}
+
+function formatAbs(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+}
+
+function Chip({ status, children }) {
+  return (
+    <span className={`chip ${status}`}>
+      <span className="dot" />
+      {children || status}
+    </span>
+  );
+}
+
+const TYPE_TONE = {
+  'heartbeat': 'is-info', 'voucher.created': 'is-info', 'voucher.redeemed': 'is-online',
+  'voucher.revoked': 'is-warn', 'node.joined': 'is-online', 'node.offline': 'is-err',
+  'cert.rotated': 'is-info', 'cert.revoked': 'is-warn', 'brain.online': 'is-online',
+  'brain.created': 'is-info', 'image.built': 'is-info', 'pxe.config_changed': 'is-info',
+  'pxe.playbook_map': 'is-info', 'pxe.boot_failed': 'is-err', 'pxe.config_drift': 'is-warn',
+  'image.available': 'is-info', 'image.pulled': 'is-info', 'playbook.updated': 'is-info',
+  'playbook.ran': 'is-online',
+};
+
+function TimelineItem({ event, showBrain }) {
+  const tone = TYPE_TONE[event.type] || 'is-info';
+  const parts = event.msg.split(/(\b(?:slv_|brn_|vch_)[a-z0-9]+\b)/g);
+  return (
+    <div className={`tl-item ${tone}`}>
+      <div className="tl-meta">
+        <span>{formatRel(event.t)}</span>
+        <span>{event.type}</span>
+        <span>· {event.actor}</span>
+        {showBrain && event.brainName && <span>· {event.brainName}</span>}
+      </div>
+      <div className="tl-msg">
+        {parts.map((p, i) =>
+          /^(slv_|brn_|vch_)/.test(p) ? <span key={i} className="id">{p}</span> : <span key={i}>{p}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── API helpers ────────────────────────────────────────────────────────────
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    ...opts,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// ─── Fleet view ─────────────────────────────────────────────────────────────
+
+function FleetView({ data, onOpenBrain, onNew }) {
+  const current = data.slaveImages.find(i => i.current);
+  return (
+    <div className="content">
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <h1 className="h1">Fleet</h1>
+          <p className="h-sub" style={{ marginBottom: 0 }}>
+            {data.brains.length} brain{data.brains.length === 1 ? '' : 's'} across your homelab.
+          </p>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn primary" onClick={onNew}>+ New brain</button>
+        </div>
+      </div>
+      {data.brains.length === 0 ? (
+        <div className="empty">
+          <div className="h">No brains yet</div>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>Create your first brain identity to get started.</div>
+          <button className="btn primary" onClick={onNew}>+ New brain</button>
+        </div>
+      ) : (
+        <div className="brain-cards">
+          {data.brains.map((b) => <BrainCard key={b.id} brain={b} currentImage={current} onOpen={() => onOpenBrain(b.id)} />)}
+        </div>
+      )}
+      {data.globalAudit.length > 0 && (
+        <>
+          <div className="section-head"><h2>Recent activity</h2><div className="right">across all brains</div></div>
+          <div className="card">
+            <div className="timeline">
+              {data.globalAudit.slice(0, 6).map((e, i) => <TimelineItem key={i} event={e} showBrain />)}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BrainCard({ brain, currentImage, onOpen }) {
+  const online = brain.slaves.filter(s => s.status === 'online').length;
+  const offline = brain.slaves.filter(s => s.status === 'offline').length;
+  const total = brain.slaves.length;
+  const isProvisioning = brain.status === 'provisioning';
+  const pxe = brain.pxe;
+  const imageState = !pxe.servingImage ? 'pending'
+    : (currentImage && pxe.servingImage === currentImage.version) ? 'current' : 'outdated';
+
+  return (
+    <div className={`brain-card ${isProvisioning ? 'is-provisioning' : ''}`} onClick={onOpen}>
+      <div className="bc-head">
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="bc-name">{brain.name}</div>
+          <div className="bc-id">{brain.id}</div>
+        </div>
+        <div className="right">
+          <Chip status={brain.status}>{brain.status}</Chip>
+        </div>
+      </div>
+      <div className="bc-slaves">
+        <div className="bc-slaves-head">
+          <div className="bc-slaves-lbl">Slaves</div>
+          <div className="bc-slaves-count">
+            {total === 0 ? <span className="total">0</span> : <>{online}<span className="total"> / {total}</span></>}
+          </div>
+        </div>
+        {total === 0 ? (
+          <div className="bc-slaves-empty">
+            {isProvisioning ? '— awaiting brain first boot —' : '— no slaves claimed —'}
+          </div>
+        ) : (
+          <div className="bc-slaves-vis">
+            {brain.slaves.map((s) => (
+              <div key={s.id} className={`bc-node ${s.status === 'offline' ? 'offline' : s.status === 'provisioning' ? 'warn' : ''}`}
+                title={`${s.name} · ${s.model || '?'} · ${s.status}`} />
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="bc-meta">
+        <div><div className="lbl">PXE</div><div className="val">
+          {pxe.status === 'running' ? <><span style={{ color: 'oklch(0.42 0.14 145)' }}>●</span> running</> : <><span style={{ color: 'var(--dim-2)' }}>●</span> stopped</>}
+        </div></div>
+        <div><div className="lbl">Image</div><div className="val">
+          {pxe.servingImage || <span className="dim">—</span>}
+          {imageState === 'outdated' && currentImage && <span style={{ marginLeft: 6, color: 'oklch(0.45 0.13 75)', fontSize: 10 }}>↑ {currentImage.version}</span>}
+        </div></div>
+        <div><div className="lbl">Provisioning</div><div className="val">{pxe.provisioning.paused ? <span style={{ color: 'oklch(0.45 0.13 75)' }}>paused</span> : 'open'}</div></div>
+        <div><div className="lbl">LAN</div><div className="val">{brain.lan || <span className="dim">—</span>}</div></div>
+      </div>
+      <div className="bc-foot">
+        <span>{brain.lastSeen ? `heartbeat ${formatRel(brain.lastSeen)}` : `created ${formatRel(brain.provisionedAt)}`}</span>
+        <span className="open-arrow">→</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Brain detail ───────────────────────────────────────────────────────────
+
+function BrainView({ brain, data, onBack, onOpenSlave, onOpenPlaybook, onRefresh }) {
+  const [tab, setTab] = useState('overview');
+  const [voucherModal, setVoucherModal] = useState(false);
+  const playbooks = data.playbooks;
+  const currentImage = data.slaveImages.find(i => i.current);
+
+  return (
+    <div>
+      <div className="content wide" style={{ paddingBottom: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 18 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <h1 className="h1" style={{ margin: 0 }}>{brain.name}</h1>
+              <Chip status={brain.status}>{brain.status}</Chip>
+            </div>
+            <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--dim)' }}>
+              <span className="mono">{brain.id}</span>
+              {brain.lan && <span>· {brain.lan}</span>}
+            </div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button className="btn sm" onClick={() => setVoucherModal(true)}>+ Slave voucher</button>
+            <button className="btn danger sm" onClick={async () => {
+              if (confirm(`Delete brain "${brain.name}"? This cannot be undone.`)) {
+                await api(`/api/brains/${brain.id}`, { method: 'DELETE' });
+                onBack();
+                onRefresh();
+              }
+            }}>Delete brain</button>
+          </div>
+        </div>
+      </div>
+      <div className="tabs">
+        {[
+          ['overview', 'Overview'],
+          ['slaves', 'Slaves', brain.slaves.length],
+          ['vouchers', 'Vouchers', brain.vouchers.length],
+          ['audit', 'Audit', brain.audit.length],
+        ].map(([key, label, count]) => (
+          <button key={key} className={`tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
+            {label}{count != null && <span className="count">{count}</span>}
+          </button>
+        ))}
+      </div>
+      <div className="content wide" style={{ paddingTop: 4 }}>
+        {tab === 'overview' && <BrainOverview brain={brain} currentImage={currentImage} playbooks={playbooks} onJump={setTab} />}
+        {tab === 'slaves' && <BrainSlaves brain={brain} playbooks={playbooks} onOpenSlave={onOpenSlave} onOpenPlaybook={onOpenPlaybook} onNewVoucher={() => setVoucherModal(true)} />}
+        {tab === 'vouchers' && <BrainVouchers brain={brain} playbooks={playbooks} onOpenPlaybook={onOpenPlaybook} onNewVoucher={() => setVoucherModal(true)} onRefresh={onRefresh} />}
+        {tab === 'audit' && <BrainAudit brain={brain} />}
+      </div>
+      {voucherModal && <NewVoucherModal brain={brain} playbooks={playbooks} onClose={() => setVoucherModal(false)} onRefresh={onRefresh} />}
+    </div>
+  );
+}
+
+function BrainOverview({ brain, currentImage, playbooks, onJump }) {
+  const onlineCount = brain.slaves.filter(s => s.status === 'online').length;
+  const pxe = brain.pxe;
+  return (
+    <div className="grid-3">
+      <div>
+        <div className="card">
+          <div className="card-head"><h3>Identity</h3></div>
+          <dl className="kv">
+            <dt>Brain ID</dt><dd>{brain.id}</dd>
+            <dt>Hostname</dt><dd>{brain.name}.bfm.local</dd>
+            <dt>LAN</dt><dd>{brain.lan || <span className="dim">— pending boot —</span>}</dd>
+            <dt>Brain IP</dt><dd>{brain.ip || <span className="dim">— pending boot —</span>}</dd>
+            <dt>Provisioned</dt><dd>{formatAbs(brain.provisionedAt)}</dd>
+            <dt>Last heartbeat</dt><dd>{brain.lastSeen ? formatRel(brain.lastSeen) : <span className="dim">never</span>}</dd>
+          </dl>
+        </div>
+        {brain.audit.length > 0 && (
+          <>
+            <div className="section-head"><h2>Recent events</h2><button className="btn ghost sm" onClick={() => onJump('audit')}>View all →</button></div>
+            <div className="card">
+              <div className="timeline">
+                {brain.audit.slice(0, 5).map((e, i) => <TimelineItem key={i} event={e} />)}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      <div>
+        <div className="card">
+          <div className="card-head"><h3>Slaves</h3><div className="right">{onlineCount}/{brain.slaves.length} ready</div></div>
+          {brain.slaves.length === 0 ? (
+            <div className="empty" style={{ padding: 18 }}><div className="h">No slaves yet</div></div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {brain.slaves.map((s) => {
+                const pb = playbooks.find(p => p.id === s.playbookId);
+                return (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span className={`chip ${s.status}`}><span className="dot" /></span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{s.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--dim)', fontFamily: 'var(--mono)' }}>{s.model || '?'} · {pb?.name || '—'}@{s.playbookVersion || '?'}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button className="btn sm" style={{ width: '100%', marginTop: 12, justifyContent: 'center' }} onClick={() => onJump('slaves')}>Manage slaves →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BrainSlaves({ brain, playbooks, onOpenSlave, onOpenPlaybook, onNewVoucher }) {
+  if (brain.slaves.length === 0) {
+    return (
+      <div className="empty">
+        <div className="h">No slaves yet</div>
+        <div style={{ fontSize: 13, marginBottom: 12 }}>Generate slave vouchers — the brain claims them and provisions Pis over PXE.</div>
+        <button className="btn primary" onClick={onNewVoucher}>+ Generate slave voucher</button>
+      </div>
+    );
+  }
+  return (
+    <table className="table">
+      <thead><tr><th>Node</th><th>Status</th><th>Pi model</th><th>Playbook</th><th>Image</th><th>k8s</th><th>Joined</th></tr></thead>
+      <tbody>
+        {brain.slaves.map((s) => {
+          const pb = playbooks.find(p => p.id === s.playbookId);
+          return (
+            <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => onOpenSlave(brain.id, s.id)}>
+              <td><div style={{ fontWeight: 500 }}>{s.name}</div><div className="mono dim" style={{ fontSize: 11, marginTop: 2 }}>{s.id}</div></td>
+              <td><Chip status={s.status}>{s.status}</Chip></td>
+              <td className="mono" style={{ fontSize: 12 }}>{s.model || '—'}</td>
+              <td><span className="mono" style={{ fontSize: 12 }}>{pb?.name || '—'}</span><span className="dim mono" style={{ fontSize: 11, marginLeft: 4 }}>@{s.playbookVersion || '?'}</span></td>
+              <td className="mono" style={{ fontSize: 12 }}>{s.imageVersion || '—'}</td>
+              <td>{s.k8s ? <span className={`chip ${s.k8s === 'Ready' ? 'online' : 'offline'}`}><span className="dot" />{s.k8s}</span> : '—'}</td>
+              <td className="mono dim" style={{ fontSize: 12 }}>{formatRel(s.joinedAt)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function BrainVouchers({ brain, playbooks, onOpenPlaybook, onNewVoucher, onRefresh }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
+        <p className="h-sub" style={{ margin: 0 }}>One-time tokens. Each carries an assigned playbook delivered on redemption.</p>
+        <button className="btn primary sm" style={{ marginLeft: 'auto' }} onClick={onNewVoucher}>+ New slave voucher</button>
+      </div>
+      <table className="table">
+        <thead><tr><th>Voucher</th><th>Kind</th><th>Playbook</th><th>State</th><th>Created</th><th>Redeemed by</th><th></th></tr></thead>
+        <tbody>
+          {brain.vouchers.map((v) => {
+            const pb = v.playbookId ? playbooks.find(p => p.id === v.playbookId) : null;
+            return (
+              <tr key={v.id}>
+                <td className="mono">{v.id}</td>
+                <td>{v.kind}</td>
+                <td>{pb ? <span className="mono" style={{ fontSize: 12 }}>{pb.name}<span className="dim" style={{ marginLeft: 4 }}>@{v.playbookVersion}</span></span> : <span className="dim">—</span>}</td>
+                <td><Chip status={v.state === 'redeemed' ? 'online' : v.state === 'revoked' ? 'revoked' : 'pending'}>{v.state}</Chip></td>
+                <td className="mono dim" style={{ fontSize: 12 }}>{formatRel(v.createdAt)}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{v.redeemedBy || <span className="dim">—</span>}</td>
+                <td className="actions">
+                  {v.state === 'pending' && (
+                    <button className="btn ghost sm danger" onClick={async () => {
+                      await api(`/api/vouchers/${v.id}`, { method: 'DELETE' });
+                      onRefresh();
+                    }}>Revoke</button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BrainAudit({ brain }) {
+  const [filter, setFilter] = useState('all');
+  const types = ['all', ...Array.from(new Set(brain.audit.map(e => e.type)))];
+  const filtered = filter === 'all' ? brain.audit : brain.audit.filter(e => e.type === filter);
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+        {types.map((t) => (
+          <button key={t} className={`btn sm ${filter === t ? 'primary' : 'ghost'}`} onClick={() => setFilter(t)}>
+            {t}<span style={{ marginLeft: 4, opacity: 0.6, fontFamily: 'var(--mono)', fontSize: 11 }}>
+              {t === 'all' ? brain.audit.length : brain.audit.filter(e => e.type === t).length}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="card">
+        <div className="card-head"><h3>Audit timeline</h3><div className="right">{filtered.length} events</div></div>
+        <div className="timeline">
+          {filtered.map((e, i) => <TimelineItem key={i} event={e} />)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewVoucherModal({ brain, playbooks, onClose, onRefresh }) {
+  const [count, setCount] = useState(1);
+  const [playbookId, setPlaybookId] = useState(playbooks[0]?.id || '');
+  const [loading, setLoading] = useState(false);
+  const pb = playbooks.find(p => p.id === playbookId);
+
+  const submit = async () => {
+    setLoading(true);
+    try {
+      await api(`/api/brains/${brain.id}/vouchers`, {
+        method: 'POST', body: JSON.stringify({ count, playbookId }),
+      });
+      onRefresh();
+      onClose();
+    } catch (e) { alert(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><h3 style={{ margin: 0 }}>New slave voucher{count > 1 ? 's' : ''}</h3><button className="btn ghost sm" onClick={onClose}>✕</button></div>
+        <div className="modal-body">
+          <p style={{ fontSize: 13, color: 'var(--dim)', margin: '0 0 18px' }}>Generated for brain <span className="mono">{brain.name}</span>.</p>
+          <div className="row">
+            <div className="field"><label>Quantity</label><input type="number" min="1" max="32" value={count} onChange={(e) => setCount(parseInt(e.target.value || 1, 10))} /></div>
+            <div className="field"><label>Playbook</label>
+              <select value={playbookId} onChange={(e) => setPlaybookId(e.target.value)}>
+                {playbooks.map(p => <option key={p.id} value={p.id}>{p.name} ({p.currentVersion})</option>)}
+              </select>
+              <div className="hint">{pb?.description}</div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn primary" onClick={submit} disabled={loading || !playbookId}>{loading ? 'Generating...' : `Generate ${count} voucher${count > 1 ? 's' : ''}`}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Terminal modal ─────────────────────────────────────────────────────────
+
+function TerminalModal({ slaveId, slaveName, onClose }) {
+  const termRef = useRef(null);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    const term = new window.Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: "'Geist Mono', monospace",
+      theme: {
+        background: '#0E0E0C',
+        foreground: '#D6D5CF',
+        cursor: '#D6D5CF',
+        selectionBackground: 'rgba(255,255,255,0.2)',
+      },
+    });
+    const fitAddon = new window.FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+
+    term.open(containerRef.current);
+    fitAddon.fit();
+    term.focus();
+
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}/api/slaves/${slaveId}/terminal`);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      term.writeln(`\x1b[90mConnecting to ${slaveName}...\x1b[0m`);
+      // Send initial size
+      ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+    };
+
+    ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(e.data));
+      } else {
+        term.write(e.data);
+      }
+    };
+
+    ws.onerror = () => {
+      term.writeln('\r\n\x1b[31m*** WebSocket error ***\x1b[0m');
+    };
+
+    ws.onclose = () => {
+      term.writeln('\r\n\x1b[90m*** Connection closed ***\x1b[0m');
+    };
+
+    term.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    });
+
+    term.onResize(({ cols, rows }) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
+    });
+
+    const onWindowResize = () => fitAddon.fit();
+    window.addEventListener('resize', onWindowResize);
+
+    termRef.current = { term, ws, fitAddon };
+
+    // Small delay to ensure container is rendered, then fit again
+    setTimeout(() => fitAddon.fit(), 100);
+
+    return () => {
+      window.removeEventListener('resize', onWindowResize);
+      ws.close();
+      term.dispose();
+    };
+  }, [slaveId]);
+
+  return (
+    <div className="terminal-overlay">
+      <div className="terminal-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontFamily: 'var(--mono)', fontSize: 13 }}>{slaveName}</span>
+          <span style={{ fontSize: 12, opacity: 0.5 }}>SSH terminal</span>
+        </div>
+        <button className="btn sm" style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: '#fff' }} onClick={onClose}>Close</button>
+      </div>
+      <div className="terminal-body" ref={containerRef} />
+    </div>
+  );
+}
+
+// ─── Slave detail ───────────────────────────────────────────────────────────
+
+function SlaveView({ brain, slave, data, onBack, onOpenBrain, onOpenPlaybook }) {
+  const [showTerminal, setShowTerminal] = useState(false);
+  const pb = data.playbooks.find(p => p.id === slave.playbookId);
+  const currentImage = data.slaveImages.find(i => i.current);
+  const imageOutdated = slave.imageVersion && currentImage && slave.imageVersion !== currentImage.version;
+
+  return (
+    <div className="content wide">
+      {showTerminal && <TerminalModal slaveId={slave.id} slaveName={slave.name} onClose={() => setShowTerminal(false)} />}
+      <div style={{ marginBottom: 14 }}><button className="crumb-link" onClick={onBack}>← {brain.name} · slaves</button></div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 22 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+            <h1 className="h1" style={{ margin: 0 }}>{slave.name}</h1>
+            <Chip status={slave.status}>{slave.status}</Chip>
+          </div>
+          <div style={{ display: 'flex', gap: 16, fontSize: 13, color: 'var(--dim)' }}>
+            <span className="mono">{slave.id}</span>
+            <span>· {slave.model || '?'}</span>
+            <span>· on {brain.name}</span>
+          </div>
+        </div>
+        <div style={{ marginLeft: 'auto' }}>
+          <button className="btn primary" onClick={() => setShowTerminal(true)}>Terminal</button>
+        </div>
+      </div>
+      <div className="grid-3">
+        <div>
+          <div className="card">
+            <div className="card-head"><h3>Identity</h3></div>
+            <dl className="kv">
+              <dt>Slave ID</dt><dd>{slave.id}</dd>
+              <dt>Pi model</dt><dd className="alt">{slave.model || '—'}</dd>
+              <dt>MAC</dt><dd>{slave.mac || '—'}</dd>
+              <dt>IP</dt><dd>{slave.ip || '—'}</dd>
+              <dt>Brain</dt><dd><span className="mono">{brain.name}</span></dd>
+              <dt>Joined</dt><dd className="alt">{formatAbs(slave.joinedAt)}</dd>
+            </dl>
+          </div>
+          {pb && (
+            <div className="card" style={{ marginTop: 18 }}>
+              <div className="card-head"><h3>Playbook</h3></div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+                <span className="mono" style={{ fontSize: 14, fontWeight: 500 }}>{pb.name}</span>
+                <span className="chip">{slave.playbookVersion}</span>
+              </div>
+              <div className="dim" style={{ fontSize: 13 }}>{pb.description}</div>
+            </div>
+          )}
+        </div>
+        <div>
+          <div className="card">
+            <div className="card-head"><h3>k8s</h3></div>
+            <dl className="kv">
+              <dt>Node status</dt><dd className="alt">
+                <span style={{ color: slave.k8s === 'Ready' ? 'oklch(0.42 0.14 145)' : 'oklch(0.42 0.18 25)' }}>●</span> {slave.k8s || '—'}
+              </dd>
+            </dl>
+          </div>
+          <div className="card" style={{ marginTop: 18 }}>
+            <div className="card-head"><h3>Boot image</h3><div className="right">
+              {imageOutdated ? <Chip status="degraded">outdated</Chip> : slave.imageVersion ? <Chip status="online">current</Chip> : null}
+            </div></div>
+            <dl className="kv">
+              <dt>Version</dt><dd className="alt">{slave.imageVersion || '—'}</dd>
+              <dt>Latest</dt><dd className="alt">{currentImage?.version || '—'}</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── New brain wizard ───────────────────────────────────────────────────────
+
+function NewBrainView({ data, onCancel, onCreated, onRefresh }) {
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState({ name: '', slaveCount: 3, playbookId: data.playbooks[0]?.id || '' });
+  const [result, setResult] = useState(null);
+  const [buildProgress, setBuildProgress] = useState(null);
+  const [buildLogs, setBuildLogs] = useState([]);
+  const [buildDone, setBuildDone] = useState(false);
+  const [downloadUrl, setDownloadUrl] = useState('');
+  const pb = data.playbooks.find(p => p.id === form.playbookId);
+  const steps = ['Identity', 'Vouchers', 'Golden image', 'Boot'];
+
+  const createBrain = async () => {
+    try {
+      const res = await api('/api/brains', {
+        method: 'POST',
+        body: JSON.stringify({ name: form.name, slaveCount: form.slaveCount, playbookId: form.playbookId }),
+      });
+      setResult(res);
+      setStep(1);
+    } catch (e) { alert(e.message); }
+  };
+
+  const startBuild = async () => {
+    setStep(2);
+    setBuildLogs(['fetching universal base image...']);
+    try {
+      const res = await fetch(`/api/brains/${result.brainId}/image`, { method: 'POST' });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const d = JSON.parse(line.slice(6));
+            if (d.progress != null) {
+              setBuildProgress(d.progress);
+              setBuildLogs(prev => [...prev, d.message]);
+            }
+            if (d.done) {
+              setBuildDone(true);
+              setDownloadUrl(d.downloadUrl);
+              setTimeout(() => setStep(3), 800);
+            }
+          } catch {}
+        }
+      }
+    } catch (e) { alert('Build failed: ' + e.message); }
+  };
+
+  return (
+    <div className="content">
+      <div style={{ marginBottom: 20 }}>
+        <button className="crumb-link" onClick={onCancel}>← Fleet</button>
+        <h1 className="h1" style={{ marginTop: 8 }}>New brain</h1>
+        <p className="h-sub">Spin up a new Pi cluster. Identity, vouchers, and SD image are generated together.</p>
+      </div>
+      <div className="wizard">
+        <div className="steps">
+          {steps.map((s, i) => (
+            <div key={s} className={`step ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}>
+              <div className="step-n">{i < step ? '✓' : i + 1}</div>
+              <div className="step-lbl">{s}</div>
+            </div>
+          ))}
+        </div>
+
+        {step === 0 && (
+          <div className="card">
+            <div className="card-head"><h3>Identity</h3><div className="right">step 1 of 4</div></div>
+            <div className="field">
+              <label>Brain name</label>
+              <input placeholder="e.g. attic-edge" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <div className="hint">Hostname will be <span className="mono">{form.name || '<name>'}.bfm.local</span>.</div>
+            </div>
+            <div className="row">
+              <div className="field">
+                <label>Initial slave vouchers</label>
+                <input type="number" min="0" max="32" value={form.slaveCount} onChange={(e) => setForm({ ...form, slaveCount: parseInt(e.target.value || 0, 10) })} />
+                <div className="hint">Pre-generated alongside the brain voucher.</div>
+              </div>
+              {data.playbooks.length > 0 && (
+                <div className="field">
+                  <label>Playbook for slave vouchers</label>
+                  <select value={form.playbookId} onChange={(e) => setForm({ ...form, playbookId: e.target.value })}>
+                    {data.playbooks.map(p => <option key={p.id} value={p.id}>{p.name} ({p.currentVersion})</option>)}
+                  </select>
+                  <div className="hint">{pb?.description}</div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+              <button className="btn ghost" onClick={onCancel}>Cancel</button>
+              <button className="btn primary" onClick={createBrain} disabled={!form.name}>Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && result && (
+          <div className="card">
+            <div className="card-head"><h3>Vouchers generated</h3><div className="right">step 2 of 4</div></div>
+            <div style={{ fontSize: 13, color: 'var(--dim)', marginBottom: 14 }}>
+              One brain voucher and {form.slaveCount} slave voucher(s) created.
+            </div>
+            <div className="code-block" style={{ marginBottom: 12 }}>
+              <div style={{ color: 'var(--dim)', marginBottom: 6 }}># brain voucher · baked into image</div>
+              <div><span style={{ color: 'oklch(0.42 0.14 145)' }}>{result.brainVoucherId}</span></div>
+              {result.slaveVouchers && result.slaveVouchers.length > 0 && (
+                <><div style={{ color: 'var(--dim)', marginTop: 10, marginBottom: 6 }}># slave vouchers · {result.slaveVouchers.length} total</div>
+                {result.slaveVouchers.map((v) => <div key={v}>{v}</div>)}</>
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+              <button className="btn ghost" onClick={() => setStep(0)}>← Back</button>
+              <button className="btn primary" onClick={startBuild}>Build SD image →</button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="card">
+            <div className="card-head"><h3>Golden image</h3><div className="right">step 3 of 4</div></div>
+            <div style={{ fontSize: 13, color: 'var(--dim)', marginBottom: 16 }}>Building a universal SD card image with the brain voucher pre-staged.</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, fontSize: 12, fontFamily: 'var(--mono)', color: 'var(--dim)' }}>
+              <span>building bfm-brain-{result?.brainId?.slice(4) || '...'}.img.xz</span>
+              <span>{buildProgress || 0}%</span>
+            </div>
+            <div style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2, overflow: 'hidden', border: '1px solid var(--border)' }}>
+              <div style={{ width: `${buildProgress || 0}%`, height: '100%', background: 'var(--ok)', transition: 'width 0.3s' }} />
+            </div>
+            <div className="code-block" style={{ marginTop: 12, maxHeight: 180, overflow: 'auto', background: '#0E0E0C', color: '#D6D5CF', borderColor: '#0E0E0C' }}>
+              {buildLogs.map((l, i) => <div key={i}><span style={{ color: '#6E6E69' }}>$</span> {l}</div>)}
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="card">
+            <div className="card-head"><h3>Ready to flash</h3><div className="right">step 4 of 4</div></div>
+            <div className="image-card" style={{ marginBottom: 16 }}>
+              <div className="icon">SD<br/>img</div>
+              <div className="meta">
+                <div className="name">bfm-brain-{result?.brainId?.slice(4) || '...'}.img.xz</div>
+                <div className="sub">universal arm64</div>
+              </div>
+              {downloadUrl && <a className="btn primary" href={downloadUrl} download>↓ Download</a>}
+            </div>
+            <div style={{ fontSize: 13, marginBottom: 6, fontWeight: 500 }}>Next steps</div>
+            <ol style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--ink-2)', paddingLeft: 18, margin: 0 }}>
+              <li>Flash to an SD card</li>
+              <li>Insert into the brain Pi and power on</li>
+              <li>Brain phones home, redeems voucher, receives cert (~30s)</li>
+              <li>PXE-boot slave Pis on the brain's LAN</li>
+            </ol>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button className="btn primary" onClick={() => { onRefresh(); onCreated(result.brainId); }}>Open brain dashboard →</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Playbooks view ─────────────────────────────────────────────────────────
+
+function PlaybooksView({ data, onOpen, onRefresh }) {
+  const [uploading, setUploading] = useState(false);
+  const [newPb, setNewPb] = useState({ name: '', description: '', yaml: '', notes: '' });
+
+  const handleUpload = async () => {
+    try {
+      await api('/api/playbooks', { method: 'POST', body: JSON.stringify(newPb) });
+      setUploading(false);
+      setNewPb({ name: '', description: '', yaml: '', notes: '' });
+      onRefresh();
+    } catch (e) { alert(e.message); }
+  };
+
+  return (
+    <div className="content">
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <h1 className="h1">Playbooks</h1>
+          <p className="h-sub" style={{ marginBottom: 0 }}>Ansible playbooks delivered to slaves on voucher redemption.</p>
+        </div>
+        <div style={{ marginLeft: 'auto' }}><button className="btn primary" onClick={() => setUploading(true)}>↑ Upload playbook</button></div>
+      </div>
+      {data.playbooks.length > 0 && (
+        <table className="table">
+          <thead><tr><th>Playbook</th><th>Current</th><th>Versions</th><th>Vouchers using</th><th>Last updated</th><th></th></tr></thead>
+          <tbody>
+            {data.playbooks.map((p) => (
+              <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => onOpen(p.id)}>
+                <td><div style={{ fontWeight: 500 }}>{p.name}</div><div className="dim" style={{ fontSize: 12, marginTop: 2 }}>{p.description}</div></td>
+                <td><span className="chip">{p.currentVersion}</span></td>
+                <td className="mono" style={{ fontSize: 12 }}>{p.versions?.length || 0}</td>
+                <td className="mono" style={{ fontSize: 12 }}>{p.voucherCount}</td>
+                <td className="mono dim" style={{ fontSize: 12 }}>{p.versions?.[0] ? formatRel(p.versions[0].uploadedAt) : '—'}</td>
+                <td className="actions"><span style={{ color: 'var(--dim-2)' }}>→</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {uploading && (
+        <div className="modal-bg" onClick={() => setUploading(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><h3 style={{ margin: 0 }}>Upload playbook</h3><button className="btn ghost sm" onClick={() => setUploading(false)}>✕</button></div>
+            <div className="modal-body">
+              <div className="field"><label>Name</label><input placeholder="e.g. k8s-worker" value={newPb.name} onChange={(e) => setNewPb({ ...newPb, name: e.target.value })} /></div>
+              <div className="field"><label>Description</label><input placeholder="What this playbook does" value={newPb.description} onChange={(e) => setNewPb({ ...newPb, description: e.target.value })} /></div>
+              <div className="field"><label>YAML</label><textarea rows={10} style={{ fontFamily: 'var(--mono)', fontSize: 12 }} placeholder="---\n- name: My playbook\n  hosts: localhost\n  tasks: ..." value={newPb.yaml} onChange={(e) => setNewPb({ ...newPb, yaml: e.target.value })} /></div>
+              <div className="field"><label>Version notes</label><input placeholder="Initial version" value={newPb.notes} onChange={(e) => setNewPb({ ...newPb, notes: e.target.value })} /></div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn ghost" onClick={() => setUploading(false)}>Cancel</button>
+              <button className="btn primary" onClick={handleUpload} disabled={!newPb.name || !newPb.yaml}>Upload</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {data.playbooks.length === 0 && !uploading && (
+        <div className="empty">
+          <div className="h">No playbooks yet</div>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>Upload your first Ansible playbook to assign to slave vouchers.</div>
+          <button className="btn primary" onClick={() => setUploading(true)}>↑ Upload playbook</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlaybookDetailView({ playbook, data, onBack, onOpenBrain, onRefresh }) {
+  const [view, setView] = useState('current');
+  const [uploading, setUploading] = useState(false);
+  const [newVersion, setNewVersion] = useState({ yaml: '', notes: '' });
+
+  const handleUploadVersion = async () => {
+    try {
+      await api(`/api/playbooks/${playbook.id}/versions`, { method: 'POST', body: JSON.stringify(newVersion) });
+      setUploading(false);
+      setNewVersion({ yaml: '', notes: '' });
+      onRefresh();
+    } catch (e) { alert(e.message); }
+  };
+
+  return (
+    <div>
+      <div className="content wide" style={{ paddingBottom: 0 }}>
+        <div style={{ marginBottom: 14 }}><button className="crumb-link" onClick={onBack}>← Playbooks</button></div>
+        <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 18 }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <h1 className="h1" style={{ margin: 0 }}>{playbook.name}</h1>
+              <span className="chip">{playbook.currentVersion}</span>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--dim)', maxWidth: 720 }}>{playbook.description}</div>
+          </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button className="btn primary sm" onClick={() => setUploading(true)}>↑ Upload new version</button>
+          </div>
+        </div>
+      </div>
+      <div className="tabs">
+        {[['current', 'Current'], ['history', 'Versions', playbook.versions?.length || 0]].map(([key, label, count]) => (
+          <button key={key} className={`tab ${view === key ? 'active' : ''}`} onClick={() => setView(key)}>
+            {label}{count != null && <span className="count">{count}</span>}
+          </button>
+        ))}
+      </div>
+      <div className="content wide" style={{ paddingTop: 4 }}>
+        {view === 'current' && playbook.yaml && (
+          <div className="yaml">
+            {playbook.yaml.split('\n').map((line, i) => (
+              <div key={i} className="yaml-line"><span className="yaml-ln">{i + 1}</span><span>{line}</span></div>
+            ))}
+          </div>
+        )}
+        {view === 'history' && (
+          <table className="table">
+            <thead><tr><th>Version</th><th>Uploaded</th><th>By</th><th>Lines</th><th>Notes</th><th>SHA</th></tr></thead>
+            <tbody>
+              {(playbook.versions || []).map((v, i) => (
+                <tr key={v.v}>
+                  <td><span className="chip">{v.v}</span>{i === 0 && <span className="dim" style={{ marginLeft: 6, fontSize: 11 }}>current</span>}</td>
+                  <td className="mono dim" style={{ fontSize: 12 }}>{formatRel(v.uploadedAt)}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{v.uploader}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{v.lines}</td>
+                  <td style={{ fontSize: 13 }}>{v.notes}</td>
+                  <td className="mono dim" style={{ fontSize: 11 }}>{v.sha}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {uploading && (
+        <div className="modal-bg" onClick={() => setUploading(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><h3 style={{ margin: 0 }}>New version of {playbook.name}</h3><button className="btn ghost sm" onClick={() => setUploading(false)}>✕</button></div>
+            <div className="modal-body">
+              <div className="field"><label>YAML</label><textarea rows={10} style={{ fontFamily: 'var(--mono)', fontSize: 12 }} value={newVersion.yaml} onChange={(e) => setNewVersion({ ...newVersion, yaml: e.target.value })} /></div>
+              <div className="field"><label>Notes</label><input value={newVersion.notes} onChange={(e) => setNewVersion({ ...newVersion, notes: e.target.value })} /></div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn ghost" onClick={() => setUploading(false)}>Cancel</button>
+              <button className="btn primary" onClick={handleUploadVersion} disabled={!newVersion.yaml}>Upload</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Images view ────────────────────────────────────────────────────────────
+
+function ImagesView({ data, onOpenBrain, onRefresh }) {
+  const [uploading, setUploading] = useState(false);
+  const [newImg, setNewImg] = useState({ version: '', notes: '' });
+
+  const handleUpload = async () => {
+    try {
+      await api('/api/images', { method: 'POST', body: JSON.stringify(newImg) });
+      setUploading(false);
+      setNewImg({ version: '', notes: '' });
+      onRefresh();
+    } catch (e) { alert(e.message); }
+  };
+
+  return (
+    <div className="content">
+      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <h1 className="h1">Images</h1>
+          <p className="h-sub" style={{ marginBottom: 0 }}>Universal golden slave image — one binary boots every Pi model.</p>
+        </div>
+        <div style={{ marginLeft: 'auto' }}><button className="btn primary" onClick={() => setUploading(true)}>↑ Upload new version</button></div>
+      </div>
+      {data.slaveImages.length > 0 ? (
+        <div className="img-list">
+          {data.slaveImages.map((img, i) => {
+            const inUseBy = data.brains.filter(b => b.pxe.servingImage === img.version);
+            return (
+              <div key={img.version} className="img-card">
+                <div className="img-card-head">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span className="chip">{img.version}</span>
+                    {img.current && <span className="dim" style={{ fontSize: 11 }}>current</span>}
+                  </div>
+                  <div className="img-meta">
+                    <span className="mono">{img.size || '—'}</span><span>·</span>
+                    <span className="mono">{formatRel(img.uploadedAt)}</span><span>·</span>
+                    <span className="mono">{img.uploader}</span>
+                  </div>
+                </div>
+                <div className="img-card-body">
+                  <div className="img-notes"><div className="img-notes-lbl">Notes</div><div className="img-notes-body">{img.notes}</div></div>
+                  <div className="img-sha mono">{img.sha || '—'}</div>
+                </div>
+                <div className="img-card-foot">
+                  <div className="img-usage">
+                    {inUseBy.length > 0 ? (<><span className="dim">Serving on</span>{inUseBy.map(b => <span key={b.id} className="img-brain" onClick={() => onOpenBrain(b.id)}>{b.name}</span>)}</>)
+                      : <span className="dim" style={{ fontSize: 12 }}>Not currently serving on any brain</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="empty"><div className="h">No images yet</div><div style={{ fontSize: 13, marginBottom: 12 }}>Upload your first universal golden slave image.</div>
+          <button className="btn primary" onClick={() => setUploading(true)}>↑ Upload new version</button></div>
+      )}
+      {uploading && (
+        <div className="modal-bg" onClick={() => setUploading(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head"><h3 style={{ margin: 0 }}>Upload slave image</h3><button className="btn ghost sm" onClick={() => setUploading(false)}>✕</button></div>
+            <div className="modal-body">
+              <div className="field"><label>Version</label><input placeholder="e.g. 2026.05.1" value={newImg.version} onChange={(e) => setNewImg({ ...newImg, version: e.target.value })} /></div>
+              <div className="field"><label>Notes</label><input placeholder="What changed" value={newImg.notes} onChange={(e) => setNewImg({ ...newImg, notes: e.target.value })} /></div>
+            </div>
+            <div className="modal-foot">
+              <button className="btn ghost" onClick={() => setUploading(false)}>Cancel</button>
+              <button className="btn primary" onClick={handleUpload} disabled={!newImg.version}>Upload</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main App ───────────────────────────────────────────────────────────────
+
+function Sidebar({ view, setView, data }) {
+  const playbookCount = data.playbooks.length;
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <div className="brand-mark">bf</div>
+        <div>
+          <div className="brand-name">BFM</div>
+          <div style={{ fontSize: 11, color: 'var(--dim)' }}>fleet management</div>
+        </div>
+      </div>
+      <div className="nav-section">Manage</div>
+      <div className="nav">
+        <button className={`nav-item ${['fleet','brain','slave','new'].includes(view.name) ? 'active' : ''}`} onClick={() => setView({ name: 'fleet' })}>
+          Fleet<span className="nav-count">{data.brains.length}</span>
+        </button>
+        <button className={`nav-item ${['playbooks','playbook'].includes(view.name) ? 'active' : ''}`} onClick={() => setView({ name: 'playbooks' })}>
+          Playbooks<span className="nav-count">{playbookCount}</span>
+        </button>
+        <button className={`nav-item ${view.name === 'images' ? 'active' : ''}`} onClick={() => setView({ name: 'images' })}>
+          Images<span className="nav-count">{data.slaveImages.length}</span>
+        </button>
+      </div>
+      <div className="sidebar-foot">
+        <div className="av">cl</div>
+        <div>
+          <div style={{ color: 'var(--ink)', fontSize: 12 }}>commonlisp6</div>
+          <div style={{ fontSize: 11 }}>{data.brains.length} brains</div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function App() {
+  const [data, setData] = useState(null);
+  const [view, setView] = useState({ name: 'fleet' });
+  const [error, setError] = useState(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const d = await api('/api/data');
+      setData(d);
+    } catch (e) { setError(e.message); }
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  if (error) return <div style={{ padding: 40, color: 'red' }}>Error: {error}</div>;
+  if (!data) return <div style={{ padding: 40, color: 'var(--dim)' }}>Loading...</div>;
+
+  const openBrain = (id) => setView({ name: 'brain', id });
+  const openSlave = (brainId, slaveId) => setView({ name: 'slave', brainId, slaveId });
+  const openPlaybook = (id) => setView({ name: 'playbook', id });
+
+  let body, crumbs, urlPath = '';
+
+  if (view.name === 'fleet') {
+    crumbs = <span className="now">Fleet</span>;
+    body = <FleetView data={data} onOpenBrain={openBrain} onNew={() => setView({ name: 'new' })} />;
+  } else if (view.name === 'brain') {
+    const brain = data.brains.find(b => b.id === view.id);
+    if (!brain) { setView({ name: 'fleet' }); return null; }
+    urlPath = `brain/${brain.id}`;
+    crumbs = (<><button className="crumb-link" onClick={() => setView({ name: 'fleet' })}>Fleet</button><span className="sep">/</span><span className="now">{brain.name}</span></>);
+    body = <BrainView brain={brain} data={data} onBack={() => setView({ name: 'fleet' })} onOpenSlave={openSlave} onOpenPlaybook={openPlaybook} onRefresh={loadData} />;
+  } else if (view.name === 'slave') {
+    const brain = data.brains.find(b => b.id === view.brainId);
+    const slave = brain?.slaves.find(s => s.id === view.slaveId);
+    if (!brain || !slave) { setView({ name: 'fleet' }); return null; }
+    urlPath = `brain/${brain.id}/slave/${slave.id}`;
+    crumbs = (<><button className="crumb-link" onClick={() => setView({ name: 'fleet' })}>Fleet</button><span className="sep">/</span><button className="crumb-link" onClick={() => setView({ name: 'brain', id: brain.id })}>{brain.name}</button><span className="sep">/</span><span className="now">{slave.name}</span></>);
+    body = <SlaveView brain={brain} slave={slave} data={data} onBack={() => setView({ name: 'brain', id: brain.id })} onOpenBrain={openBrain} onOpenPlaybook={openPlaybook} />;
+  } else if (view.name === 'new') {
+    urlPath = 'new';
+    crumbs = (<><button className="crumb-link" onClick={() => setView({ name: 'fleet' })}>Fleet</button><span className="sep">/</span><span className="now">New brain</span></>);
+    body = <NewBrainView data={data} onCancel={() => setView({ name: 'fleet' })} onCreated={(id) => { loadData(); setView({ name: 'brain', id }); }} onRefresh={loadData} />;
+  } else if (view.name === 'playbooks') {
+    urlPath = 'playbooks';
+    crumbs = <span className="now">Playbooks</span>;
+    body = <PlaybooksView data={data} onOpen={openPlaybook} onRefresh={loadData} />;
+  } else if (view.name === 'playbook') {
+    const playbook = data.playbooks.find(p => p.id === view.id);
+    if (!playbook) { setView({ name: 'playbooks' }); return null; }
+    urlPath = `playbooks/${playbook.id}`;
+    crumbs = (<><button className="crumb-link" onClick={() => setView({ name: 'playbooks' })}>Playbooks</button><span className="sep">/</span><span className="now">{playbook.name}</span></>);
+    body = <PlaybookDetailView playbook={playbook} data={data} onBack={() => setView({ name: 'playbooks' })} onOpenBrain={openBrain} onRefresh={loadData} />;
+  } else if (view.name === 'images') {
+    urlPath = 'images';
+    crumbs = <span className="now">Images</span>;
+    body = <ImagesView data={data} onOpenBrain={openBrain} onRefresh={loadData} />;
+  }
+
+  return (
+    <div className="app">
+      <Sidebar view={view} setView={setView} data={data} />
+      <main className="main">
+        <div className="topbar">
+          <div className="crumbs">{crumbs}</div>
+        </div>
+        {body}
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

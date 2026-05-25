@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>attlas — golden image</title>
+  <style>
+    :root {
+      --bg: #0c0c0c;
+      --fg: #c0c0c0;
+      --border: #333;
+      --accent: #00ff00;
+      --brand: #ff8700;
+      --header: #ffff00;
+      --muted: #8a8a8a;
+      --surface: #1a1a1a;
+      --btn-on-accent: #000;
+      --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-ui);
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1.5rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2.5rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+
+    h1 {
+      font-family: var(--font-mono);
+      color: var(--brand);
+      font-size: 1.8rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .label {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--header);
+      margin-bottom: 1.5rem;
+    }
+
+    .file-info {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+
+    .file-name {
+      color: var(--fg);
+      word-break: break-all;
+    }
+
+    .spacer {
+      height: 1.5rem;
+    }
+
+    .btn {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 600;
+      padding: 0.75rem 2rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      background: var(--accent);
+      color: var(--btn-on-accent);
+      transition: opacity 0.15s;
+    }
+
+    .btn:hover {
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>golden image</h1>
+    <div class="label">universal arm64 base</div>
+    <div class="file-info file-name">bfm-universal-arm64.img.zst</div>
+    <div class="file-info">1.6 GB &middot; zstd compressed</div>
+    <div class="spacer"></div>
+    <a href="/download" class="btn">Download</a>
+  </div>
+</body>
+</html>

@@ -1,6 +1,15 @@
 # Base Image Builder
 
-Builds TWO separate ARM64 base images for Raspberry Pi nodes:
+Builds ARM64 base images for Raspberry Pi nodes.
+
+## Images
+
+### Universal (BFM)
+- **`bfm-universal-arm64.img.zst`** — shared packages only. No role-specific software. PXE-ready.
+- Role differentiation (k8s worker, router, storage, etc.) is handled by Ansible playbooks at boot time.
+- Works on Pi 3, 4, and 5 — the Pi firmware selects the right kernel/DTB.
+
+### Legacy (role-specific)
 - **`base-router-arm64.img.zst`** — networking packages (ModemManager, NM, dnsmasq, iptables, iw). NO Kubernetes.
 - **`base-worker-arm64.img.zst`** — Kubernetes packages (kubelet, kubeadm, kubectl, containerd). NO router networking.
 
@@ -8,7 +17,7 @@ Builds TWO separate ARM64 base images for Raspberry Pi nodes:
 
 Rebuild when:
 - A package is added or removed from the install list
-- A package version needs to be bumped (e.g., Kubernetes, OTel Collector)
+- A package version needs to be bumped (e.g., OTel Collector)
 - Ubuntu base version changes
 
 You do NOT need to rebuild for:
@@ -20,35 +29,42 @@ You do NOT need to rebuild for:
 
 ```bash
 cd /home/agnostic-user/iapetus/attlas/infra/base-image
-./launch-build-vm.sh
+./launch-build-vm.sh              # build all (universal + legacy)
+./launch-build-vm.sh universal    # universal golden image only
+./launch-build-vm.sh legacy       # legacy router + worker only
 ```
 
 This will:
 1. Create a `t2a-standard-16` (16-core ARM64) SPOT VM in `europe-west4-a` (~$1/run)
-2. Build router image, then worker image — native ARM64, no QEMU, ~5 min each
-3. Upload both to `gs://attlas-base-images/`
-4. Download and install both (compressed + uncompressed) to `/var/lib/homelab-bootstrap/`
+2. Build the selected image(s) — native ARM64, no QEMU, ~5 min each
+3. Upload to `gs://attlas-base-images/`
+4. Download and install (compressed + uncompressed) to `/var/lib/homelab-bootstrap/`
 5. Delete the build VM
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `launch-build-vm.sh` | Entry point — creates ARM64 VM, builds both, tears down |
-| `build-router.sh` | Router build recipe — runs inside the ARM64 VM |
-| `build-worker.sh` | Worker build recipe — runs inside the ARM64 VM |
+| `launch-build-vm.sh` | Entry point — creates ARM64 VM, builds selected images, tears down |
+| `build-universal.sh` | Universal (BFM) build — shared packages only, PXE-ready |
+| `build-router.sh` | Legacy router build — runs inside the ARM64 VM |
+| `build-worker.sh` | Legacy worker build — runs inside the ARM64 VM |
 | `CLAUDE.md` | You are here |
 
-## Package split
+## Package allocation
 
-| Package | Router | Worker | Purpose |
-|---------|--------|--------|---------|
-| modemmanager | yes | no | SIM/4G modem |
-| network-manager | yes | no | WiFi AP, NM connections |
-| dnsmasq | yes | no | DHCP server |
-| iptables-persistent | yes | no | NAT/firewall |
-| iw | yes | no | WiFi config |
-| containerd | no | yes | Container runtime |
-| kubelet/kubeadm/kubectl | no | yes | Kubernetes |
-| conntrack/socat/open-iscsi/nfs-common | no | yes | K8s dependencies |
-| ansible/curl/jq/git/zsh/nodejs/otel | yes | yes | Shared |
+| Package | Universal | Router (legacy) | Worker (legacy) | Purpose |
+|---------|-----------|-----------------|-----------------|---------|
+| ansible/curl/jq/git/zsh/tmux/fzf | yes | yes | yes | Shared tooling |
+| nodejs + claude-code | yes | yes | yes | AI assistant |
+| otelcol-contrib | yes | yes | yes | Telemetry |
+| avahi-daemon | yes | yes | yes | mDNS |
+| nfs-common | yes | no | yes | NFS root boot |
+| modemmanager | no | yes | no | SIM/4G modem |
+| network-manager | no | yes | no | WiFi AP |
+| dnsmasq | no | yes | no | DHCP server |
+| iptables-persistent | no | yes | no | NAT/firewall |
+| iw | no | yes | no | WiFi config |
+| containerd | no | no | yes | Container runtime |
+| kubelet/kubeadm/kubectl | no | no | yes | Kubernetes |
+| conntrack/socat/open-iscsi | no | no | yes | K8s dependencies |

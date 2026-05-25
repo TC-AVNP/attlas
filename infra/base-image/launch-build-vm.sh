@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Spin up an ephemeral ARM64 VM, build BOTH base images, tear it down.
+# Spin up an ephemeral ARM64 VM, build base images, tear it down.
 #
 # Usage:
-#   ./launch-build-vm.sh
+#   ./launch-build-vm.sh              # build all (universal + legacy)
+#   ./launch-build-vm.sh universal    # universal golden image only
+#   ./launch-build-vm.sh legacy       # legacy router + worker only
 #
-# Builds:
-#   1. base-router-arm64.img.zst (router packages, no k8s)
-#   2. base-worker-arm64.img.zst (k8s packages, no router networking)
-#
-# Cost: ~$1 per run (16 vCPU ARM64 SPOT, ~10-15 min for both)
+# Cost: ~$1 per run (16 vCPU ARM64 SPOT, ~5-15 min)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,11 +20,14 @@ IMAGE_PROJECT="ubuntu-os-cloud"
 GCS_BUCKET="gs://attlas-base-images"
 PROVISION_DIR="/var/lib/homelab-bootstrap"
 
+MODE="${1:-all}"
+
 echo "=== Step 1: Ensure GCS bucket exists ==="
 gsutil ls "$GCS_BUCKET" 2>/dev/null || \
   gsutil mb -l europe-west4 -p "$PROJECT" "$GCS_BUCKET"
 
 # Clean stale signals
+gsutil rm "${GCS_BUCKET}/build-done-universal.signal" 2>/dev/null || true
 gsutil rm "${GCS_BUCKET}/build-done-router.signal" 2>/dev/null || true
 gsutil rm "${GCS_BUCKET}/build-done-worker.signal" 2>/dev/null || true
 
@@ -36,8 +37,16 @@ if gcloud compute instances describe "$VM_NAME" --zone="$ZONE" --project="$PROJE
   gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet
 fi
 
-# Create VM with a startup script that runs both builds sequentially
-cat "${SCRIPT_DIR}/build-router.sh" "${SCRIPT_DIR}/build-worker.sh" > /tmp/combined-build.sh
+# Assemble startup script based on mode
+COMBINED="/tmp/combined-build.sh"
+: > "$COMBINED"
+if [[ "$MODE" == "all" || "$MODE" == "universal" ]]; then
+  cat "${SCRIPT_DIR}/build-universal.sh" >> "$COMBINED"
+fi
+if [[ "$MODE" == "all" || "$MODE" == "legacy" ]]; then
+  cat "${SCRIPT_DIR}/build-router.sh" >> "$COMBINED"
+  cat "${SCRIPT_DIR}/build-worker.sh" >> "$COMBINED"
+fi
 
 gcloud compute instances create "$VM_NAME" \
   --project="$PROJECT" \
@@ -50,93 +59,95 @@ gcloud compute instances create "$VM_NAME" \
   --provisioning-model=SPOT \
   --instance-termination-action=DELETE \
   --scopes=storage-rw \
-  --metadata-from-file=startup-script=/tmp/combined-build.sh \
+  --metadata-from-file=startup-script="$COMBINED" \
   --quiet
 
-rm -f /tmp/combined-build.sh
-echo "VM created. Building both images autonomously..."
+rm -f "$COMBINED"
+echo "VM created. Building images (mode: ${MODE})..."
 
-echo "=== Step 3: Wait for ROUTER image ==="
-POLL_INTERVAL=15
-TIMEOUT=900
-ELAPSED=0
-while true; do
-  if gsutil -q stat "${GCS_BUCKET}/build-done-router.signal" 2>/dev/null; then
-    SIGNAL=$(gsutil cat "${GCS_BUCKET}/build-done-router.signal" 2>/dev/null)
-    if [[ "$SIGNAL" == "SUCCESS" ]]; then
+# ── Poll helper ──────────────────────────────────────────────────
+wait_for_signal() {
+  local name="$1" signal_path="$2"
+  local poll=15 timeout=900 elapsed=0
+  echo "=== Waiting for ${name} ==="
+  while true; do
+    if gsutil -q stat "$signal_path" 2>/dev/null; then
+      local sig
+      sig=$(gsutil cat "$signal_path" 2>/dev/null)
+      if [[ "$sig" == "SUCCESS" ]]; then
+        echo ""
+        echo "${name} built!"
+        return 0
+      else
+        echo ""
+        echo "ERROR: ${name} build failed."
+        gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet 2>/dev/null || true
+        exit 1
+      fi
+    fi
+    if [[ $elapsed -ge $timeout ]]; then
       echo ""
-      echo "Router image built!"
-      break
-    else
-      echo ""
-      echo "ERROR: Router build failed."
+      echo "ERROR: ${name} build timed out after ${timeout}s"
       gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet 2>/dev/null || true
       exit 1
     fi
-  fi
-  if [[ $ELAPSED -ge $TIMEOUT ]]; then
-    echo ""
-    echo "ERROR: Router build timed out after ${TIMEOUT}s"
-    gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet 2>/dev/null || true
-    exit 1
-  fi
-  printf "."
-  sleep $POLL_INTERVAL
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
-done
+    printf "."
+    sleep $poll
+    elapsed=$((elapsed + poll))
+  done
+}
 
-echo "=== Step 4: Wait for WORKER image ==="
-ELAPSED=0
-while true; do
-  if gsutil -q stat "${GCS_BUCKET}/build-done-worker.signal" 2>/dev/null; then
-    SIGNAL=$(gsutil cat "${GCS_BUCKET}/build-done-worker.signal" 2>/dev/null)
-    if [[ "$SIGNAL" == "SUCCESS" ]]; then
-      echo ""
-      echo "Worker image built!"
-      break
-    else
-      echo ""
-      echo "ERROR: Worker build failed."
-      gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet 2>/dev/null || true
-      exit 1
-    fi
-  fi
-  if [[ $ELAPSED -ge $TIMEOUT ]]; then
-    echo ""
-    echo "ERROR: Worker build timed out after ${TIMEOUT}s"
-    gcloud compute instances delete "$VM_NAME" --zone="$ZONE" --project="$PROJECT" --quiet 2>/dev/null || true
-    exit 1
-  fi
-  printf "."
-  sleep $POLL_INTERVAL
-  ELAPSED=$((ELAPSED + POLL_INTERVAL))
-done
+# ── Wait for each image ─────────────────────────────────────────
+if [[ "$MODE" == "all" || "$MODE" == "universal" ]]; then
+  wait_for_signal "Universal image" "${GCS_BUCKET}/build-done-universal.signal"
+fi
+if [[ "$MODE" == "all" || "$MODE" == "legacy" ]]; then
+  wait_for_signal "Router image" "${GCS_BUCKET}/build-done-router.signal"
+  wait_for_signal "Worker image" "${GCS_BUCKET}/build-done-worker.signal"
+fi
 
-echo "=== Step 5: Download artifacts from GCS ==="
-gsutil cp "${GCS_BUCKET}/base-router-arm64.img.zst" "${SCRIPT_DIR}/base-router-arm64.img.zst"
-gsutil cp "${GCS_BUCKET}/base-worker-arm64.img.zst" "${SCRIPT_DIR}/base-worker-arm64.img.zst"
-echo "Downloaded both to ${SCRIPT_DIR}/"
+echo "=== Download artifacts from GCS ==="
+if [[ "$MODE" == "all" || "$MODE" == "universal" ]]; then
+  gsutil cp "${GCS_BUCKET}/bfm-universal-arm64.img.zst" "${SCRIPT_DIR}/bfm-universal-arm64.img.zst"
+fi
+if [[ "$MODE" == "all" || "$MODE" == "legacy" ]]; then
+  gsutil cp "${GCS_BUCKET}/base-router-arm64.img.zst" "${SCRIPT_DIR}/base-router-arm64.img.zst"
+  gsutil cp "${GCS_BUCKET}/base-worker-arm64.img.zst" "${SCRIPT_DIR}/base-worker-arm64.img.zst"
+fi
+echo "Downloaded to ${SCRIPT_DIR}/"
 
-echo "=== Step 6: Install to provision directory ==="
-# Compressed (backup)
-sudo cp "${SCRIPT_DIR}/base-router-arm64.img.zst" "${PROVISION_DIR}/base-router-arm64.img.zst"
-sudo cp "${SCRIPT_DIR}/base-worker-arm64.img.zst" "${PROVISION_DIR}/base-worker-arm64.img.zst"
-# Uncompressed (fast provisioning — avoids zstd -d on every image build)
-sudo zstd -d -f -o "${PROVISION_DIR}/base-router-arm64.img" "${PROVISION_DIR}/base-router-arm64.img.zst"
-sudo zstd -d -f -o "${PROVISION_DIR}/base-worker-arm64.img" "${PROVISION_DIR}/base-worker-arm64.img.zst"
-sudo chmod 644 "${PROVISION_DIR}/base-router-arm64.img" "${PROVISION_DIR}/base-worker-arm64.img"
+echo "=== Install to provision directory ==="
+sudo mkdir -p "$PROVISION_DIR"
+if [[ "$MODE" == "all" || "$MODE" == "universal" ]]; then
+  sudo cp "${SCRIPT_DIR}/bfm-universal-arm64.img.zst" "${PROVISION_DIR}/bfm-universal-arm64.img.zst"
+  sudo zstd -d -f -o "${PROVISION_DIR}/bfm-universal-arm64.img" "${PROVISION_DIR}/bfm-universal-arm64.img.zst"
+  sudo chmod 644 "${PROVISION_DIR}/bfm-universal-arm64.img"
+fi
+if [[ "$MODE" == "all" || "$MODE" == "legacy" ]]; then
+  sudo cp "${SCRIPT_DIR}/base-router-arm64.img.zst" "${PROVISION_DIR}/base-router-arm64.img.zst"
+  sudo cp "${SCRIPT_DIR}/base-worker-arm64.img.zst" "${PROVISION_DIR}/base-worker-arm64.img.zst"
+  sudo zstd -d -f -o "${PROVISION_DIR}/base-router-arm64.img" "${PROVISION_DIR}/base-router-arm64.img.zst"
+  sudo zstd -d -f -o "${PROVISION_DIR}/base-worker-arm64.img" "${PROVISION_DIR}/base-worker-arm64.img.zst"
+  sudo chmod 644 "${PROVISION_DIR}/base-router-arm64.img" "${PROVISION_DIR}/base-worker-arm64.img"
+fi
 echo "Installed compressed + uncompressed versions"
 
-echo "=== Step 7: Tear down build VM ==="
+echo "=== Tear down build VM ==="
 gcloud compute instances delete "$VM_NAME" \
   --zone="$ZONE" --project="$PROJECT" --quiet
 
 # Clean up signal files
+gsutil rm "${GCS_BUCKET}/build-done-universal.signal" 2>/dev/null || true
 gsutil rm "${GCS_BUCKET}/build-done-router.signal" 2>/dev/null || true
 gsutil rm "${GCS_BUCKET}/build-done-worker.signal" 2>/dev/null || true
 
 echo ""
-echo "=== BUILD COMPLETE ==="
-echo "Router: ${PROVISION_DIR}/base-router-arm64.img ($(sudo du -h "${PROVISION_DIR}/base-router-arm64.img" | cut -f1))"
-echo "Worker: ${PROVISION_DIR}/base-worker-arm64.img ($(sudo du -h "${PROVISION_DIR}/base-worker-arm64.img" | cut -f1))"
-echo "GCS:    ${GCS_BUCKET}/base-{router,worker}-arm64.img.zst"
+echo "=== BUILD COMPLETE (mode: ${MODE}) ==="
+if [[ "$MODE" == "all" || "$MODE" == "universal" ]]; then
+  echo "Universal: ${PROVISION_DIR}/bfm-universal-arm64.img ($(sudo du -h "${PROVISION_DIR}/bfm-universal-arm64.img" | cut -f1))"
+fi
+if [[ "$MODE" == "all" || "$MODE" == "legacy" ]]; then
+  echo "Router:    ${PROVISION_DIR}/base-router-arm64.img ($(sudo du -h "${PROVISION_DIR}/base-router-arm64.img" | cut -f1))"
+  echo "Worker:    ${PROVISION_DIR}/base-worker-arm64.img ($(sudo du -h "${PROVISION_DIR}/base-worker-arm64.img" | cut -f1))"
+fi
+echo "GCS:       ${GCS_BUCKET}/"

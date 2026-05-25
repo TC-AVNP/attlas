@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -154,4 +156,37 @@ func handleHomelabDownloadImage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+const goldenImageDir = "/var/lib/homelab-bootstrap"
+
+func handleGoldenImageInfo(w http.ResponseWriter, r *http.Request) {
+	path := goldenImageDir + "/bfm-universal-arm64.img.zst"
+	info, err := os.Stat(path)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"available":false}`))
+		return
+	}
+	sizeBytes := info.Size()
+	sizeMB := float64(sizeBytes) / 1024 / 1024
+	modTime := info.ModTime().UTC().Format(time.RFC3339)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"available":true,"filename":"bfm-universal-arm64.img.zst","size_bytes":%d,"size_mb":%.1f,"modified":"%s"}`,
+		sizeBytes, sizeMB, modTime)
+}
+
+func handleGoldenImageDownload(w http.ResponseWriter, r *http.Request) {
+	path := goldenImageDir + "/bfm-universal-arm64.img.zst"
+	info, err := os.Stat(path)
+	if err != nil {
+		http.Error(w, `{"error":"golden image not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/zstd")
+	w.Header().Set("Content-Disposition", `attachment; filename="bfm-universal-arm64.img.zst"`)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+	http.ServeFile(w, r, path)
 }

@@ -630,6 +630,37 @@ function HomelabTokensList({ refreshKey, buildingTokenId, buildProgress, buildMs
   )
 }
 
+function GoldenImageDownload() {
+  const [info, setInfo] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/homelab/golden-image')
+      .then(r => r.json())
+      .then(d => setInfo(d))
+      .catch(() => setInfo(null))
+  }, [])
+
+  if (!info || !info.available) return null
+
+  const sizeMB = info.size_mb?.toFixed(0)
+  const date = info.modified ? new Date(info.modified).toLocaleDateString() : ''
+
+  return (
+    <div className="homelab-golden-image">
+      <div className="section-label-sm">Golden Image (PXE)</div>
+      <div className="homelab-golden-row">
+        <div className="homelab-golden-info">
+          <span className="homelab-golden-name">{info.filename}</span>
+          <span className="muted">{sizeMB} MB · {date}</span>
+        </div>
+        <a href="/api/homelab/golden-image/download" className="btn btn-ghost" download>
+          download
+        </a>
+      </div>
+    </div>
+  )
+}
+
 function HomelabNodesCard() {
   const [nodes, setNodes] = useState(null)
   const [routerNodes, setRouterNodes] = useState(null)
@@ -770,6 +801,7 @@ function HomelabNodesCard() {
         </div>
       )}
 
+      <GoldenImageDownload />
       <HomelabImageBuilder
         onBuildStart={startBuild}
         building={building}

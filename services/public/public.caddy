@@ -1,0 +1,16 @@
+public.attlas.uk {
+	basic_auth {
+		patro $2a$14$BFHVL9gtzm30ZyYshCqgMeU8Ky7BVsosZurr0EJz9a.9qxZfneGJG
+	}
+
+	root * /var/www/public
+	file_server
+
+	handle /download {
+		root * /var/lib/homelab-bootstrap
+		rewrite * /bfm-universal-arm64.img.zst
+		header Content-Disposition "attachment; filename=\"bfm-universal-arm64.img.zst\""
+		header Content-Type "application/zstd"
+		file_server
+	}
+}

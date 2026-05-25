@@ -110,6 +110,20 @@
         mode: "0600"
       notify: apply netplan
 
+    # ── Force eth0 under NetworkManager ──────────────────────────────
+    # Ubuntu's stock 10-globally-managed-devices.conf excludes ethernet
+    # interfaces, so the eth0-lan keyfile never activates even with
+    # renderer: NetworkManager in netplan. This override forces NM to
+    # manage eth0.
+    - name: Ensure eth0 is managed by NetworkManager
+      copy:
+        content: |
+          [device-eth0-managed]
+          match-device=interface-name:eth0
+          managed=1
+        dest: /etc/NetworkManager/conf.d/10-manage-ethernet.conf
+      notify: reload networkmanager
+
     # ── Mobile broadband (SIM) via NetworkManager ────────────────────
     # NEW: the original playbook configured NAT for wwan0 and enabled
     # ModemManager but never created an NM GSM profile, so the SIM
@@ -208,7 +222,7 @@
           interface=eth0
           bind-dynamic
           except-interface=lo
-          except-interface=wwan0
+          except-interface=ppp0
           except-interface=wlan0
 
           no-resolv
@@ -249,12 +263,12 @@
         sysctl_file: /etc/sysctl.d/99-router.conf
         reload: true
 
-    # ── NAT + Firewall (eth0 LAN + wlan0 AP both NAT'd to wwan0) ────
-    # MASQUERADE on wwan0 covers both LAN subnets uniformly.
-    # CHANGED: added wlan0→wwan0 FORWARD rules. The old comment about
-    # NM auto-creating nm-sh-fw-wlan0 chains was misleading: NM does
-    # add them on AP activation, but iptables-restore wipes them when
-    # FORWARD policy reloads as DROP. Explicit rules are reliable.
+    # ── NAT + Firewall ─────────────────────────────────────────────────
+    # NAT/firewall is WAN-agnostic: masquerade by LAN source subnet,
+    # forward by LAN ingress interface. The SIM7600 modem attaches as
+    # ppp0 (PPP), not wwan0 (QMI), so naming the WAN interface breaks.
+    # TCPMSS clamp is required: 4G/PPP path MTU is below 1500, without
+    # it LAN HTTPS connections hang on large packets.
     - name: Write iptables rules
       copy:
         content: |
@@ -263,7 +277,8 @@
           :INPUT ACCEPT [0:0]
           :OUTPUT ACCEPT [0:0]
           :POSTROUTING ACCEPT [0:0]
-          -A POSTROUTING -o wwan0 -j MASQUERADE
+          -A POSTROUTING -s {{ lan_subnet }}.0/24 -j MASQUERADE
+          -A POSTROUTING -s {{ wifi_subnet }}.0/24 -j MASQUERADE
           COMMIT
 
           *filter
@@ -275,10 +290,10 @@
           -A INPUT -i eth0 -j ACCEPT
           -A INPUT -i wlan0 -j ACCEPT
           -A INPUT -p icmp -j ACCEPT
-          -A FORWARD -i eth0 -o wwan0 -j ACCEPT
-          -A FORWARD -i wlan0 -o wwan0 -j ACCEPT
-          -A FORWARD -i wwan0 -o eth0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-          -A FORWARD -i wwan0 -o wlan0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          -A FORWARD -p tcp -m tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+          -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+          -A FORWARD -i eth0 -j ACCEPT
+          -A FORWARD -i wlan0 -j ACCEPT
           COMMIT
         dest: /etc/iptables/rules.v4
       notify: restore iptables
@@ -436,9 +451,9 @@
       copy:
         content: |
           #!/usr/bin/env bash
-          if ! ping -c 2 -W 5 -I wwan0 1.1.1.1 &>/dev/null; then
-            logger -t 4g-watchdog "4G connectivity lost, restarting ModemManager"
-            systemctl restart ModemManager
+          if ! ping -c 2 -W 5 1.1.1.1 &>/dev/null; then
+            logger -t 4g-watchdog "4G connectivity lost, attempting recovery"
+            nmcli connection up mobile-broadband || systemctl restart ModemManager
           fi
         dest: /opt/router/4g-watchdog.sh
         mode: "0755"
@@ -577,9 +592,14 @@
       command: netplan apply
 
     - name: reload networkmanager
-      systemd:
-        name: NetworkManager
-        state: reloaded
+      # systemctl reload is synchronous (re-reads conf.d for device
+      # managed-state); nmcli connection reload re-reads the keyfiles.
+      # Two distinct operations — neither does the other's job.
+      shell: |
+        set -e
+        systemctl reload NetworkManager
+        nmcli connection reload
+      changed_when: true
 
     - name: restart dnsmasq
       systemd:
