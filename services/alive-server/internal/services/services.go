@@ -97,6 +97,8 @@ var known = []Service{
 		Path: "https://homelab.attlas.uk/", Script: "install.sh"},
 	{ID: "bfm", Name: "Brain Fleet Management", ServiceName: "bfm", Command: "bfm",
 		Path: "https://bfm.attlas.uk/", Script: "install.sh"},
+	{ID: "neko", Name: "Neko", ServiceName: "neko", Command: "neko",
+		Path: "https://neko.attlas.uk/", Script: "install.sh"},
 }
 
 func findService(id string) *Service {

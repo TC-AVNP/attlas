@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neko</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0c0c0c;
+            --fg: #c0c0c0;
+            --border: #333;
+            --accent: #00ff00;
+            --brand: #ff8700;
+            --header: #ffff00;
+            --muted: #8a8a8a;
+            --surface: #1a1a1a;
+            --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+        }
+
+        [data-theme="light"] {
+            --bg: #fafafa;
+            --fg: #1a1a1a;
+            --border: #e5e5e5;
+            --accent: #007a00;
+            --brand: #d56800;
+            --header: #9a5200;
+            --muted: #6b6b6b;
+            --surface: #ffffff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background: var(--bg);
+            color: var(--fg);
+            font-family: var(--font-ui);
+            font-size: 15px;
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .page {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            position: relative;
+            z-index: 2;
+        }
+
+        h1 {
+            font-family: var(--font-mono);
+            color: var(--brand);
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            margin-bottom: 2rem;
+        }
+
+        .theme-toggle {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            width: 2.2rem;
+            height: 2.2rem;
+            border-radius: 50%;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--fg);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            z-index: 100;
+        }
+
+        /* --- playground area --- */
+        .playground {
+            position: relative;
+            width: 100%;
+            height: 70vh;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        /* --- yarn ball --- */
+        .yarn {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 3px solid #ff6b9d;
+            background: radial-gradient(circle at 30% 30%, #ff9ec5, #ff6b9d);
+            animation: roll 8s ease-in-out infinite;
+            bottom: 40px;
+            left: 10%;
+            z-index: 5;
+        }
+
+        .yarn::before {
+            content: '';
+            position: absolute;
+            width: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, #ff6b9d, transparent);
+            top: 50%;
+            right: 100%;
+            transform-origin: right center;
+            animation: yarn-trail 8s ease-in-out infinite;
+        }
+
+        @keyframes roll {
+            0%, 100% { left: 10%; transform: rotate(0deg); }
+            50% { left: 70%; transform: rotate(720deg); }
+        }
+
+        @keyframes yarn-trail {
+            0%, 100% { transform: scaleX(1) rotate(10deg); }
+            50% { transform: scaleX(0.5) rotate(-10deg); }
+        }
+
+        /* --- cat mixin via classes --- */
+        .cat {
+            position: absolute;
+            z-index: 10;
+        }
+
+        .cat-body {
+            width: 80px;
+            height: 50px;
+            border-radius: 50% 50% 45% 45%;
+            position: relative;
+        }
+
+        .cat-head {
+            width: 42px;
+            height: 38px;
+            border-radius: 50% 50% 45% 45%;
+            position: absolute;
+            top: -28px;
+            left: 26px;
+        }
+
+        .ear {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+        }
+
+        .ear-left {
+            top: -10px;
+            left: 2px;
+        }
+
+        .ear-right {
+            top: -10px;
+            right: 2px;
+        }
+
+        .eye {
+            position: absolute;
+            width: 6px;
+            height: 8px;
+            border-radius: 50%;
+            background: #1a1a1a;
+            top: 12px;
+            animation: blink 4s ease-in-out infinite;
+        }
+
+        .eye-left { left: 10px; }
+        .eye-right { right: 10px; }
+
+        @keyframes blink {
+            0%, 45%, 55%, 100% { transform: scaleY(1); }
+            50% { transform: scaleY(0.1); }
+        }
+
+        .nose {
+            position: absolute;
+            width: 5px;
+            height: 4px;
+            background: #ffb6c1;
+            border-radius: 50%;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .tail {
+            position: absolute;
+            width: 50px;
+            height: 20px;
+            border: 3px solid transparent;
+            border-top: none;
+            border-radius: 0 0 25px 25px;
+            right: -30px;
+            top: 5px;
+            transform-origin: left center;
+            animation: wag 2s ease-in-out infinite;
+        }
+
+        @keyframes wag {
+            0%, 100% { transform: rotate(-10deg); }
+            50% { transform: rotate(15deg); }
+        }
+
+        .leg {
+            position: absolute;
+            width: 10px;
+            height: 18px;
+            border-radius: 0 0 4px 4px;
+            bottom: -16px;
+        }
+
+        .leg-fl { left: 10px; }
+        .leg-fr { left: 26px; }
+        .leg-bl { right: 26px; }
+        .leg-br { right: 10px; }
+
+        /* --- cat 1: orange tabby, chasing the yarn --- */
+        .cat-1 {
+            bottom: 30px;
+            animation: chase 8s ease-in-out infinite;
+        }
+
+        .cat-1 .cat-body { background: #e8913a; }
+        .cat-1 .cat-head { background: #e8913a; }
+        .cat-1 .ear { border-bottom: 12px solid #e8913a; }
+        .cat-1 .tail { border-color: #e8913a; }
+        .cat-1 .leg { background: #e8913a; }
+
+        /* tabby stripes */
+        .cat-1 .cat-body::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 15px;
+            width: 50px;
+            height: 3px;
+            background: repeating-linear-gradient(
+                0deg,
+                #c47020 0px, #c47020 3px,
+                transparent 3px, transparent 8px
+            );
+            background-size: 100% 8px;
+            height: 30px;
+            border-radius: 4px;
+            opacity: 0.6;
+        }
+
+        @keyframes chase {
+            0%, 100% { left: 2%; transform: scaleX(1); }
+            45% { left: 55%; transform: scaleX(1); }
+            50% { left: 58%; transform: scaleX(-1); }
+            95% { left: 2%; transform: scaleX(-1); }
+            96% { transform: scaleX(1); }
+        }
+
+        .cat-1 .leg-fl, .cat-1 .leg-bl {
+            animation: run-leg-a 0.4s ease-in-out infinite;
+        }
+        .cat-1 .leg-fr, .cat-1 .leg-br {
+            animation: run-leg-b 0.4s ease-in-out infinite;
+        }
+
+        @keyframes run-leg-a {
+            0%, 100% { height: 18px; }
+            50% { height: 12px; }
+        }
+        @keyframes run-leg-b {
+            0%, 100% { height: 12px; }
+            50% { height: 18px; }
+        }
+
+        /* --- cat 2: gray, sitting and watching --- */
+        .cat-2 {
+            bottom: 30px;
+            right: 12%;
+        }
+
+        .cat-2 .cat-body { background: #888; }
+        .cat-2 .cat-head { background: #888; animation: head-tilt 4s ease-in-out infinite; }
+        .cat-2 .ear { border-bottom: 12px solid #888; }
+        .cat-2 .tail { border-color: #888; animation: wag 3s ease-in-out infinite; }
+        .cat-2 .leg { background: #888; }
+
+        @keyframes head-tilt {
+            0%, 100% { transform: rotate(0deg); }
+            30% { transform: rotate(-8deg); }
+            60% { transform: rotate(5deg); }
+        }
+
+        /* --- cat 3: black, pouncing --- */
+        .cat-3 {
+            bottom: 30px;
+            left: 40%;
+            animation: pounce 5s ease-in-out infinite;
+        }
+
+        .cat-3 .cat-body { background: #2a2a2a; }
+        .cat-3 .cat-head { background: #2a2a2a; }
+        .cat-3 .ear { border-bottom: 12px solid #2a2a2a; }
+        .cat-3 .tail { border-color: #2a2a2a; }
+        .cat-3 .leg { background: #2a2a2a; }
+        .cat-3 .eye { background: #44cc44; }
+
+        [data-theme="light"] .cat-3 .cat-body,
+        [data-theme="light"] .cat-3 .cat-head { background: #333; }
+        [data-theme="light"] .cat-3 .ear { border-bottom-color: #333; }
+        [data-theme="light"] .cat-3 .tail { border-color: #333; }
+        [data-theme="light"] .cat-3 .leg { background: #333; }
+
+        @keyframes pounce {
+            0%, 100% { transform: translateY(0) scaleY(1); }
+            15% { transform: translateY(0) scaleY(0.85); }
+            30% { transform: translateY(-60px) scaleY(1.05); }
+            50% { transform: translateY(0) scaleY(0.9); }
+            60% { transform: translateY(0) scaleY(1); }
+        }
+
+        /* --- floating paw prints --- */
+        .paw {
+            position: absolute;
+            font-size: 1.2rem;
+            opacity: 0;
+            animation: float-paw 6s ease-in-out infinite;
+            z-index: 1;
+            color: var(--muted);
+        }
+
+        .paw:nth-child(1) { left: 15%; top: 20%; animation-delay: 0s; }
+        .paw:nth-child(2) { left: 45%; top: 15%; animation-delay: 1.5s; }
+        .paw:nth-child(3) { left: 75%; top: 25%; animation-delay: 3s; }
+        .paw:nth-child(4) { left: 30%; top: 35%; animation-delay: 4.5s; }
+        .paw:nth-child(5) { left: 60%; top: 10%; animation-delay: 2s; }
+        .paw:nth-child(6) { left: 85%; top: 40%; animation-delay: 3.5s; }
+
+        @keyframes float-paw {
+            0%, 100% { opacity: 0; transform: translateY(0) rotate(0deg); }
+            20% { opacity: 0.3; }
+            50% { opacity: 0.15; transform: translateY(-30px) rotate(15deg); }
+            80% { opacity: 0.3; }
+        }
+
+        /* --- floor line --- */
+        .floor {
+            position: absolute;
+            bottom: 45px;
+            left: 5%;
+            width: 90%;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .footer {
+            margin-top: 1.5rem;
+            color: var(--muted);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+        }
+
+        @media (max-width: 640px) {
+            .playground { height: 55vh; }
+            .cat-body { width: 60px; height: 38px; }
+            .cat-head { width: 32px; height: 28px; top: -20px; left: 20px; }
+            .yarn { width: 30px; height: 30px; }
+        }
+    </style>
+</head>
+<body>
+    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">
+        <span class="theme-icon"></span>
+    </button>
+
+    <div class="page">
+        <h1>neko</h1>
+        <p class="subtitle">cats at play</p>
+
+        <div class="playground">
+            <!-- paw prints -->
+            <span class="paw">&#128062;</span>
+            <span class="paw">&#128062;</span>
+            <span class="paw">&#128062;</span>
+            <span class="paw">&#128062;</span>
+            <span class="paw">&#128062;</span>
+            <span class="paw">&#128062;</span>
+
+            <!-- floor -->
+            <div class="floor"></div>
+
+            <!-- yarn ball -->
+            <div class="yarn"></div>
+
+            <!-- cat 1: orange tabby chasing yarn -->
+            <div class="cat cat-1">
+                <div class="cat-body">
+                    <div class="cat-head">
+                        <div class="ear ear-left"></div>
+                        <div class="ear ear-right"></div>
+                        <div class="eye eye-left"></div>
+                        <div class="eye eye-right"></div>
+                        <div class="nose"></div>
+                    </div>
+                    <div class="tail"></div>
+                    <div class="leg leg-fl"></div>
+                    <div class="leg leg-fr"></div>
+                    <div class="leg leg-bl"></div>
+                    <div class="leg leg-br"></div>
+                </div>
+            </div>
+
+            <!-- cat 2: gray sitting -->
+            <div class="cat cat-2">
+                <div class="cat-body">
+                    <div class="cat-head">
+                        <div class="ear ear-left"></div>
+                        <div class="ear ear-right"></div>
+                        <div class="eye eye-left"></div>
+                        <div class="eye eye-right"></div>
+                        <div class="nose"></div>
+                    </div>
+                    <div class="tail"></div>
+                    <div class="leg leg-fl"></div>
+                    <div class="leg leg-fr"></div>
+                    <div class="leg leg-bl"></div>
+                    <div class="leg leg-br"></div>
+                </div>
+            </div>
+
+            <!-- cat 3: black pouncing -->
+            <div class="cat cat-3">
+                <div class="cat-body">
+                    <div class="cat-head">
+                        <div class="ear ear-left"></div>
+                        <div class="ear ear-right"></div>
+                        <div class="eye eye-left"></div>
+                        <div class="eye eye-right"></div>
+                        <div class="nose"></div>
+                    </div>
+                    <div class="tail"></div>
+                    <div class="leg leg-fl"></div>
+                    <div class="leg leg-fr"></div>
+                    <div class="leg leg-bl"></div>
+                    <div class="leg leg-br"></div>
+                </div>
+            </div>
+        </div>
+
+        <p class="footer">a tiny attlas service</p>
+    </div>
+
+    <script>
+        function toggleTheme() {
+            const html = document.documentElement;
+            const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+            html.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            updateIcon();
+        }
+        function updateIcon() {
+            const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+            document.querySelector('.theme-icon').textContent = dark ? '\u2600' : '\u263E';
+        }
+        const saved = localStorage.getItem('theme');
+        if (saved) document.documentElement.setAttribute('data-theme', saved);
+        updateIcon();
+    </script>
+</body>
+</html>
