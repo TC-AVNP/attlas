@@ -482,18 +482,28 @@ func HandleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	if IsAuthenticated(r) {
 		email := GetSessionEmail(r)
-		w.Header().Set("X-Auth-User", email)
 
-		// Check per-service access via Control for subdomain requests.
-		fwdHost := r.Header.Get("X-Forwarded-Host")
-		svcID := hostToService(fwdHost, origURI)
-		if svcID != "" && !checkControlAccess(email, svcID) {
-			http.Error(w, "access denied for this service", http.StatusForbidden)
+		// Force re-login if attlas_user cookie is missing. The OAuth
+		// callback sets both attlas_session and attlas_user, so a fresh
+		// login fixes it. This ensures every user has the JS-readable
+		// identity cookie for watchtower.
+		if uc, err := r.Cookie("attlas_user"); err != nil || uc.Value != email {
+			log.Printf("auth: forcing re-login for %s (missing attlas_user cookie)", email)
+			// Don't redirect — fall through to the login redirect below.
+		} else {
+			w.Header().Set("X-Auth-User", email)
+
+			// Check per-service access via Control for subdomain requests.
+			fwdHost := r.Header.Get("X-Forwarded-Host")
+			svcID := hostToService(fwdHost, origURI)
+			if svcID != "" && !checkControlAccess(email, svcID) {
+				http.Error(w, "access denied for this service", http.StatusForbidden)
+				return
+			}
+
+			w.WriteHeader(http.StatusOK)
 			return
 		}
-
-		w.WriteHeader(http.StatusOK)
-		return
 	}
 
 	// For subdomain requests, redirect to the main domain's login

