@@ -1,0 +1,7 @@
+control.attlas.uk {
+	forward_auth localhost:3000 {
+		uri /api/auth/verify
+		copy_headers Location X-Auth-User
+	}
+	reverse_proxy 127.0.0.1:7701
+}

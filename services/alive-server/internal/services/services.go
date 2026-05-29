@@ -63,25 +63,19 @@ type Service struct {
 
 var known = []Service{
 	{ID: "terminal", Name: "Cloud Terminal", ServiceName: "ttyd", Command: "ttyd",
-		Path: "/terminal/", Script: "install.sh"},
+		Path: "https://terminal.attlas.uk/", Script: "install.sh"},
 	{ID: "code-server", Name: "Cloud VS Code", ServiceName: "code-server", Command: "code-server",
-		Path: "/code/", Script: "install.sh"},
+		Path: "https://code.attlas.uk/", Script: "install.sh"},
 	{ID: "openclaw", Name: "OpenClaw", ServiceName: "openclaw-gateway", Command: "openclaw",
-		Path: "/openclaw/", Script: "install.sh", CheckProcess: "openclaw-gateway"},
+		Path: "https://openclaw.attlas.uk/", Script: "install.sh", CheckProcess: "openclaw-gateway"},
 	{ID: "diary", Name: "Project Diary", ServiceName: "", Command: "hugo",
-		Path: "/diary/", Script: "install.sh"},
+		Path: "https://diary.attlas.uk/", Script: "install.sh"},
 	{ID: "petboard", Name: "Petboard", ServiceName: "petboard", Command: "petboard",
-		Path: "/petboard/", Script: "install.sh"},
+		Path: "https://petboard.attlas.uk/", Script: "install.sh"},
 	{ID: "homelab-planner", Name: "Homelab Planner", ServiceName: "homelab-planner", Command: "homelab-planner",
-		Path: "/homelab-planner/", Script: "install.sh"},
-	// Splitsies lives on its own subdomain (splitsies.attlas.uk) routed
-	// through splitsies-gateway (separate service, not listed here
-	// because users never visit the gateway directly).
+		Path: "https://planner.attlas.uk/", Script: "install.sh"},
 	{ID: "splitsies", Name: "Splitsies", ServiceName: "splitsies", Command: "splitsies",
 		Path: "https://splitsies.attlas.uk/", Script: "install.sh"},
-	// Public static site on its own subdomain (hello.attlas.uk). No
-	// systemd unit or binary — Caddy serves the files directly, so
-	// ServiceName/Command are empty and we look at the webroot instead.
 	{ID: "hello", Name: "Hello", ServiceName: "", Command: "",
 		CheckPath: "/var/www/hello/index.html",
 		Path:      "https://hello.attlas.uk/", Script: "install.sh"},
@@ -92,13 +86,20 @@ var known = []Service{
 	{ID: "revista-maria", Name: "Revista Maria Tennis", ServiceName: "revista-maria", Command: "revista-maria",
 		Path: "https://rm.attlas.uk/", Script: "install.sh"},
 	{ID: "afm", Name: "File Manager", ServiceName: "afm", Command: "afm",
-		Path: "/afm/", Script: "install.sh"},
+		Path: "https://afm.attlas.uk/", Script: "install.sh"},
 	{ID: "homelab-bootstrap", Name: "Homelab Bootstrap", ServiceName: "homelab-bootstrap", Command: "homelab-bootstrap",
 		Path: "https://homelab.attlas.uk/", Script: "install.sh"},
 	{ID: "bfm", Name: "Brain Fleet Management", ServiceName: "bfm", Command: "bfm",
 		Path: "https://bfm.attlas.uk/", Script: "install.sh"},
 	{ID: "neko", Name: "Neko", ServiceName: "neko", Command: "neko",
 		Path: "https://neko.attlas.uk/", Script: "install.sh"},
+	{ID: "control", Name: "Control", ServiceName: "control", Command: "control",
+		Path: "https://control.attlas.uk/", Script: "install.sh"},
+	{ID: "grafana", Name: "Grafana", ServiceName: "grafana-server", Command: "",
+		CheckPath: "/etc/grafana/grafana.ini",
+		Path:      "https://grafana.attlas.uk/", Script: "install.sh"},
+	{ID: "watchtower", Name: "Watchtower", ServiceName: "watchtower", Command: "watchtower",
+		Path: "https://watchtower.attlas.uk/", Script: "install.sh"},
 }
 
 func findService(id string) *Service {

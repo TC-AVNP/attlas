@@ -122,6 +122,19 @@ func toolDefs() []map[string]any {
 			},
 		},
 		{
+			"name":        "create_link",
+			"description": "Create a directed link between two entries in the knowledge graph. The source is the parent, the target is the child.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"source_slug", "target_slug"},
+				"properties": map[string]any{
+					"source_slug": map[string]any{"type": "string", "description": "Slug of the parent entry (links FROM)"},
+					"target_slug": map[string]any{"type": "string", "description": "Slug of the child entry (links TO)"},
+					"label":       map[string]any{"type": "string", "description": "Optional label for the link"},
+				},
+			},
+		},
+		{
 			"name":        "update_entry",
 			"description": "Update an existing knowledge base entry by slug. Only provided fields are changed.",
 			"inputSchema": map[string]any{
@@ -179,6 +192,14 @@ func handleToolCall(req *rpcRequest) {
 		}
 		json.Unmarshal(params.Arguments, &args)
 		result, err = createEntry(args.Slug, args.Title, args.ContentLLM, args.ContentHuman, args.Placeholder)
+	case "create_link":
+		var args struct {
+			SourceSlug string `json:"source_slug"`
+			TargetSlug string `json:"target_slug"`
+			Label      string `json:"label"`
+		}
+		json.Unmarshal(params.Arguments, &args)
+		result, err = createLink(args.SourceSlug, args.TargetSlug, args.Label)
 	case "update_entry":
 		var args struct {
 			Slug         string  `json:"slug"`
@@ -419,6 +440,32 @@ func updateEntry(slug string, title, contentLLM, contentHuman *string, placehold
 		return "", fmt.Errorf("entry '%s' not found", slug)
 	}
 	return fmt.Sprintf("Updated entry '%s'.", slug), nil
+}
+
+func createLink(sourceSlug, targetSlug, label string) (string, error) {
+	if sourceSlug == "" || targetSlug == "" {
+		return "", fmt.Errorf("source_slug and target_slug are required")
+	}
+
+	var sourceID int
+	err := db.QueryRow("SELECT id FROM entries WHERE slug = ?", sourceSlug).Scan(&sourceID)
+	if err != nil {
+		return "", fmt.Errorf("source entry '%s' not found", sourceSlug)
+	}
+
+	var targetID int
+	err = db.QueryRow("SELECT id FROM entries WHERE slug = ?", targetSlug).Scan(&targetID)
+	if err != nil {
+		return "", fmt.Errorf("target entry '%s' not found", targetSlug)
+	}
+
+	_, err = db.Exec("INSERT INTO links (source_id, target_id, label) VALUES (?, ?, ?)",
+		sourceID, targetID, label)
+	if err != nil {
+		return "", fmt.Errorf("failed to create link: %v", err)
+	}
+
+	return fmt.Sprintf("Linked '%s' -> '%s'.", sourceSlug, targetSlug), nil
 }
 
 // --- JSON-RPC output ---

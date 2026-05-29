@@ -253,7 +253,7 @@ if command -v gcloud &>/dev/null; then
   if [[ -n "${OAUTH_JSON}" ]]; then
     GRAFANA_OAUTH_CLIENT_ID=$(echo "${OAUTH_JSON}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('google_oauth_client_id',''))" 2>/dev/null || true)
     GRAFANA_OAUTH_CLIENT_SECRET=$(echo "${OAUTH_JSON}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('google_oauth_client_secret',''))" 2>/dev/null || true)
-    GRAFANA_ALLOWED_EMAIL=$(echo "${OAUTH_JSON}" | python3 -c "import sys,json; emails=json.load(sys.stdin).get('allowed_emails',[]); print(emails[0] if emails else '')" 2>/dev/null || true)
+    GRAFANA_ALLOWED_EMAIL=$(echo "${OAUTH_JSON}" | python3 -c "import sys,json; emails=json.load(sys.stdin).get('allowed_emails',[]); print(' '.join(emails))" 2>/dev/null || true)
     echo "    Loaded Google OAuth credentials from attlas-server-config"
   fi
 fi

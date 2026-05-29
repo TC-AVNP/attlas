@@ -110,11 +110,14 @@ func runServe(args []string) {
 	inner.Handle("/mcp", oauthSrv.BearerMiddleware(mcpHandler))
 	inner.Handle("/", spaFileServer(*staticDir))
 
-	// Outer mux: Caddy proxies /petboard/* to us. Strip the prefix so
-	// the inner mux matches plain /api/... and /.
+	// Outer mux: Caddy proxies /petboard/* to us (path-based) or /* to
+	// us (subdomain). The /petboard/ prefix is stripped so the inner mux
+	// matches plain /api/... and /. The root "/" handler serves the
+	// subdomain case directly.
 	outer := http.NewServeMux()
 	outer.Handle("/petboard/", http.StripPrefix("/petboard", inner))
 	outer.Handle("/petboard", http.RedirectHandler("/petboard/", http.StatusPermanentRedirect))
+	outer.Handle("/", inner)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
 	srv := &http.Server{

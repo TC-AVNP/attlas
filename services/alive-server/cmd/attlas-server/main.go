@@ -143,6 +143,7 @@ func main() {
 	mux.HandleFunc("GET /oauth2/login", auth.HandleOAuth2Login)
 	mux.HandleFunc("GET /oauth2/callback", auth.HandleOAuth2Callback)
 	mux.HandleFunc("/logout", auth.HandleLogout)
+	mux.HandleFunc("/api/me", auth.HandleMe)
 
 	// API
 	mux.HandleFunc("/api/status", handleStatus)

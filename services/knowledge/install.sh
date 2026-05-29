@@ -66,6 +66,7 @@ RestartSec=5
 Environment=KNOWLEDGE_PORT=${PORT}
 Environment=KNOWLEDGE_DB=${STATE_DIR}/knowledge.db
 Environment=KNOWLEDGE_ADMIN_EMAIL=condecopedro@gmail.com
+Environment=KNOWLEDGE_ALLOWED_EMAILS=kongo2002@gmail.com
 Environment=KNOWLEDGE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 Environment=KNOWLEDGE_GOOGLE_SECRET=${GOOGLE_SECRET}
 Environment=KNOWLEDGE_BASE_URL=https://knowledge.attlas.uk

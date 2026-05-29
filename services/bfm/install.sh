@@ -64,6 +64,7 @@ Environment=BFM_STATE_DIR=${STATE_DIR}
 Environment=BFM_ATTLAS_DIR=/home/${BUILD_USER}/iapetus/attlas
 Environment=BFM_BASE_URL=https://bfm.attlas.uk
 Environment=BFM_ADMIN_EMAIL=condecopedro@gmail.com
+Environment=BFM_ALLOWED_EMAILS=kongo2002@gmail.com
 Environment=BFM_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 Environment=BFM_GOOGLE_SECRET=${GOOGLE_SECRET}
 Environment=BFM_LOCAL_BYPASS=1

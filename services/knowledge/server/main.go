@@ -108,19 +108,30 @@ type IndexPage struct {
 // --- App ---
 
 type App struct {
-	db           *sql.DB
-	tmpl         *template.Template
-	adminEmail   string
-	clientID     string
-	clientSecret string
-	baseURL      string
-	localBypass  bool
+	db            *sql.DB
+	tmpl          *template.Template
+	adminEmail    string
+	allowedEmails string
+	clientID      string
+	clientSecret  string
+	baseURL       string
+	localBypass   bool
+}
+
+func (a *App) isAllowed(email string) bool {
+	for _, e := range strings.Split(a.allowedEmails, ",") {
+		if strings.TrimSpace(e) == email {
+			return true
+		}
+	}
+	return false
 }
 
 func main() {
 	port := envOr("KNOWLEDGE_PORT", "7694")
 	dbPath := envOr("KNOWLEDGE_DB", "/var/lib/knowledge/knowledge.db")
 	adminEmail := envOr("KNOWLEDGE_ADMIN_EMAIL", "condecopedro@gmail.com")
+	allowedEmails := envOr("KNOWLEDGE_ALLOWED_EMAILS", "")
 	clientID := envOr("KNOWLEDGE_GOOGLE_CLIENT_ID", "")
 	clientSecret := envOr("KNOWLEDGE_GOOGLE_SECRET", "")
 	baseURL := envOr("KNOWLEDGE_BASE_URL", "http://localhost:"+port)
@@ -145,13 +156,14 @@ func main() {
 	}
 
 	app := &App{
-		db:           db,
-		tmpl:         tmpl,
-		adminEmail:   adminEmail,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		baseURL:      baseURL,
-		localBypass:  localBypass,
+		db:            db,
+		tmpl:          tmpl,
+		adminEmail:    adminEmail,
+		allowedEmails: allowedEmails,
+		clientID:      clientID,
+		clientSecret:  clientSecret,
+		baseURL:       baseURL,
+		localBypass:   localBypass,
 	}
 
 	mux := http.NewServeMux()
@@ -326,8 +338,8 @@ func (a *App) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only admin can access for now.
-	if info.Email != a.adminEmail {
+	// Check access: admin or allowed emails.
+	if info.Email != a.adminEmail && !a.isAllowed(info.Email) {
 		a.tmpl.ExecuteTemplate(w, "denied.html", nil)
 		return
 	}

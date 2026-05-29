@@ -226,6 +226,77 @@ func (r *pathRegistry) matches(path string) bool {
 	return false
 }
 
+// hostToService maps a Caddy X-Forwarded-Host (or path prefix) to a
+// Control service ID. Returns "" if the mapping is unknown (skip check).
+func hostToService(host, uri string) string {
+	// Subdomain mapping.
+	subdomainMap := map[string]string{
+		"terminal.attlas.uk": "terminal",
+		"code.attlas.uk":     "code",
+		"diary.attlas.uk":    "diary",
+		"petboard.attlas.uk": "petboard",
+		"afm.attlas.uk":      "afm",
+		"openclaw.attlas.uk": "openclaw",
+		"planner.attlas.uk":  "homelab-planner",
+		"bfm.attlas.uk":      "bfm",
+		"david.attlas.uk":    "david",
+		"knowledge.attlas.uk": "knowledge",
+		"splitsies.attlas.uk": "splitsies",
+		"grafana.attlas.uk":  "grafana",
+		"rm.attlas.uk":       "revista-maria",
+		"control.attlas.uk":    "control",
+		"watchtower.attlas.uk": "watchtower",
+	}
+	if svc, ok := subdomainMap[host]; ok {
+		return svc
+	}
+
+	// Path-based mapping (legacy, during migration).
+	pathMap := map[string]string{
+		"/terminal/":        "terminal",
+		"/code/":            "code",
+		"/diary/":           "diary",
+		"/petboard/":        "petboard",
+		"/afm/":             "afm",
+		"/openclaw/":        "openclaw",
+		"/homelab-planner/": "homelab-planner",
+	}
+	for prefix, svc := range pathMap {
+		if strings.HasPrefix(uri, prefix) {
+			return svc
+		}
+	}
+
+	// Main domain — dashboard.
+	if host == "attlas.uk" || host == "" {
+		return "dashboard"
+	}
+
+	return ""
+}
+
+// checkControlAccess queries the Control service's localhost API to
+// check if an email has access to a given service. Returns false if
+// Control is unreachable (caller should fall back to local config).
+func checkControlAccess(email, service string) bool {
+	u := fmt.Sprintf("http://127.0.0.1:7701/api/check?email=%s&service=%s",
+		url.QueryEscape(email), url.QueryEscape(service))
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(u)
+	if err != nil {
+		log.Printf("auth: control check failed: %v", err)
+		return false
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Allowed bool `json:"allowed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false
+	}
+	return result.Allowed
+}
+
 // isSafeRelativePath reports whether a candidate return URL can safely
 // be used as a redirect target. Only same-origin relative paths are
 // accepted: must start with '/', must not start with '//'
@@ -243,6 +314,23 @@ func isSafeRelativePath(p string) bool {
 		return false
 	}
 	return u.Scheme == "" && u.Host == ""
+}
+
+// isSafeReturnURL checks whether a return URL is safe to redirect to.
+// Accepts relative paths (same as isSafeRelativePath) and absolute
+// https URLs on *.attlas.uk subdomains.
+func isSafeReturnURL(p string) bool {
+	if isSafeRelativePath(p) {
+		return true
+	}
+	u, err := url.Parse(p)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "https" {
+		return false
+	}
+	return u.Host == "attlas.uk" || strings.HasSuffix(u.Host, ".attlas.uk")
 }
 
 // --- Session token ---
@@ -393,9 +481,35 @@ func HandleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if IsAuthenticated(r) {
+		email := GetSessionEmail(r)
+		w.Header().Set("X-Auth-User", email)
+
+		// Check per-service access via Control for subdomain requests.
+		fwdHost := r.Header.Get("X-Forwarded-Host")
+		svcID := hostToService(fwdHost, origURI)
+		if svcID != "" && !checkControlAccess(email, svcID) {
+			http.Error(w, "access denied for this service", http.StatusForbidden)
+			return
+		}
+
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+
+	// For subdomain requests, redirect to the main domain's login
+	// so the OAuth callback works (it's registered on attlas.uk).
+	fwdHost := r.Header.Get("X-Forwarded-Host")
+	if fwdHost != "" && fwdHost != "attlas.uk" {
+		origScheme := r.Header.Get("X-Forwarded-Proto")
+		if origScheme == "" {
+			origScheme = "https"
+		}
+		returnTo := origScheme + "://" + fwdHost + origURI
+		loginURL := "https://attlas.uk/oauth2/login?return_to=" + url.QueryEscape(returnTo)
+		http.Redirect(w, r, loginURL, http.StatusFound)
+		return
+	}
+
 	loginURL := "/oauth2/login"
 	if isSafeRelativePath(origURI) {
 		loginURL += "?return_to=" + url.QueryEscape(origURI)
@@ -410,7 +524,7 @@ func HandleOAuth2Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	returnTo := r.URL.Query().Get("return_to")
-	if !isSafeRelativePath(returnTo) {
+	if !isSafeReturnURL(returnTo) {
 		returnTo = ""
 	}
 
@@ -500,11 +614,14 @@ func HandleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed := false
-	for _, e := range oauthConfig.AllowedEmails {
-		if strings.EqualFold(e, userInfo.Email) {
-			allowed = true
-			break
+	allowed := checkControlAccess(userInfo.Email, "dashboard")
+	// Fallback to local config if Control is unreachable.
+	if !allowed {
+		for _, e := range oauthConfig.AllowedEmails {
+			if strings.EqualFold(e, userInfo.Email) {
+				allowed = true
+				break
+			}
 		}
 	}
 	if !allowed {
@@ -518,17 +635,65 @@ func HandleOAuth2Callback(w http.ResponseWriter, r *http.Request) {
 		Name:     cookieName,
 		Value:    sessionToken,
 		Path:     "/",
+		Domain:   ".attlas.uk",
 		MaxAge:   cookieMaxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   true,
 	})
+	// Non-HttpOnly cookie with just the email for client-side analytics (watchtower beacon).
+	// Not used for auth — knowing the email doesn't grant access.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "attlas_user",
+		Value:    userInfo.Email,
+		Path:     "/",
+		Domain:   ".attlas.uk",
+		MaxAge:   cookieMaxAge,
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+	})
 
 	dest := "/"
-	if isSafeRelativePath(returnTo) {
+	if isSafeReturnURL(returnTo) {
 		dest = returnTo
 	}
 	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+// HandleMe sets the attlas_user cookie and returns the email as JSON.
+// Called by the watchtower beacon when the attlas_user cookie is missing.
+// Registered as a public path so CORS preflights pass forward_auth.
+// Auth is handled internally by reading the session cookie directly.
+func HandleMe(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+	}
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	email := GetSessionEmail(r)
+	if email == "" {
+		http.Error(w, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "attlas_user",
+		Value:    email,
+		Path:     "/",
+		Domain:   ".attlas.uk",
+		MaxAge:   cookieMaxAge,
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   true,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"email":%q}`, email)
 }
 
 func HandleLogout(w http.ResponseWriter, r *http.Request) {
@@ -536,6 +701,14 @@ func HandleLogout(w http.ResponseWriter, r *http.Request) {
 		Name:   cookieName,
 		Value:  "",
 		Path:   "/",
+		Domain: ".attlas.uk",
+		MaxAge: -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:   "attlas_user",
+		Value:  "",
+		Path:   "/",
+		Domain: ".attlas.uk",
 		MaxAge: -1,
 	})
 	http.Redirect(w, r, "/oauth2/login", http.StatusFound)
