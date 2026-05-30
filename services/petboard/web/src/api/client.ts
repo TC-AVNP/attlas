@@ -1,10 +1,6 @@
-// Thin fetch wrapper that prepends /petboard/api and throws on non-2xx
+// Thin fetch wrapper that prepends the API prefix and throws on non-2xx
 // responses. Every page that talks to the server goes through here so
 // the URL prefix and error handling live in exactly one place.
-//
-// We deliberately do NOT depend on `import.meta.env.BASE_URL` because
-// the API is always served from /petboard/api regardless of how the SPA
-// itself is mounted (Vite's `base` only affects asset URLs).
 
 import type {
   EffortLog,
@@ -19,8 +15,9 @@ import type {
   Status,
   Todo,
 } from "./types";
+import { apiPrefix } from "./prefix";
 
-const API_PREFIX = "/petboard/api";
+const API_PREFIX = apiPrefix;
 
 export class ApiError extends Error {
   status: number;

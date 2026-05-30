@@ -11,7 +11,9 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-const EVENTS_URL = "/petboard/api/events";
+import { apiPrefix } from "./prefix";
+
+const EVENTS_URL = `${apiPrefix}/events`;
 
 export function useLiveUpdates() {
   const queryClient = useQueryClient();
