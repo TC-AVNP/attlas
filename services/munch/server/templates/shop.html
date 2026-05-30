@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopping — Munch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0c0c; --fg: #c0c0c0; --border: #333; --accent: #00ff00;
+  --brand: #ff8700; --header: #ffff00; --muted: #8a8a8a;
+  --surface: #1a1a1a; --danger: #ff5555; --warning: #ffcc00;
+  --btn-on-accent: #000;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+[data-theme="light"] {
+  --bg: #fafafa; --fg: #1a1a1a; --border: #e5e5e5;
+  --accent: #007a00; --brand: #d56800; --header: #9a5200;
+  --muted: #6b6b6b; --surface: #ffffff;
+  --danger: #dc2626; --warning: #b45309; --btn-on-accent: #ffffff;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui); font-size: 15px; line-height: 1.6;
+  background: var(--bg); color: var(--fg);
+  -webkit-user-select: none; user-select: none;
+}
+.page { max-width: 600px; margin: 0 auto; padding: 1.5rem 1rem; }
+h1 {
+  font-family: var(--font-mono); color: var(--brand); font-size: 1.4rem;
+  font-weight: 700; margin-bottom: 0.25rem;
+}
+.back-link {
+  font-family: var(--font-mono); font-size: 0.85rem;
+  color: var(--muted); text-decoration: none; display: inline-flex;
+  align-items: center; gap: 0.3rem; margin-bottom: 0.75rem;
+}
+.back-link:hover { color: var(--accent); }
+
+.progress-bar {
+  height: 4px; background: var(--border); border-radius: 2px;
+  margin: 1rem 0; overflow: hidden;
+}
+.progress-fill {
+  height: 100%; background: var(--accent); border-radius: 2px;
+  transition: width 0.3s;
+}
+.progress-text {
+  font-family: var(--font-mono); font-size: 0.85rem; color: var(--muted);
+  text-align: center; margin-bottom: 1rem;
+}
+
+/* Checklist items — large touch targets for in-store use */
+.check-item {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 1rem; margin-bottom: 0.5rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer;
+  transition: all 0.15s; -webkit-tap-highlight-color: transparent;
+}
+.check-item:active { transform: scale(0.98); }
+.check-item.checked {
+  opacity: 0.5; border-color: transparent;
+}
+.check-item.checked .item-name { text-decoration: line-through; }
+
+.check-box {
+  width: 1.8rem; height: 1.8rem; border-radius: 50%;
+  border: 2px solid var(--border); flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.check-item.checked .check-box {
+  background: var(--accent); border-color: var(--accent);
+}
+.check-box::after {
+  content: '\2713'; color: var(--btn-on-accent); font-size: 0.9rem;
+  font-weight: 700; opacity: 0; transition: opacity 0.15s;
+}
+.check-item.checked .check-box::after { opacity: 1; }
+
+.item-details { flex: 1; }
+.item-name { font-size: 1rem; }
+.item-qty {
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent);
+}
+
+.done-banner {
+  text-align: center; padding: 2rem 1rem;
+  font-family: var(--font-mono); color: var(--accent);
+  font-size: 1.2rem; font-weight: 700; display: none;
+}
+
+.theme-toggle {
+  position: fixed; top: 1rem; right: 1rem;
+  width: 2.2rem; height: 2.2rem; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; z-index: 50;
+}
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">&#9790;</button>
+
+<div class="page">
+  <a href="/" class="back-link">&larr; back</a>
+  <h1>{{.Session.DishName}}</h1>
+
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-text" id="progressText"></div>
+
+  <div id="checklist"></div>
+  <div class="done-banner" id="doneBanner">All done!</div>
+</div>
+
+<script>
+const SESSION_ID = {{.Session.ID}};
+let items = JSON.parse('{{json .Session.Items}}');
+
+function render() {
+  const list = document.getElementById('checklist');
+  const checked = items.filter(i => i.is_checked).length;
+  const total = items.length;
+
+  // Progress
+  document.getElementById('progressFill').style.width = total ? (checked/total*100)+'%' : '0%';
+  document.getElementById('progressText').textContent = checked + ' / ' + total;
+
+  // Sort: unchecked first, then checked
+  const sorted = [...items].sort((a,b) => (a.is_checked ? 1 : 0) - (b.is_checked ? 1 : 0));
+
+  list.innerHTML = '';
+  sorted.forEach(item => {
+    const div = document.createElement('div');
+    div.className = 'check-item' + (item.is_checked ? ' checked' : '');
+    div.innerHTML =
+      '<div class="check-box"></div>' +
+      '<div class="item-details">' +
+        '<div class="item-name">' + escHtml(item.name) + '</div>' +
+        (item.qty ? '<div class="item-qty">' + escHtml(item.qty + (item.unit ? ' ' + item.unit : '')) + '</div>' : '') +
+      '</div>';
+    div.onclick = () => toggle(item.ingredient_id);
+    list.appendChild(div);
+  });
+
+  document.getElementById('doneBanner').style.display = checked === total && total > 0 ? 'block' : 'none';
+}
+
+async function toggle(ingredientId) {
+  // Optimistic update
+  const item = items.find(i => i.ingredient_id === ingredientId);
+  if (item) item.is_checked = !item.is_checked;
+  render();
+
+  try {
+    await fetch('/api/shop/' + SESSION_ID + '/toggle/' + ingredientId, {method: 'PUT'});
+  } catch(e) {
+    // Revert on error
+    if (item) item.is_checked = !item.is_checked;
+    render();
+  }
+}
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// Theme
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  html.dataset.theme = next;
+  localStorage.setItem('theme', next);
+  document.getElementById('themeBtn').textContent = next === 'dark' ? '\u263E' : '\u2600';
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved) {
+    document.documentElement.dataset.theme = saved;
+    document.getElementById('themeBtn').textContent = saved === 'dark' ? '\u263E' : '\u2600';
+  }
+})();
+
+render();
+</script>
+</body>
+</html>

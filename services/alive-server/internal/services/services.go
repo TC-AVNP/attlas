@@ -100,6 +100,8 @@ var known = []Service{
 		Path:      "https://grafana.attlas.uk/", Script: "install.sh"},
 	{ID: "watchtower", Name: "Watchtower", ServiceName: "watchtower", Command: "watchtower",
 		Path: "https://watchtower.attlas.uk/", Script: "install.sh"},
+	{ID: "munch", Name: "Munch", ServiceName: "munch", Command: "munch",
+		Path: "https://munch.attlas.uk/", Script: "install.sh"},
 }
 
 func findService(id string) *Service {

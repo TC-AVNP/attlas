@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Munch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0c0c0c; --fg: #c0c0c0; --border: #333; --accent: #00ff00;
+  --brand: #ff8700; --header: #ffff00; --muted: #8a8a8a;
+  --surface: #1a1a1a; --danger: #ff5555; --warning: #ffcc00;
+  --btn-on-accent: #000;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+[data-theme="light"] {
+  --bg: #fafafa; --fg: #1a1a1a; --border: #e5e5e5;
+  --accent: #007a00; --brand: #d56800; --header: #9a5200;
+  --muted: #6b6b6b; --surface: #ffffff;
+  --danger: #dc2626; --warning: #b45309; --btn-on-accent: #ffffff;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui); font-size: 15px; line-height: 1.6;
+  background: var(--bg); color: var(--fg);
+}
+.page { max-width: 700px; margin: 0 auto; padding: 2rem 1.5rem; }
+h1 {
+  font-family: var(--font-mono); color: var(--brand); font-size: 1.8rem;
+  font-weight: 700; margin-bottom: 0.25rem;
+}
+.subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 2rem; }
+
+.section-label {
+  font-family: var(--font-mono); font-size: 0.75rem; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--header); margin-bottom: 1rem;
+  display: flex; align-items: center; gap: 0.75rem;
+}
+.section-label::after {
+  content: ''; flex: 1; height: 1px; background: var(--border);
+}
+
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1.25rem; margin-bottom: 0.75rem;
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-mono); font-size: 0.85rem; font-weight: 500;
+  padding: 0.55rem 1.1rem; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent; transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  text-decoration: none;
+}
+.btn-primary { background: var(--accent); color: var(--btn-on-accent); }
+.btn-primary:hover { opacity: 0.85; }
+.btn-ghost { background: transparent; border-color: var(--border); color: var(--fg); }
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: var(--bg); }
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.75rem; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Form */
+input[type="text"], input[type="number"] {
+  font-family: var(--font-ui); font-size: 0.95rem;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.6rem 0.8rem; width: 100%;
+  transition: border-color 0.15s;
+}
+input:focus { outline: none; border-color: var(--accent); }
+
+/* Dish list */
+.dish-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.75rem 0; border-bottom: 1px solid var(--border);
+}
+.dish-item:last-child { border-bottom: none; }
+.dish-name {
+  font-family: var(--font-mono); font-weight: 500; font-size: 0.95rem;
+  cursor: pointer; color: var(--fg);
+}
+.dish-name:hover { color: var(--accent); }
+.dish-meta {
+  font-size: 0.75rem; color: var(--muted); font-family: var(--font-mono);
+}
+.dish-rating {
+  font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700;
+  color: var(--accent);
+}
+.no-rating { color: var(--muted); font-weight: 400; }
+
+/* Active shopping banner */
+.shop-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.75rem 1rem; background: var(--surface);
+  border: 1px solid var(--accent); border-radius: 8px;
+  margin-bottom: 0.75rem;
+}
+.shop-banner .name { font-family: var(--font-mono); font-weight: 500; }
+.shop-banner .progress {
+  font-family: var(--font-mono); font-size: 0.85rem; color: var(--accent);
+}
+
+/* Rankings */
+.rank-item {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.6rem 0; border-bottom: 1px solid var(--border);
+}
+.rank-item:last-child { border-bottom: none; }
+.rank-pos {
+  font-family: var(--font-mono); font-size: 1.2rem; font-weight: 700;
+  color: var(--header); min-width: 2rem; text-align: center;
+}
+.rank-score {
+  font-family: var(--font-mono); font-size: 1rem; font-weight: 700;
+  color: var(--accent); margin-left: auto;
+}
+.rank-votes { font-size: 0.7rem; color: var(--muted); font-family: var(--font-mono); }
+
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 100; align-items: center; justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 1.5rem; width: 90%; max-width: 440px;
+}
+.modal h2 {
+  font-family: var(--font-mono); color: var(--brand); font-size: 1.2rem;
+  margin-bottom: 1rem;
+}
+.form-group { margin-bottom: 1rem; }
+.form-group label {
+  display: block; font-size: 0.8rem; color: var(--muted);
+  font-family: var(--font-mono); margin-bottom: 0.3rem;
+}
+.form-row { display: flex; gap: 0.75rem; }
+.form-row > * { flex: 1; }
+.modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1.25rem; }
+
+/* Dish detail panel */
+.detail-panel { display: none; }
+.detail-panel.active { display: block; }
+.ingredient-list { list-style: none; }
+.ingredient-list li {
+  padding: 0.5rem 0; border-bottom: 1px solid var(--border);
+  font-size: 0.9rem; display: flex; gap: 0.5rem;
+}
+.ingredient-list li:last-child { border-bottom: none; }
+.ing-qty { font-family: var(--font-mono); color: var(--accent); min-width: 4rem; }
+.ing-name { flex: 1; }
+
+/* Rating stars */
+.rating-input { display: flex; gap: 0.25rem; align-items: center; margin: 0.5rem 0; }
+.rating-btn {
+  width: 2.2rem; height: 2.2rem; border-radius: 50%;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--fg); font-family: var(--font-mono); font-size: 0.8rem;
+  font-weight: 700; cursor: pointer; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center;
+}
+.rating-btn:hover, .rating-btn.active {
+  background: var(--accent); color: var(--btn-on-accent); border-color: var(--accent);
+}
+
+/* Loading spinner */
+.spinner {
+  display: inline-block; width: 1rem; height: 1rem;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
+  background: var(--surface); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 0.6rem 1.2rem;
+  font-family: var(--font-mono); font-size: 0.85rem;
+  color: var(--accent); z-index: 200; opacity: 0; transition: opacity 0.2s;
+}
+.toast.visible { opacity: 1; }
+
+/* Theme toggle */
+.theme-toggle {
+  position: fixed; top: 1rem; right: 1rem;
+  width: 2.2rem; height: 2.2rem; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; z-index: 50;
+}
+
+/* Back link */
+.back-link {
+  font-family: var(--font-mono); font-size: 0.85rem;
+  color: var(--muted); text-decoration: none; display: inline-flex;
+  align-items: center; gap: 0.3rem; margin-bottom: 1rem;
+}
+.back-link:hover { color: var(--accent); }
+
+/* Sections */
+.section { margin-bottom: 2.5rem; }
+
+/* Empty state */
+.empty {
+  text-align: center; padding: 2rem; color: var(--muted);
+  font-family: var(--font-mono); font-size: 0.85rem;
+}
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">&#9790;</button>
+
+<div class="page">
+  <h1>munch</h1>
+  <p class="subtitle">pick a dish, shop, cook, rate</p>
+
+  <!-- Active shopping sessions -->
+  {{if .ActiveSessions}}
+  <div class="section">
+    <div class="section-label">Shopping Now</div>
+    {{range .ActiveSessions}}
+    <a href="/shop/{{.ID}}" class="shop-banner" style="text-decoration:none;color:inherit;">
+      <span class="name">{{.DishName}}</span>
+      <span class="progress">{{.Checked}}/{{.Total}}</span>
+    </a>
+    {{end}}
+  </div>
+  {{end}}
+
+  <!-- Dishes -->
+  <div class="section">
+    <div class="section-label">Dishes</div>
+    <div style="margin-bottom:1rem;">
+      <button class="btn btn-primary" onclick="openNewDish()">+ new dish</button>
+    </div>
+    <div class="card" id="dishList">
+      {{if .Dishes}}
+        {{range .Dishes}}
+        <div class="dish-item" data-id="{{.ID}}">
+          <div>
+            <div class="dish-name" onclick="viewDish({{.ID}})">{{.Name}}</div>
+            <div class="dish-meta">{{.Servings}} servings</div>
+          </div>
+          <div>
+            {{if .AvgRating}}
+              <span class="dish-rating">{{printf "%.1f" (deref .AvgRating)}}</span>
+              <span class="dish-meta">({{.NumRatings}})</span>
+            {{else}}
+              <span class="dish-rating no-rating">--</span>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="empty">No dishes yet. Add one to get started.</div>
+      {{end}}
+    </div>
+  </div>
+
+  <!-- Rankings -->
+  <div class="section">
+    <div class="section-label">Rankings</div>
+    <div class="card" id="rankingsList">
+      {{if .Rankings}}
+        {{range $i, $r := .Rankings}}
+        <div class="rank-item">
+          <div class="rank-pos">{{inc $i}}</div>
+          <div>
+            <div class="dish-name" onclick="viewDish({{$r.ID}})">{{$r.Name}}</div>
+            <div class="rank-votes">{{$r.NumRatings}} rating{{if ne $r.NumRatings 1}}s{{end}}</div>
+          </div>
+          <div class="rank-score">{{printf "%.1f" $r.AvgRating}}</div>
+        </div>
+        {{end}}
+      {{else}}
+        <div class="empty">Rate some dishes to see rankings here.</div>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+<!-- New Dish Modal -->
+<div class="modal-overlay" id="newDishModal">
+  <div class="modal">
+    <h2>New Dish</h2>
+    <div class="form-group">
+      <label>What do you want to cook?</label>
+      <input type="text" id="dishNameInput" placeholder="e.g. Chicken Tikka Masala" autofocus>
+    </div>
+    <div class="form-group">
+      <label>Servings</label>
+      <input type="number" id="servingsInput" value="2" min="1" max="20" style="width:5rem;">
+    </div>
+    <div id="fetchStatus" style="display:none;">
+      <span class="spinner"></span>
+      <span style="font-family:var(--font-mono);font-size:0.85rem;color:var(--muted);margin-left:0.5rem;">Fetching ingredients...</span>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeNewDish()">Cancel</button>
+      <button class="btn btn-primary" id="createBtn" onclick="createDish()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Dish Detail Modal -->
+<div class="modal-overlay" id="dishDetailModal">
+  <div class="modal" style="max-width:500px;">
+    <h2 id="detailDishName"></h2>
+    <div class="section-label" style="margin-top:0.5rem;">Ingredients</div>
+    <ul class="ingredient-list" id="detailIngredients"></ul>
+
+    <div style="display:flex;gap:0.5rem;margin-top:1.25rem;flex-wrap:wrap;">
+      <button class="btn btn-primary btn-sm" onclick="startShopping()">Start Shopping</button>
+      <button class="btn btn-ghost btn-sm" onclick="openRating()">Rate</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteDish()" style="margin-left:auto;">Delete</button>
+    </div>
+
+    <!-- Rating sub-section -->
+    <div id="ratingSection" style="display:none;margin-top:1rem;">
+      <div class="form-group">
+        <label>Your name (optional)</label>
+        <input type="text" id="raterInput" placeholder="Leave blank for your email">
+      </div>
+      <div class="form-group">
+        <label>Score</label>
+        <div class="rating-input" id="ratingButtons"></div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="submitRating()">Submit Rating</button>
+    </div>
+
+    <div class="modal-actions" style="margin-top:1rem;">
+      <button class="btn btn-ghost" onclick="closeDetail()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// Theme
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.dataset.theme === 'dark' ? 'light' : 'dark';
+  html.dataset.theme = next;
+  localStorage.setItem('theme', next);
+  document.getElementById('themeBtn').textContent = next === 'dark' ? '\u263E' : '\u2600';
+}
+(function() {
+  const saved = localStorage.getItem('theme');
+  if (saved) {
+    document.documentElement.dataset.theme = saved;
+    document.getElementById('themeBtn').textContent = saved === 'dark' ? '\u263E' : '\u2600';
+  }
+})();
+
+// Toast
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('visible');
+  setTimeout(() => el.classList.remove('visible'), 2000);
+}
+
+// New dish
+function openNewDish() {
+  document.getElementById('newDishModal').classList.add('active');
+  document.getElementById('dishNameInput').focus();
+}
+function closeNewDish() {
+  document.getElementById('newDishModal').classList.remove('active');
+  document.getElementById('fetchStatus').style.display = 'none';
+  document.getElementById('createBtn').disabled = false;
+}
+
+async function createDish() {
+  const name = document.getElementById('dishNameInput').value.trim();
+  const servings = parseInt(document.getElementById('servingsInput').value) || 2;
+  if (!name) return;
+
+  document.getElementById('createBtn').disabled = true;
+  document.getElementById('fetchStatus').style.display = 'block';
+
+  try {
+    const res = await fetch('/api/dishes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, servings})
+    });
+    const data = await res.json();
+    if (data.error) {
+      toast('Created but: ' + data.error);
+    }
+    window.location.reload();
+  } catch(e) {
+    toast('Error: ' + e.message);
+    document.getElementById('createBtn').disabled = false;
+    document.getElementById('fetchStatus').style.display = 'none';
+  }
+}
+
+// Dish detail
+let currentDishId = null;
+let selectedScore = null;
+
+async function viewDish(id) {
+  currentDishId = id;
+  selectedScore = null;
+  try {
+    const res = await fetch('/api/dishes/' + id);
+    const dish = await res.json();
+    document.getElementById('detailDishName').textContent = dish.name;
+
+    const list = document.getElementById('detailIngredients');
+    list.innerHTML = '';
+    (dish.ingredients || []).forEach(ing => {
+      const li = document.createElement('li');
+      li.innerHTML = '<span class="ing-qty">' + escHtml(ing.qty + (ing.unit ? ' ' + ing.unit : '')) +
+        '</span><span class="ing-name">' + escHtml(ing.name) + '</span>';
+      list.appendChild(li);
+    });
+
+    // Build rating buttons
+    const ratingDiv = document.getElementById('ratingButtons');
+    ratingDiv.innerHTML = '';
+    for (let i = 0; i <= 10; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'rating-btn';
+      btn.textContent = i;
+      btn.onclick = () => selectScore(i);
+      ratingDiv.appendChild(btn);
+    }
+
+    document.getElementById('ratingSection').style.display = 'none';
+    document.getElementById('dishDetailModal').classList.add('active');
+  } catch(e) {
+    toast('Error loading dish');
+  }
+}
+
+function closeDetail() {
+  document.getElementById('dishDetailModal').classList.remove('active');
+  currentDishId = null;
+}
+
+function openRating() {
+  document.getElementById('ratingSection').style.display = 'block';
+}
+
+function selectScore(n) {
+  selectedScore = n;
+  document.querySelectorAll('#ratingButtons .rating-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', i === n);
+  });
+}
+
+async function submitRating() {
+  if (selectedScore === null) { toast('Pick a score'); return; }
+  const rater = document.getElementById('raterInput').value.trim();
+  try {
+    await fetch('/api/dishes/' + currentDishId + '/rate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({rater, score: selectedScore})
+    });
+    toast('Rated!');
+    window.location.reload();
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+async function startShopping() {
+  if (!currentDishId) return;
+  try {
+    const res = await fetch('/api/dishes/' + currentDishId + '/shop', {
+      method: 'POST'
+    });
+    const data = await res.json();
+    window.location.href = '/shop/' + data.session_id;
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+async function deleteDish() {
+  if (!currentDishId) return;
+  if (!confirm('Delete this dish and all its data?')) return;
+  try {
+    await fetch('/api/dishes/' + currentDishId, {method: 'DELETE'});
+    window.location.reload();
+  } catch(e) {
+    toast('Error: ' + e.message);
+  }
+}
+
+// Enter key on dish name input
+document.getElementById('dishNameInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') createDish();
+});
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>

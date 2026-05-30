@@ -246,6 +246,7 @@ func hostToService(host, uri string) string {
 		"rm.attlas.uk":       "revista-maria",
 		"control.attlas.uk":    "control",
 		"watchtower.attlas.uk": "watchtower",
+		"munch.attlas.uk":     "munch",
 	}
 	if svc, ok := subdomainMap[host]; ok {
 		return svc
